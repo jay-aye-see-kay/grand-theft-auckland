@@ -11,9 +11,16 @@
 // another carriageway joins (the junction's mouth).
 //
 // Draping: cross-sections are considered every 2 m (the heightfield spacing)
-// and then simplified, keeping one only where needed to stay within a thin
-// band above the game's terrain triangles (see simplify); likewise across
-// the width. The car drives on the terrain heightfield, so draped roads need
+// and then simplified, keeping one only where needed to stay within a band
+// around the game's terrain triangles (see simplify); likewise across the
+// width, piece by piece along the way (see pieces). The band is thin (a few
+// mm below, 3 cm above) round junctions and way ends, where surfaces
+// overlap and their lifts must keep them in order; elsewhere strips only
+// meet edge to edge, so it widens to a few cm each way, as far as each
+// surface's lift allows without the ground showing through. Deep inside a
+// paved area the game sinks the terrain mesh (PAVED_SINK), giving more room.
+// Kerbs follow their footpath's simplified surface, so they always sit
+// above it. The car drives on the terrain heightfield, so draped roads need
 // no colliders and kerbs are visual only (flush stripes, not 15 cm steps:
 // a raised footpath would have to be cut out of every junction).
 //
@@ -24,33 +31,52 @@
 // Footpaths are not clamped against buildings: where OSM puts a footprint
 // right against a centreline the footpath just runs inside the building,
 // where it can't be seen.
+import { PAVED_SINK, underPaving } from '../../src/city/format.ts';
 import { MeshBuilder, parseLength, rgb } from './buildings.ts';
 import type { GroundRaster } from './ground.ts';
 import { DRIVEABLE_HIGHWAYS, type OsmData, type Tags } from './osm.ts';
 import type { Overrides } from './overrides.ts';
 import { lonLatToLocal, type Local } from './project.ts';
 import { sampleLocal, type Raster } from './raster.ts';
-import { CHUNK_SIZE, type Grid, type TerrainSampler } from './terrain.ts';
+import { CELL_SIZE, CHUNK_SIZE, type Grid, type TerrainSampler } from './terrain.ts';
 
 export const FOOTPATH_WIDTH = 3;
 export const KERB_WIDTH = 0.3;
 /** Spacing of candidate cross-sections along a way, m (the heightfield's cell). */
 const SAMPLE = 2;
+/** A bend sharper than this (radians) always keeps its cross-section; gentler ones only if the plan needs it (PLAN_TOL). */
+const HARD_TURN = 0.3;
+/** How far a strip's edges may cut across a gentle bend, m. */
+const PLAN_TOL = 0.2;
 /** Longest stretch between kept cross-sections, m. */
-const MAX_SPAN = 40;
+const MAX_SPAN = 60;
 /**
  * How far a simplified surface may float above the terrain (it must never
  * dip more than TOL_DOWN below, or the ground would poke through). The
  * surfaces' lifts are more than TOL_UP + TOL_DOWN apart, so their order holds.
  */
-const TOL_UP = 0.03;
-const TOL_DOWN = 0.004;
+const TOL_UP = 0.025;
+const TOL_DOWN = 0.01;
 /** True if a surface interpolated to `y` over ground at `ground` stays within tolerance. */
 const within = (y: number, ground: number) => y - ground <= TOL_UP && ground - y <= TOL_DOWN;
 /** Across the width, columns are dropped only where the ground between them is this straight. */
 const LATERAL_TOL = 0.01;
 /** Where a kept cross-section aims to sit above the ground, leaving room both ways for the next span. */
 const AIM = 0.01;
+/**
+ * Away from junctions and way ends: how far a surface may float above the
+ * ground, and its lateral tolerance. How far it may dip is set per surface
+ * (looseDown), never more than LOOSE_DOWN_MAX.
+ */
+const LOOSE_UP = 0.05;
+const LOOSE_LAT = 0.02;
+const LOOSE_DOWN_MAX = 0.05;
+/** Clearance kept between a surface and the terrain mesh under it, m. */
+const CLEAR = 0.01;
+/** Strips keep the tight band this far either side of a junction cap (beyond its radius), m. */
+const JUNCTION_MARGIN = 0.5;
+/** Columns across a strip are chosen per piece: the most any station within this distance needs, m. */
+const PIECE_REACH = 25;
 /** Steepest a bridge deck may climb away from where it meets the ground. */
 const BRIDGE_GRADE = 0.1;
 /** Visible thickness of a bridge deck's edge, m. */
@@ -126,6 +152,9 @@ function footpathSides(t: Tags): { left: boolean; right: boolean } {
   return { left, right };
 }
 
+/** Half-width of a road's surfaces: carriageway plus any footpath. */
+export const corridorRadius = (r: Road) => r.width / 2 + (r.left || r.right ? FOOTPATH_WIDTH : 0);
+
 export function collectRoads(osm: OsmData): Road[] {
   const roads: Road[] = [];
   for (const way of osm.ways.values()) {
@@ -190,7 +219,7 @@ function stations(r: Road): Station[] {
         bz = n.z;
       }
       const turn = Math.acos(Math.min(1, p.x * n.x + p.z * n.z));
-      out.push({ s: s[k], x: pts[k].x, z: pts[k].z, nx: bx, nz: bz, m, hard: turn > 0.035 });
+      out.push({ s: s[k], x: pts[k].x, z: pts[k].z, nx: bx, nz: bz, m, hard: turn > HARD_TURN });
     }
     const len = s[k + 1] - s[k];
     const steps = Math.ceil(len / SAMPLE);
@@ -213,36 +242,25 @@ function stations(r: Road): Station[] {
 }
 
 type HeightFn = (st: Station, o: number) => number;
-const offsetPoint = (st: Station, o: number) => ({ x: st.x + st.nx * st.m * o, z: st.z + st.nz * st.m * o });
 
-/**
- * The fewest columns across [o0, o1] that keep every lateral sample (1 m
- * apart) within LATERAL_TOL of the ground at every station.
- */
-function chooseColumns(st: Station[], o0: number, o1: number, h: HeightFn): number[] {
-  const fine = Math.max(1, Math.ceil((o1 - o0) / SAMPLE));
-  const probes = Array.from({ length: fine * 2 + 1 }, (_, k) => o0 + ((o1 - o0) * k) / (fine * 2));
-  const heights = st.map((s) => probes.map((o) => h(s, o)));
-  for (let cols = 1; cols < fine; cols++) {
-    let ok = true;
-    for (const hs of heights) {
-      for (let k = 0; k < probes.length && ok; k++) {
-        const f = (k / (probes.length - 1)) * cols;
-        const c = Math.min(Math.floor(f), cols - 1);
-        const ka = Math.round((c / cols) * (probes.length - 1));
-        const kb = Math.round(((c + 1) / cols) * (probes.length - 1));
-        // Column boundaries fall on probes only when they divide evenly; otherwise interpolate the ends.
-        const ya = interp(probes, hs, o0 + ((o1 - o0) * c) / cols, ka);
-        const yb = interp(probes, hs, o0 + ((o1 - o0) * (c + 1)) / cols, kb);
-        const t = f - c;
-        if (Math.abs(ya + (yb - ya) * t - hs[k]) > LATERAL_TOL) ok = false;
-      }
-      if (!ok) break;
+/** Whether the strip's outer edges, drawn straight from station a to b, pass within PLAN_TOL of every station between. */
+function planOk(st: Station[], cols: number[], a: number, b: number): boolean {
+  if (PLAN_TOL <= 0) return true;
+  for (const o of [cols[0], cols[cols.length - 1]]) {
+    const pa = offsetPoint(st[a], o);
+    const pb = offsetPoint(st[b], o);
+    const dx = pb.x - pa.x;
+    const dz = pb.z - pa.z;
+    const len2 = dx * dx + dz * dz || 1;
+    for (let k = a + 1; k < b; k++) {
+      const p = offsetPoint(st[k], o);
+      const f = Math.min(1, Math.max(0, ((p.x - pa.x) * dx + (p.z - pa.z) * dz) / len2));
+      if (Math.hypot(p.x - pa.x - f * dx, p.z - pa.z - f * dz) > PLAN_TOL) return false;
     }
-    if (ok) return Array.from({ length: cols + 1 }, (_, k) => o0 + ((o1 - o0) * k) / cols);
   }
-  return Array.from({ length: fine + 1 }, (_, k) => o0 + ((o1 - o0) * k) / fine);
+  return true;
 }
+const offsetPoint = (st: Station, o: number) => ({ x: st.x + st.nx * st.m * o, z: st.z + st.nz * st.m * o });
 
 function interp(probes: number[], hs: number[], o: number, near: number): number {
   if (Math.abs(probes[near] - o) < 1e-6) return hs[near];
@@ -262,8 +280,14 @@ type Section = { st: Station; ys: number[] };
  * "visibility cone": the range of slopes from the last kept height that pass
  * through every band so far, narrowed one station at a time.
  */
-function simplify(st: Station[], cols: number[], h: HeightFn): Section[] {
+/** Band (m) a surface may dip below / rise above the ground at station i, column c. */
+type Band = { down: (i: number, c: number) => number; up: (i: number) => number };
+const TIGHT: Band = { down: () => TOL_DOWN, up: () => TOL_UP };
+
+function simplify(st: Station[], cols: number[], h: HeightFn, band: Band = TIGHT): Section[] {
   const hs = st.map((s) => cols.map((o) => h(s, o)));
+  const DOWN = (b: number, c: number) => band.down(b, c);
+  const UP = (b: number) => band.up(b);
   let a = 0;
   let ya = hs[0].map((y) => y + AIM);
   const out: Section[] = [{ st: st[0], ys: ya }];
@@ -271,8 +295,8 @@ function simplify(st: Station[], cols: number[], h: HeightFn): Section[] {
     const len = st[b].s - st[a].s;
     const ys: number[] = [];
     for (let c = 0; c < cols.length; c++) {
-      const sl = Math.max(lo[c], (hs[b][c] - TOL_DOWN - ya[c]) / len);
-      const sh = Math.min(hi[c], (hs[b][c] + TOL_UP - ya[c]) / len);
+      const sl = Math.max(lo[c], (hs[b][c] - DOWN(b, c) - ya[c]) / len);
+      const sh = Math.min(hi[c], (hs[b][c] + UP(b) - ya[c]) / len);
       if (sl > sh) return null;
       const want = (hs[b][c] + AIM - ya[c]) / len;
       ys.push(ya[c] + Math.min(sh, Math.max(sl, want)) * len);
@@ -284,11 +308,11 @@ function simplify(st: Station[], cols: number[], h: HeightFn): Section[] {
     const hi = cols.map(() => Infinity);
     let b = a + 1;
     let ys = end(b, lo, hi)!;
-    while (b + 1 < st.length && !st[b].hard && st[b + 1].s - st[a].s <= MAX_SPAN) {
+    while (b + 1 < st.length && !st[b].hard && st[b + 1].s - st[a].s <= MAX_SPAN && planOk(st, cols, a, b + 1)) {
       // Station b becomes an interior point of the span a..b+1.
       const d = st[b].s - st[a].s;
-      const nlo = lo.map((v, c) => Math.max(v, (hs[b][c] - TOL_DOWN - ya[c]) / d));
-      const nhi = hi.map((v, c) => Math.min(v, (hs[b][c] + TOL_UP - ya[c]) / d));
+      const nlo = lo.map((v, c) => Math.max(v, (hs[b][c] - DOWN(b, c) - ya[c]) / d));
+      const nhi = hi.map((v, c) => Math.min(v, (hs[b][c] + UP(b) - ya[c]) / d));
       if (nlo.some((v, c) => v > nhi[c])) break;
       const next = end(b + 1, nlo, nhi);
       if (!next) break;
@@ -301,6 +325,111 @@ function simplify(st: Station[], cols: number[], h: HeightFn): Section[] {
     a = b;
     ya = ys;
   }
+  return out;
+}
+
+/** Fewest columns across [o0, o1] that keep one station's lateral samples (1 m apart) within `lat` of the ground. */
+function columnsNeeded(st: Station, o0: number, o1: number, h: HeightFn, lat: number): number {
+  const fine = Math.max(1, Math.ceil((o1 - o0) / SAMPLE));
+  const probes = Array.from({ length: fine * 2 + 1 }, (_, k) => o0 + ((o1 - o0) * k) / (fine * 2));
+  const hs = probes.map((o) => h(st, o));
+  for (let cols = 1; cols < fine; cols++) {
+    let ok = true;
+    for (let k = 0; k < probes.length && ok; k++) {
+      const f = (k / (probes.length - 1)) * cols;
+      const c = Math.min(Math.floor(f), cols - 1);
+      const ka = Math.round((c / cols) * (probes.length - 1));
+      const kb = Math.round(((c + 1) / cols) * (probes.length - 1));
+      const ya = interp(probes, hs, o0 + ((o1 - o0) * c) / cols, ka);
+      const yb = interp(probes, hs, o0 + ((o1 - o0) * (c + 1)) / cols, kb);
+      if (Math.abs(ya + (yb - ya) * (f - c) - hs[k]) > lat) ok = false;
+    }
+    if (ok) return cols;
+  }
+  return fine;
+}
+
+/** Height of a row (heights `ys` at offsets `cols`) at offset o, by linear interpolation. */
+function rowAt(cols: number[], ys: number[], o: number): number {
+  let c = 0;
+  while (c < cols.length - 2 && cols[c + 1] < o) c++;
+  const t = Math.min(1, Math.max(0, (o - cols[c]) / (cols[c + 1] - cols[c] || 1)));
+  return ys[c] + (ys[c + 1] - ys[c]) * t;
+}
+
+/** Per-station tolerances for a strip: dip below and rise above the ground (by offset), and lateral. */
+type StripBand = { down: (i: number, o: number) => number; up: (i: number) => number; lat: (i: number) => number };
+type Piece = { cols: number[]; sections: Section[] };
+
+/**
+ * Drapes a strip between offsets o0..o1: one column count for a whole way
+ * is set by its bumpiest cross-section, so the way is cut into pieces, each
+ * with the columns its own stretch needs (the most any station within
+ * PIECE_REACH needs, so pieces don't flicker). Each piece is simplified on
+ * its own; where two meet, the finer one's row is put on the coarser one's
+ * lines, so there's no crack.
+ */
+function drapeStrip(st: Station[], o0: number, o1: number, h: HeightFn, band: StripBand): Piece[] {
+  const need = st.map((s, i) => columnsNeeded(s, o0, o1, h, band.lat(i)));
+  const most = st.map((s, i) => {
+    let v = need[i];
+    for (let j = i - 1; j >= 0 && s.s - st[j].s <= PIECE_REACH; j--) v = Math.max(v, need[j]);
+    for (let j = i + 1; j < st.length && st[j].s - s.s <= PIECE_REACH; j++) v = Math.max(v, need[j]);
+    return v;
+  });
+  const pieces: Piece[] = [];
+  for (let i0 = 0; i0 < st.length - 1;) {
+    let i1 = i0 + 1;
+    while (i1 < st.length - 1 && most[i1] === most[i0]) i1++;
+    const n = Math.max(most[i0], most[i1]);
+    const cols = Array.from({ length: n + 1 }, (_, k) => o0 + ((o1 - o0) * k) / n);
+    const sub = st.slice(i0, i1 + 1);
+    const from = i0;
+    const sections = simplify(sub, cols, h, { down: (b, c) => band.down(from + b, cols[c]), up: (b) => band.up(from + b) });
+    pieces.push({ cols, sections });
+    i0 = i1;
+  }
+  // One piece with the most columns anywhere can come out cheaper than several.
+  if (pieces.length > 1) {
+    const cost = (ps: Piece[]) => ps.reduce((t, p) => t + (p.sections.length - 1) * (p.cols.length - 1), 0);
+    const n = Math.max(...most);
+    const cols = Array.from({ length: n + 1 }, (_, k) => o0 + ((o1 - o0) * k) / n);
+    const whole = [{ cols, sections: simplify(st, cols, h, { down: (b, c) => band.down(b, cols[c]), up: (b) => band.up(b) }) }];
+    if (cost(whole) <= cost(pieces)) return whole;
+  }
+  for (let q = 1; q < pieces.length; q++) {
+    const a = pieces[q - 1];
+    const b = pieces[q];
+    const ra = a.sections[a.sections.length - 1];
+    const rb = b.sections[0];
+    if (a.cols.length <= b.cols.length) rb.ys = b.cols.map((o) => rowAt(a.cols, ra.ys, o));
+    else ra.ys = a.cols.map((o) => rowAt(b.cols, rb.ys, o));
+  }
+  return pieces;
+}
+
+/** Kerb rows may sag this far (m) below the footpath-following line: still well above the footpath. */
+const KERB_SAG = 0.015;
+
+/** Drops kerb rows the line between their neighbours already follows (kerbs sit 7 cm proud, so a cm or two is fine). */
+function thinKerb(rows: Section[], cols: number[]): Section[] {
+  const stations = rows.map((r) => r.st);
+  const fits = (a: number, b: number) => {
+    if (rows[b].st.s - rows[a].st.s > MAX_SPAN || !planOk(stations, cols, a, b)) return false;
+    for (let k = a + 1; k < b; k++) {
+      const f = (rows[k].st.s - rows[a].st.s) / (rows[b].st.s - rows[a].st.s || 1);
+      if (!rows[k].ys.every((y, c) => Math.abs(rows[a].ys[c] + (rows[b].ys[c] - rows[a].ys[c]) * f - y) <= KERB_SAG)) return false;
+    }
+    return true;
+  };
+  const out = rows.slice(0, 1);
+  let a = 0;
+  for (let b = 2; b < rows.length; b++) {
+    if (fits(a, b)) continue;
+    out.push(rows[b - 1]);
+    a = b - 1;
+  }
+  if (rows.length > 1) out.push(rows[rows.length - 1]);
   return out;
 }
 
@@ -334,7 +463,7 @@ function tri(mb: MeshBuilder, list: number[], a: number, b: number, c: number, d
 }
 
 /** `left` / `right`: hang a deck edge off that long edge (left is the cols[last] side). */
-type StripOpts = { level: Level; collider: boolean; left?: boolean; right?: boolean };
+type StripOpts = { level: Level; collider: boolean; left?: boolean; right?: boolean; covered?: (x: number, z: number) => boolean };
 
 /**
  * Emits the strip between lateral offsets cols[0]..cols[last] (left of the
@@ -342,6 +471,18 @@ type StripOpts = { level: Level; collider: boolean; left?: boolean; right?: bool
  * surface without its lift goes into the chunk's collider; with `left` or
  * `right`, a vertical deck edge hangs off that long edge.
  */
+/** Road triangles by kind, for the build log. */
+export const roadTris: Record<string, number> = {};
+let counted = 0;
+/** Runs `emit` and books the triangles it adds (across all chunks) to `kind`. */
+function tally(kind: string, out: ChunkMeshes, emit: () => void) {
+  emit();
+  let total = 0;
+  for (const mb of out.chunks.values()) total += mb.idx.length / 3;
+  roadTris[kind] = (roadTris[kind] ?? 0) + total - counted;
+  counted = total;
+}
+
 function emitStrip(out: ChunkMeshes, sections: Section[], cols: number[], opts: StripOpts) {
   const { level } = opts;
   let prev: MeshBuilder | null = null;
@@ -363,6 +504,11 @@ function emitStrip(out: ChunkMeshes, sections: Section[], cols: number[], opts: 
     const ra = mb === prev ? prevRow : row(a, level.lift, level.layer);
     const rb = row(b, level.lift, level.layer);
     for (let c = 0; c + 1 < cols.length; c++) {
+      // Inside a building (a footpath mapped through a shopfront): never seen.
+      if (opts.covered && [ra[c], ra[c + 1], rb[c], rb[c + 1]].every((v) => opts.covered!(mb.pos[v * 3], mb.pos[v * 3 + 2]))) {
+        const m = [ra[c], ra[c + 1], rb[c], rb[c + 1]].reduce((t, v) => [t[0] + mb.pos[v * 3] / 4, t[1] + mb.pos[v * 3 + 2] / 4], [0, 0]);
+        if (opts.covered(m[0], m[1])) continue;
+      }
       tri(mb, mb.idx, ra[c], ra[c + 1], rb[c]);
       tri(mb, mb.idx, ra[c + 1], rb[c + 1], rb[c]);
     }
@@ -399,7 +545,7 @@ function emitStrip(out: ChunkMeshes, sections: Section[], cols: number[], opts: 
 function emitDisc(out: ChunkMeshes, cx: number, cz: number, r0: number, r: number, h: (x: number, z: number) => number, level: Level, collider: boolean) {
   const mb = out.at(cx, cz);
   if (!mb || r <= r0 + 0.05) return;
-  const seg = Math.min(32, Math.max(10, Math.ceil((2 * Math.PI * r) / 4)));
+  const seg = Math.min(32, Math.max(6, Math.ceil((2 * Math.PI * r) / 8)));
   const dir = Array.from({ length: seg }, (_, k) => [Math.cos((2 * Math.PI * k) / seg), Math.sin((2 * Math.PI * k) / seg)]);
   // The fewest rings (at most SAMPLE apart) that keep radial samples within TOL.
   const fineRings = Math.max(1, Math.ceil((r - r0) / SAMPLE));
@@ -793,7 +939,7 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
   return { roads, at, byNode, deck, deckAt };
 }
 
-export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork): RoadsResult {
+export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork, covered?: (x: number, z: number) => boolean): RoadsResult {
   const { roads, at, byNode, deck } = net;
   const out = new ChunkMeshes(grid);
   const drape = (x: number, z: number) => terrain.heightAt(x, z);
@@ -809,9 +955,64 @@ export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRa
     }
   }
 
+  // Junction caps: one set of discs per node where ways meet at an angle (a
+  // side road, or a bend where one way continues another), sized for the
+  // widest way there. The footpath disc fills the corners between footpaths.
+  const caps = new Map<number, { half: number; fr: number }>();
+  for (const [n, entries] of byNode) {
+    if (entries.length < 2) continue;
+    const angled = entries.some((e, q) => entries.some((f, w) => w !== q && f.road !== e.road && joinsAtAngle(e.road, e.k, f.road, f.k)));
+    if (!angled) continue;
+    const roadsHere = entries.filter((e) => e.road.surface === 'road');
+    const main = roadsHere.length ? roadsHere : entries;
+    const half = Math.max(...main.map((e) => e.road.width / 2));
+    const fr = Math.max(0, ...entries.filter((e) => e.road.left || e.road.right).map((e) => e.road.width / 2 + FOOTPATH_WIDTH));
+    caps.set(n, { half, fr });
+  }
+
+  // Deep inside paved ground, where the game sinks the terrain mesh (PAVED_SINK).
+  const paved = (r: number, c: number) => ground.lattice(c, r);
+  const sunkCache = new Map<number, boolean>();
+  const sunkAt = (c: number, r: number) => {
+    const key = (c + 0x8000) * 0x10000 + (r + 0x8000);
+    let v = sunkCache.get(key);
+    if (v === undefined) sunkCache.set(key, (v = underPaving(paved, r, c)));
+    return v;
+  };
+  const sunk = (x: number, z: number) => {
+    const c = Math.floor(x / CELL_SIZE);
+    const r = Math.floor(z / CELL_SIZE);
+    return sunkAt(c, r) && sunkAt(c + 1, r) && sunkAt(c, r + 1) && sunkAt(c + 1, r + 1);
+  };
+
   for (const r of roads) {
     km[r.highway] = (km[r.highway] ?? 0) + r.s[r.s.length - 1] / 1000;
     const st = stations(r);
+    // Tight round junction caps and at the ends (where another way carries
+    // on), loose elsewhere; bridges are straight lines anyway.
+    const length = r.s[r.s.length - 1];
+    // A footpath only needs to stay under the junction's carriageway disc;
+    // a carriageway must also stay over its footpath ring.
+    const tightFor = (footpath: boolean) => st.map((x) => r.bridge || x.s < 0.01 || x.s > length - 0.01 || r.nodes.some((n, k) => {
+      const cap = caps.get(n);
+      return !!cap && Math.abs(x.s - r.s[k]) <= (footpath ? cap.half : Math.max(cap.half, cap.fr)) + JUNCTION_MARGIN;
+    }));
+    const tightRoad = tightFor(false);
+    const tightFoot = tightFor(true);
+    const band = (lv: Level): StripBand => {
+      const tight = lv === LEVELS.footpath ? tightFoot : tightRoad;
+      return {
+      down: (i, o) => {
+        // Thin surfaces (paving) can't dip as far without the ground showing through.
+        if (tight[i]) return Math.min(TOL_DOWN, Math.max(0.002, lv.lift - LATERAL_TOL - 0.002));
+        const p = offsetPoint(st[i], o);
+        const room = lv.lift - CLEAR - LOOSE_LAT + (sunk(p.x, p.z) ? PAVED_SINK : 0);
+        return Math.min(LOOSE_DOWN_MAX, Math.max(0.002, room));
+      },
+      up: (i) => (tight[i] ? TOL_UP : LOOSE_UP),
+      lat: (i) => (tight[i] ? LATERAL_TOL : LOOSE_LAT),
+      };
+    };
     // Bridge decks: linear between node heights along the way, never below the ground at the centreline.
     const deckAt = (s: Station) => {
       let k = 0;
@@ -829,50 +1030,45 @@ export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRa
     const fpL = r.left ? half + FOOTPATH_WIDTH : half;
     const fpR = r.right ? half + FOOTPATH_WIDTH : half;
 
-    const cols = chooseColumns(st, -half, half, h);
-    emitStrip(out, simplify(st, cols, h), cols, { level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right });
-    for (const [o0, o1, on, isLeft] of [[half, fpL, r.left, true], [-fpR, -half, r.right, false]] as const) {
-      if (!on) continue;
-      const fcols = chooseColumns(st, o0, o1, h);
-      emitStrip(out, simplify(st, fcols, h), fcols, { level: LEVELS.footpath, collider: r.bridge, left: r.bridge && isLeft, right: r.bridge && !isLeft });
+    for (const piece of drapeStrip(st, -half, half, h, band(level))) {
+      tally('carriageway', out, () => emitStrip(out, piece.sections, piece.cols, { level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right, covered: r.bridge ? undefined : covered }));
     }
-
-    // Kerbs on the footpath's inner edge, cut where carriageways join.
+    // Kerbs on the footpath's inner edge, cut where carriageways join. They
+    // follow the footpath's own simplified surface, so they're always on top of it.
+    const cuts: Cuts = { left: [], right: [] };
     if (r.left || r.right) {
-      const cuts: Cuts = { left: [], right: [] };
       r.nodes.forEach((n, k) => {
         const others = byNode.get(n)!.filter((o) => o.road !== r);
         const c = kerbCuts(r, k, others);
         cuts.left.push(...c.left);
         cuts.right.push(...c.right);
       });
-      for (const [o0, o1, on, side] of [[half, half + KERB_WIDTH, r.left, cuts.left], [-half - KERB_WIDTH, -half, r.right, cuts.right]] as const) {
-        if (!on) continue;
-        const kcols = [o0, o1];
-        for (const run of uncutRuns(simplify(st, kcols, h), side)) {
-          emitStrip(out, run, kcols, { level: LEVELS.kerb, collider: false });
-        }
+    }
+    for (const [o0, o1, on, isLeft, k0, k1, side] of [
+      [half, fpL, r.left, true, half, half + KERB_WIDTH, cuts.left],
+      [-fpR, -half, r.right, false, -half - KERB_WIDTH, -half, cuts.right],
+    ] as const) {
+      if (!on) continue;
+      const kerb: Section[] = [];
+      for (const [q, piece] of drapeStrip(st, o0, o1, h, band(LEVELS.footpath)).entries()) {
+        tally('footpath', out, () => emitStrip(out, piece.sections, piece.cols, { level: LEVELS.footpath, collider: r.bridge, left: r.bridge && isLeft, right: r.bridge && !isLeft, covered: r.bridge ? undefined : covered }));
+        // Lifted from the footpath's level to the kerb's by emitStrip.
+        for (const sec of piece.sections.slice(q ? 1 : 0)) kerb.push({ st: sec.st, ys: [rowAt(piece.cols, sec.ys, k0), rowAt(piece.cols, sec.ys, k1)] });
       }
+      const kcols = [k0, k1];
+      for (const run of uncutRuns(thinKerb(kerb, kcols), side)) tally('kerb', out, () => emitStrip(out, run, kcols, { level: LEVELS.kerb, collider: false, covered: r.bridge ? undefined : covered }));
     }
 
   }
 
-  // Junction caps: one set of discs per node where ways meet at an angle (a
-  // side road, or a bend where one way continues another), sized for the
-  // widest way there. The footpath disc fills the corners between footpaths.
-  for (const [n, entries] of byNode) {
-    if (entries.length < 2) continue;
-    const angled = entries.some((e, q) => entries.some((f, w) => w !== q && f.road !== e.road && joinsAtAngle(e.road, e.k, f.road, f.k)));
-    if (!angled) continue;
+  for (const [n, { half, fr }] of caps) {
+    const entries = byNode.get(n)!;
     const p = at.get(n)!;
     const flat = entries.every((e) => e.road.bridge);
     const dh = flat ? () => deck.get(n)! : drape;
-    const roadsHere = entries.filter((e) => e.road.surface === 'road');
-    const main = roadsHere.length ? roadsHere : entries;
-    const half = Math.max(...main.map((e) => e.road.width / 2));
-    emitDisc(out, p.x, p.z, 0, half, dh, roadsHere.length ? LEVELS.road : LEVELS.paving, flat);
-    const fr = Math.max(0, ...entries.filter((e) => e.road.left || e.road.right).map((e) => e.road.width / 2 + FOOTPATH_WIDTH));
-    if (fr > half) emitDisc(out, p.x, p.z, Math.max(0, half - 0.5), fr, dh, LEVELS.footpath, flat);
+    const roadsHere = entries.some((e) => e.road.surface === 'road');
+    tally('junction', out, () => emitDisc(out, p.x, p.z, 0, half, dh, roadsHere ? LEVELS.road : LEVELS.paving, flat));
+    if (fr > half) tally('junction', out, () => emitDisc(out, p.x, p.z, Math.max(0, half - 0.5), fr, dh, LEVELS.footpath, flat));
   }
   const bridges = roads.filter((r) => r.bridge).length;
   return { chunks: out.chunks, counts: { ways: roads.length, bridges, km } };

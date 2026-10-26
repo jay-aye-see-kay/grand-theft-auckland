@@ -308,6 +308,20 @@ export const SURFACES = ['urban', 'grass', 'trees', 'sand', 'paving', 'footpath'
 export type Surface = (typeof SURFACES)[number];
 export const SURFACE_ID = Object.fromEntries(SURFACES.map((s, k) => [s, k])) as Record<Surface, number>;
 
+/**
+ * Lattice points deep inside a paved surface (the point and its eight
+ * neighbours are all paving, footpath or road) are always covered by the
+ * draped road strips. The full-detail terrain mesh sinks at least this far
+ * there (m), which gives the strips room to be simplified.
+ */
+export const PAVED_SINK = 0.05;
+
+/** Whether lattice point (r, c) is deep inside paving, given the class at any lattice point. */
+export function underPaving(classAt: (r: number, c: number) => number, r: number, c: number): boolean {
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (classAt(r + dr, c + dc) < SURFACE_ID.paving) return false;
+  return true;
+}
+
 export interface GroundSamples {
   n: number;
   classes: Uint8Array;

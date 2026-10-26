@@ -22,8 +22,8 @@ import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
 import { layPiers } from './piers.ts';
 import { buildSeawalls } from './seawalls.ts';
-import { buildRoads, roadNetwork } from './roads.ts';
-import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, SAMPLES, SEA_SHELF, TerrainSampler, WATER_LEVEL } from './terrain.ts';
+import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
+import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, markCapsule, SAMPLES, SEA_SHELF, smoothCorridors, TerrainSampler, WATER_LEVEL } from './terrain.ts';
 
 const AREA = 'cbd';
 const OUT = fileURLToPath(new URL(`../../public/city/${AREA}/`, import.meta.url));
@@ -46,6 +46,15 @@ for (const layer of ['terrain', 'buildings', 'roads', 'ground']) {
   mkdirSync(join(OUT, layer), { recursive: true });
 }
 
+// Smooth street surfaces in the ground itself before anything samples it,
+// a little past their edges so the triangles under a strip's edge are smooth too.
+const CORRIDOR_MARGIN = 2.5;
+const corridors = new Set<number>();
+for (const r of collectRoads(data.osm)) {
+  if (r.bridge) continue;
+  for (let k = 0; k + 1 < r.pts.length; k++) markCapsule(corridors, r.pts[k], r.pts[k + 1], corridorRadius(r) + CORRIDOR_MARGIN);
+}
+console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points under streets`);
 const terrainSampler = new TerrainSampler(data.dem);
 const network = roadNetwork(data, terrainSampler, overrides);
 const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt });
@@ -70,11 +79,12 @@ console.log(`Sea walls: ${walls.km.toFixed(1)} km along ${walls.lines} coastline
 const ground = new GroundRaster(grid);
 const landUse = paintLandUse(data.osm, ground);
 console.log(`Land use: ${Object.entries(landUse).map(([k, n]) => `${n} ${k}`).join(', ')} polygons`);
-const roads = buildRoads(grid, terrainSampler, ground, network);
+const roads = buildRoads(grid, terrainSampler, ground, network, blds.covers);
 console.log(
   `Roads: ${roads.counts.ways} ways (${roads.counts.bridges} bridges), ` +
     Object.entries(roads.counts.km).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)} km`).join(', '),
 );
+console.log(`Road triangles by kind: ${Object.entries(roadTrisByKind).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 let roadBytes = 0;
 let maxRoadBytes = 0;
 let roadTris = 0;

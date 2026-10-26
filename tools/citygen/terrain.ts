@@ -62,6 +62,18 @@ export function chunkGrid(bbox: BBox): Grid {
  * drop to the sea floor stays behind those walls.
  */
 export function groundCm(dem: Raster, x: number, z: number): number {
+  if (corridor) {
+    const c = x / CELL_SIZE;
+    const r = z / CELL_SIZE;
+    if (Number.isInteger(c) && Number.isInteger(r)) {
+      const v = corridor.get(latticeKey(c, r));
+      if (v !== undefined) return v;
+    }
+  }
+  return rawGroundCm(dem, x, z);
+}
+
+function rawGroundCm(dem: Raster, x: number, z: number): number {
   let sum = 0;
   for (const [dx, dz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
     if (isWet(pixelLocal(dem, x + dx, z + dz))) return SEA_SHELF * 100;
@@ -69,6 +81,88 @@ export function groundCm(dem: Raster, x: number, z: number): number {
   }
   const h = sum / 4;
   return Math.round((h < SEA_CUTOFF ? SEA_SHELF : h) * 100);
+}
+
+const latticeKey = (c: number, r: number) => (c + 0x8000) * 0x10000 + (r + 0x8000);
+
+/** Smoothed heights (cm) of lattice points on road corridors, standing in for groundCm there. */
+let corridor: Map<number, number> | null = null;
+
+/** Lattice points this far either side (in samples) are fitted when smoothing a corridor point. */
+const SMOOTH_REACH = 5;
+/** Neighbours more than this far above or below a point (m) are a wall or a different level, not the same street. */
+const SMOOTH_STEP = 0.5;
+
+/**
+ * Smooths the ground under streets. LiDAR ground is bumpy at the 5-20 cm
+ * scale (cambers, gutters, kerbs, manholes), and draped road strips that
+ * follow every bump cost several triangles a metre. Real streets are
+ * smooth, so the lattice points under each street (`mask`) are replaced by
+ * a least-squares plane through their neighbours on the same street within
+ * SMOOTH_REACH samples (skipping sea and anything a step away), which
+ * keeps slopes, crests and dips at the 10 m scale. Both the terrain chunks
+ * (render mesh and collider) and everything draped or seated on them
+ * (roads, buildings, parked cars) read the smoothed ground through groundCm.
+ */
+export function smoothCorridors(dem: Raster, mask: Set<number>): number {
+  const raw = new Map<number, number>();
+  const rawAt = (c: number, r: number) => {
+    const k = latticeKey(c, r);
+    let v = raw.get(k);
+    if (v === undefined) raw.set(k, (v = rawGroundCm(dem, c * CELL_SIZE, r * CELL_SIZE)));
+    return v;
+  };
+  const out = new Map<number, number>();
+  const keys = [...mask].sort((a, b) => a - b);
+  for (const k of keys) {
+    const c = Math.floor(k / 0x10000) - 0x8000;
+    const r = (k % 0x10000) - 0x8000;
+    const h0 = rawAt(c, r);
+    if (h0 <= SEA_SHELF * 100) continue;
+    // Plane z = a + b dc + d dr through the neighbours; the answer is a.
+    let n = 0, sx = 0, sy = 0, sz = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0;
+    for (let dr = -SMOOTH_REACH; dr <= SMOOTH_REACH; dr++) {
+      for (let dc = -SMOOTH_REACH; dc <= SMOOTH_REACH; dc++) {
+        if (!mask.has(latticeKey(c + dc, r + dr))) continue;
+        const h = rawAt(c + dc, r + dr);
+        if (h <= SEA_SHELF * 100 || Math.abs(h - h0) > SMOOTH_STEP * 100) continue;
+        n++;
+        sx += dc; sy += dr; sz += h;
+        sxx += dc * dc; syy += dr * dr; sxy += dc * dr;
+        sxz += dc * h; syz += dr * h;
+      }
+    }
+    if (n < 6) continue;
+    // Normal equations, solved by Cramer's rule.
+    const m = [[n, sx, sy], [sx, sxx, sxy], [sy, sxy, syy]];
+    const det = (a: number[][]) =>
+      a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    const d = det(m);
+    if (Math.abs(d) < 1e-6) continue;
+    const a = det([[sz, sx, sy], [sxz, sxx, sxy], [syz, sxy, syy]]) / d;
+    out.set(k, Math.round(a));
+  }
+  corridor = out;
+  return out.size;
+}
+
+/** Lattice points (keys for smoothCorridors) within `radius` of the segment a-b. */
+export function markCapsule(mask: Set<number>, a: { x: number; z: number }, b: { x: number; z: number }, radius: number) {
+  const c0 = Math.floor((Math.min(a.x, b.x) - radius) / CELL_SIZE);
+  const c1 = Math.ceil((Math.max(a.x, b.x) + radius) / CELL_SIZE);
+  const r0 = Math.floor((Math.min(a.z, b.z) - radius) / CELL_SIZE);
+  const r1 = Math.ceil((Math.max(a.z, b.z) + radius) / CELL_SIZE);
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const len2 = dx * dx + dz * dz || 1;
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const x = c * CELL_SIZE;
+      const z = r * CELL_SIZE;
+      const f = Math.min(1, Math.max(0, ((x - a.x) * dx + (z - a.z) * dz) / len2));
+      if (Math.hypot(x - a.x - f * dx, z - a.z - f * dz) <= radius) mask.add(latticeKey(c, r));
+    }
+  }
 }
 
 /** Open water (or no data) in the DEM. */

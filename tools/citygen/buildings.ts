@@ -122,6 +122,34 @@ function inSolid(s: Solid, x: number, z: number): boolean {
   return s.polygons.some((p) => inPolygon(p, x, z));
 }
 
+/** Footprints bucketed on a coarse grid, for point-in-building tests. */
+class Footprints {
+  private readonly buckets = new Map<number, Solid[]>();
+  private static readonly SIZE = 32;
+  private key = (i: number, j: number) => (i + 0x8000) * 0x10000 + (j + 0x8000);
+
+  add(s: Solid) {
+    const pts = s.polygons.flatMap((p) => p.outer);
+    const S = Footprints.SIZE;
+    const i0 = Math.floor(Math.min(...pts.map((p) => p.x)) / S);
+    const i1 = Math.floor(Math.max(...pts.map((p) => p.x)) / S);
+    const j0 = Math.floor(Math.min(...pts.map((p) => p.z)) / S);
+    const j1 = Math.floor(Math.max(...pts.map((p) => p.z)) / S);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const k = this.key(i, j);
+        if (!this.buckets.has(k)) this.buckets.set(k, []);
+        this.buckets.get(k)!.push(s);
+      }
+    }
+  }
+
+  covers(x: number, z: number): boolean {
+    const list = this.buckets.get(this.key(Math.floor(x / Footprints.SIZE), Math.floor(z / Footprints.SIZE)));
+    return !!list && list.some((s) => inSolid(s, x, z));
+  }
+}
+
 /**
  * Drops the closing duplicate, repeated points and (nearly) collinear
  * vertices, which would otherwise each cost a wall quad. Returns the ring
@@ -636,6 +664,8 @@ export type BuildingsResult = {
   chunks: Map<string, MeshBuilder>;
   buildings: ExtrudedBuilding[];
   landmarks: Landmark[];
+  /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
+  covers: (x: number, z: number) => boolean;
   counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number };
 };
 
@@ -708,6 +738,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     familyTop.set(fam, Math.max(familyTop.get(fam) ?? 0, h.height));
   }
   const famTopAbs = new Map<string, number>();
+  const cover = new Footprints();
   for (const s of visible) {
     const h = heights.get(s.key)!;
     if (h.minHeight >= h.height - 0.1) continue;
@@ -736,6 +767,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       continue;
     }
     mb.prism(s, bottom, top, wall, roof, grounded, !hide);
+    if (grounded && !hide && top - bottom > 2.5) cover.add(s);
     if (hide) counts.hidden++;
     counts[h.source]++;
     if (s.isPart) counts.parts++;
@@ -765,7 +797,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   landmarks.sort((a, b) => a.id.localeCompare(b.id) || a.osm.localeCompare(b.osm));
 
   counts.blocks = addBlocks(data, overrides, new Set(solids.map((s) => s.key)), chunkAt);
-  return { chunks, buildings, landmarks, counts };
+  return { chunks, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z) };
 }
 
 /** Default height of an invisible block (a road block, a fence line), m. */

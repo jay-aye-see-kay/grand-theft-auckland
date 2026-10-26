@@ -66,6 +66,14 @@ export class GroundRaster {
     if (this.classes[k] < id) this.classes[k] = id;
   }
 
+  /** Class at global lattice point (c, r) (local (c, r) * CELL_SIZE), 0 outside the raster. */
+  lattice(c: number, r: number): number {
+    const cc = c - this.c0;
+    const rr = r - this.r0;
+    if (cc < 0 || rr < 0 || cc >= this.cols || rr >= this.rows) return 0;
+    return this.classes[rr * this.cols + cc];
+  }
+
   at(x: number, z: number): number {
     const cc = Math.round(x / CELL_SIZE) - this.c0;
     const rr = Math.round(z / CELL_SIZE) - this.r0;

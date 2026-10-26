@@ -1,14 +1,14 @@
 {
   "spawn": {"x":-17.96,"y":3.44,"z":16.7,"heading":2.8049},
   "cars": [
-    {"osm":"way/926609653","name":"Galway Street","x":-19.41,"y":4.12,"z":18.94,"heading":-0.347,"pitch":-0.0038,"roll":0.0117,"paint":8011192},
-    {"osm":"way/149508232","name":"Commerce Street","x":11.82,"y":4.05,"z":53.24,"heading":-1.9117,"pitch":-0.0099,"roll":-0.0262,"paint":15329764},
-    {"osm":"way/1060960693","name":"Queen Street","x":-135.75,"y":4.29,"z":77.99,"heading":-1.8227,"pitch":0.0037,"roll":0.0245,"paint":11120051},
-    {"osm":"way/52729793","name":"Queen Street","x":-229.05,"y":7.99,"z":421.32,"heading":1.3048,"pitch":-0.0317,"roll":0.019,"paint":7215652},
-    {"osm":"way/624534623","name":"Albert Street","x":-284.01,"y":14.7,"z":113.7,"heading":1.2205,"pitch":-0.079,"roll":0.0206,"paint":1911893},
-    {"osm":"way/1423232816","name":"Shortland Street","x":-50.46,"y":10.12,"z":271.5,"heading":-0.3844,"pitch":0.0838,"roll":-0.006,"paint":3103292},
-    {"osm":"way/605652622","name":"Victoria Street West","x":-289.12,"y":11.65,"z":500.15,"heading":-0.3584,"pitch":-0.0665,"roll":-0.0445,"paint":13153418},
-    {"osm":"way/448067166","name":"Queen Street","x":-521.42,"y":45.18,"z":1270.79,"heading":-1.9471,"pitch":0.0831,"roll":-0.0542,"paint":11542556},
-    {"osm":"way/52729424","name":"Karangahape Road","x":-701.56,"y":64.92,"z":1503.08,"heading":2.9576,"pitch":-0.007,"roll":-0.0314,"paint":1776413}
+    {"osm":"way/926609653","name":"Galway Street","x":-19.41,"y":4.12,"z":18.94,"heading":-0.347,"pitch":0.0015,"roll":-0.0043,"paint":8011192},
+    {"osm":"way/149508232","name":"Commerce Street","x":11.82,"y":4.06,"z":53.24,"heading":-1.9117,"pitch":-0.0049,"roll":-0.002,"paint":15329764},
+    {"osm":"way/1060960693","name":"Queen Street","x":-135.75,"y":4.3,"z":77.99,"heading":-1.8227,"pitch":0.0037,"roll":-0.0042,"paint":11120051},
+    {"osm":"way/52729793","name":"Queen Street","x":-229.05,"y":8.04,"z":421.32,"heading":1.3048,"pitch":-0.0255,"roll":-0.0018,"paint":7215652},
+    {"osm":"way/624534623","name":"Albert Street","x":-284.01,"y":14.68,"z":113.7,"heading":1.2205,"pitch":-0.0534,"roll":0.0151,"paint":1911893},
+    {"osm":"way/1423232816","name":"Shortland Street","x":-50.46,"y":10.08,"z":271.5,"heading":-0.3844,"pitch":0.0837,"roll":0.0169,"paint":3103292},
+    {"osm":"way/605652622","name":"Victoria Street West","x":-289.12,"y":11.71,"z":500.15,"heading":-0.3584,"pitch":-0.0577,"roll":-0.0203,"paint":13153418},
+    {"osm":"way/448067166","name":"Queen Street","x":-521.42,"y":45.27,"z":1270.79,"heading":-1.9471,"pitch":0.084,"roll":-0.0141,"paint":11542556},
+    {"osm":"way/52729424","name":"Karangahape Road","x":-701.56,"y":64.9,"z":1503.08,"heading":2.9576,"pitch":-0.0046,"roll":-0.0128,"paint":1776413}
   ]
 }
