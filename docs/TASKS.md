@@ -26,7 +26,10 @@ and verified.
     town.
   - Done when: you can drive the Corolla over real hills with no seams
     between chunks. A smoke check covers this.
-- [ ] **T3 Buildings.** Depends on T2.
+- [x] **T3 Buildings.** Done: 2486 outlines + 367 parts, 1 draw call per chunk, 493 KB total.
+  Skyline reads right (Sky Tower parts from OSM). Glitches for T6: w1173588444 (PwC crown 200 m),
+  w766845442 (height=1), w464644562 (80 m kiosk from LiDAR), r12738128 (car park at 9 m),
+  w24252617 (Glasshouse 3.2 m). Far chunks (e.g. Sky Tower from the harbour) need T13.
   - Extrude footprints using the height rules in HANDOVER.md, seated on
     the terrain.
   - Merge them per chunk, with colliders.
