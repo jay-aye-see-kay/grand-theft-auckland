@@ -35,7 +35,10 @@ and verified.
   - Merge them per chunk, with colliders.
   - Done when: the skyline matches a photo of the CBD from the harbour,
     you can't drive through buildings, and the draw-call budget holds.
-- [ ] **T4 Roads v1.** Depends on T2.
+- [x] **T4 Roads v1.** Done: roads/footpaths/flush kerbs draped on terrain (1 MB, 452k tris),
+  land-use ground tint. `probe(x,z).surface` in debug. T6 glitches: CMJ flyover ramps flat
+  (w119020515, w620912278), speckle by K Rd bridge (w8371382), lower Queen St at Britomart is
+  pedestrian paving (w51185933, w1250664764). Kerbside parking: lower Queen St (-147,113)→(-245,494).
   - Road, footpath and kerb polygons from OSM centrelines, draped on the
     terrain, with filtered highway classes.
   - Done when: Queen St, Customs St, Albert St and K Road are driveable
@@ -52,6 +55,10 @@ and verified.
 - [ ] **T7 Water.**
   - Harbour plane, coastline and wharf edges. The car should splash and
     reset, not fall forever.
+- [ ] **T7b Performance pass.** Roads alone are 452k triangles and headless fps fell to
+  about 11. Simplify road strips (fewer samples on straight flat runs, merge footpath
+  and kerb), check triangle counts per view, add a `?debug` tris counter, and keep a
+  phone-class budget (aim < 300k triangles in view, < 100 draw calls). Smoke check it.
 - [ ] **T8 Attribution.** OSM and LINZ credits on the title screen.
 - [ ] **Milestone: tier 1 live.** Add a phone test list to Questions, then carry on.
 
