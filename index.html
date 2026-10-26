@@ -11,13 +11,15 @@
   <body>
     <div id="app">
       <div id="hud" class="hidden">
-        <div class="speedo"><span id="speed">0</span><small>km/h</small></div>
+        <div id="speedo" class="speedo hidden"><span id="speed">0</span><small>km/h</small></div>
         <div id="fps"></div>
-        <div class="keys">W/S or ↑/↓ drive · A/D steer · Space handbrake · R flip</div>
+        <button id="mute" aria-label="Mute">🔊</button>
+        <div id="prompt"></div>
+        <div class="keys">WASD move/drive · Shift run · Space jump/handbrake · F get in/out · R flip · M mute</div>
       </div>
       <div id="splash">
         <h1>Grand Theft<br /><span>Auckland</span></h1>
-        <p class="sub">M0 · test town · purple '95 Corolla</p>
+        <p class="sub">Test town · purple '95 Corolla · get in, get out, make some noise</p>
         <p id="status">Loading…</p>
       </div>
     </div>

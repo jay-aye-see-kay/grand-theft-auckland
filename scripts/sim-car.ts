@@ -24,7 +24,7 @@ function run(world: RAPIER.World, car: Car, controls: DriveControls, seconds: nu
   for (let i = 0; i < steps; i++) {
     car.update(controls, DT);
     world.step();
-    car.afterStep();
+    car.afterStep(DT);
     if (log && i % 60 === 59) log((i + 1) * DT);
   }
 }
@@ -45,7 +45,7 @@ const heading = (c: Car) => {
   for (let i = 0; i < 25 * 60; i++) {
     car.update({ ...idle, throttle: 1 }, DT);
     world.step();
-    car.afterStep();
+    car.afterStep(DT);
     if (t100 < 0 && car.forwardSpeed() * 3.6 >= 100) t100 = (i + 1) * DT;
     if (i % 120 === 119) accel.push(kmh(car));
   }
@@ -55,7 +55,7 @@ const heading = (c: Car) => {
   for (let i = 0; i < 20 * 60; i++) {
     car.update({ ...idle, brake: 1 }, DT);
     world.step();
-    car.afterStep();
+    car.afterStep(DT);
     if (car.forwardSpeed() < 0.5) { stopT = (i + 1) * DT; break; }
   }
   console.log(`braking from top: ${stopT.toFixed(1)}s, ${(car.body.translation().x - x0).toFixed(1)}m`);

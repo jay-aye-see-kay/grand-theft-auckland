@@ -13,9 +13,15 @@ const CELL = BLOCK + ROAD;
 const SIZE = BLOCKS * CELL + ROAD;
 const HALF = SIZE / 2;
 
+export interface ParkingSpot {
+  pos: THREE.Vector3;
+  heading: number;
+  paint: number;
+}
+
 export interface Town {
-  spawn: THREE.Vector3;
-  spawnHeading: number;
+  /** Parked cars; the first is the player's purple Corolla. */
+  parking: ParkingSpot[];
   /** Advance dynamic props' visuals after a physics step. */
   sync(): void;
 }
@@ -59,7 +65,14 @@ export function buildTown(scene: THREE.Scene, world: RAPIER.World): Town {
     new THREE.MeshLambertMaterial({ color: 0x3b3d40 }),
   );
   scene.add(asphalt);
-  addStaticBox(world, ground, 2000, 0.5, 2000, new THREE.Vector3(0, -0.5, 0));
+  // Flat heightfield for the ground. One giant thin box would be simpler, but
+  // Rapier's character controller loses precision against it and the player
+  // sinks and sticks. A heightfield also gives us hills later (M2).
+  const cells = 8;
+  world.createCollider(
+    RAPIER.ColliderDesc.heightfield(cells, cells, new Float32Array((cells + 1) * (cells + 1)), { x: 4000, y: 1, z: 4000 }).setFriction(0.9),
+    ground,
+  );
 
   const statics: THREE.BufferGeometry[] = [];
   const markings: THREE.BufferGeometry[] = [];
@@ -187,9 +200,14 @@ export function buildTown(scene: THREE.Scene, world: RAPIER.World): Town {
   sync();
 
   return {
-    // Start on the road west of the plaza, lined up with the first ramp.
-    spawn: new THREE.Vector3(cx - BLOCK / 2 - ROAD / 2, 1.2, cz),
-    spawnHeading: 0,
+    // heading 0 faces +x (east), PI/2 faces -z (north). NZ parks on the left.
+    parking: [
+      // Purple '95 Corolla on the road west of the plaza, lined up with the first ramp.
+      { pos: new THREE.Vector3(cx - BLOCK / 2 - ROAD / 2, 1.2, cz), heading: 0, paint: 0x7a3db8 },
+      { pos: new THREE.Vector3(cx - 6, 1.2, cz + BLOCK / 2 + ROAD / 2 - 3.5), heading: 0, paint: 0xe9e9e4 },
+      { pos: new THREE.Vector3(cx + BLOCK / 2 + ROAD / 2 - 3.5, 1.2, cz + 8), heading: Math.PI / 2, paint: 0xa9adb3 },
+      { pos: new THREE.Vector3(cx + 10, 1.2, cz - BLOCK / 2 - ROAD / 2 + 3.5), heading: Math.PI, paint: 0x6e1a24 },
+    ],
     sync,
   };
 }

@@ -41,7 +41,7 @@ Radio, story, weapons and a big map come later.
 | Milestone | Goal | Done when |
 |---|---|---|
 | **M0 Skeleton** ✅ | Vite + Three + Rapier, deploy pipeline, touch/keyboard/gamepad input | A car drives on your phone |
-| **M1 Feel** | Tune handling and camera; on-foot character; enter/exit cars | Driving an empty grid is fun. **Spend real time here.** |
+| **M1 Feel** 🚧 | ✅ on foot, enter/exit, sound, skid marks · ⏳ handling and camera tuning | Driving an empty grid is fun |
 | **M2 Auckland** | OSM/LINZ chunk pipeline for the city centre; hand-made Sky Tower | You recognise Queen St from the driver's seat |
 | **M3 Life** | Traffic on the road graph (driving on the **left**), pedestrians | The city moves without you |
 | **M4 Game** | One mission, wanted level, police chase, HUD and minimap | There's a goal, and a way to fail |
@@ -65,8 +65,10 @@ with the Sky Tower always on the skyline.
 
 ## Known follow-ups
 
-- The bundle is about 4.9 MB (1.8 MB gzipped), mostly Rapier's inlined WASM.
-  Fix: switch to the non-`compat` Rapier build and load the `.wasm` file
-  separately, plus a loading bar.
-- Handling numbers come from the headless sim. They still need tuning by
-  hand on real phones (M1).
+- **Handling and camera feel:** the numbers come from the headless sim, not
+  from a thumb on a real phone. Next step: a `?debug` slider panel so tuning
+  can happen on the phone.
+- **Download size:** about 1.4 MB gzipped (the physics WASM is about 1.2 MB of
+  that). A loading bar would make the first load on mobile data feel
+  shorter.
+- **Effects:** tyre smoke, and crates that break apart.

@@ -42,6 +42,7 @@ const WHEEL_CONNECTION_Y = -0.1;
 
 const FRONT = [0, 1];
 const REAR = [2, 3];
+const IDLE: DriveControls = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -56,6 +57,16 @@ export class Car {
   private readonly wheelSpinners: THREE.Group[] = [];
   private readonly brakeLights: THREE.MeshStandardMaterial;
   private steerAngle = 0;
+  private braking = false;
+  private handbrake = false;
+  private readonly prevVel = new THREE.Vector3();
+
+  /** Throttle applied on the last step, 0..1 (for engine sound). */
+  throttle = 0;
+  /** How hard the tyres are sliding, 0..1 (skid marks, screech). */
+  skid = 0;
+  /** Largest sudden velocity change since last read, m/s (crash sounds, camera shake). */
+  impact = 0;
 
   // Physics poses either side of the latest fixed step, for interpolation.
   private readonly prevPos = new THREE.Vector3();
@@ -63,7 +74,7 @@ export class Car {
   private readonly currPos = new THREE.Vector3();
   private readonly currQuat = new THREE.Quaternion();
 
-  constructor(world: RAPIER.World, spawn: THREE.Vector3, heading = 0) {
+  constructor(world: RAPIER.World, spawn: THREE.Vector3, heading = 0, paint = COROLLA.paint) {
     const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
 
     this.body = world.createRigidBody(
@@ -117,7 +128,7 @@ export class Car {
       this.vehicle.setWheelFrictionSlip(i, i < 2 ? TUNING.frontGrip : TUNING.rearGrip);
     }
 
-    const model = buildCorolla();
+    const model = buildCorolla(paint);
     model.root.position.y = MESH_OFFSET_Y;
     this.object.add(model.root);
     this.brakeLights = model.brakeLights;
@@ -148,8 +159,12 @@ export class Car {
     return _q.set(r.x, r.y, r.z, r.w);
   }
 
-  /** Apply controls and run the vehicle controller. Call before world.step(). */
-  update(controls: DriveControls, dt: number): void {
+  /**
+   * Apply controls and run the vehicle controller. Call before world.step().
+   * Pass null for a parked car with nobody in it: brakes on, wheels straight.
+   */
+  update(driver: DriveControls | null, dt: number): void {
+    const controls = driver ?? IDLE;
     // Rapier keeps user forces between steps, so clear last step's first.
     this.body.resetForces(true);
     const speed = this.forwardSpeed();
@@ -174,6 +189,10 @@ export class Car {
       if (speed > 1) brake = Math.max(brake, TUNING.brakeForce * controls.brake);
       else if (speed > -TUNING.topSpeed * 0.3) engine = -TUNING.reverseForce * controls.brake;
     }
+    if (!driver) brake = TUNING.brakeForce;
+    this.throttle = engine > 0 ? controls.throttle : 0;
+    this.braking = brake > 0 && !!driver;
+    this.handbrake = controls.handbrake;
     // Front-wheel drive, like the real thing.
     for (const i of FRONT) v.setWheelEngineForce(i, engine);
     for (const i of REAR) v.setWheelEngineForce(i, 0);
@@ -193,12 +212,29 @@ export class Car {
       const drag = vel.multiplyScalar(-TUNING.dragCoefficient * s);
       this.body.addForce({ x: drag.x, y: drag.y - TUNING.downforce * s * s, z: drag.z }, true);
     }
-    this.brakeLights.emissiveIntensity = brake > 0 || controls.handbrake ? 1.4 : 0.15;
+    this.brakeLights.emissiveIntensity = this.braking || controls.handbrake ? 1.4 : 0.15;
     v.updateVehicle(dt);
   }
 
   /** Call after world.step(). */
-  afterStep(): void {
+  afterStep(dt: number): void {
+    const lv = this.body.linvel();
+    const vel = new THREE.Vector3(lv.x, lv.y, lv.z);
+    const dv = vel.clone().sub(this.prevVel);
+    dv.y += 9.81 * dt; // falling isn't an impact; hitting something is
+    this.impact = Math.max(this.impact, dv.length());
+    this.prevVel.copy(vel);
+
+    let grounded = false;
+    for (let i = 0; i < 4; i++) grounded ||= this.vehicle.wheelIsInContact(i);
+    const right = _v.set(0, 0, 1).applyQuaternion(this.rotation());
+    const lateral = Math.abs(vel.dot(right));
+    const speed = Math.abs(this.forwardSpeed());
+    let skid = THREE.MathUtils.clamp((lateral - 2) / 5, 0, 1);
+    if (this.braking && speed > 6) skid = Math.max(skid, 0.5);
+    if (this.handbrake && speed > 4) skid = Math.max(skid, 0.7);
+    this.skid = grounded ? skid : 0;
+
     this.prevPos.copy(this.currPos);
     this.prevQuat.copy(this.currQuat);
     this.syncPose();
@@ -231,10 +267,21 @@ export class Car {
     this.body.setRotation(q, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.prevVel.set(0, 0, 0);
     this.steerAngle = 0;
     this.syncPose();
     this.prevPos.copy(this.currPos);
     this.prevQuat.copy(this.currQuat);
+  }
+
+  /** World-space tyre contact point and axle direction, for skid marks. */
+  wheelContact(i: number, point: THREE.Vector3, axle: THREE.Vector3): boolean {
+    if (!this.vehicle.wheelIsInContact(i)) return false;
+    const p = this.vehicle.wheelContactPoint(i);
+    if (!p) return false;
+    point.set(p.x, p.y, p.z);
+    axle.set(0, 0, 1).applyQuaternion(this.rotation());
+    return true;
   }
 
   isUpsideDown(): boolean {

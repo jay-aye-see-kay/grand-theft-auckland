@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // Low-poly 1995 (E100-generation) Corolla sedan, built from extruded side
 // profiles so it has the right silhouette without any external assets.
@@ -134,8 +135,9 @@ export function buildCorolla(paintColor = COROLLA.paint): CorollaModel {
     }
   }
 
-  for (const child of root.children) child.castShadow = true;
-  return { root, brakeLights };
+  // ~35 parts would be ~35 draw calls per car; bake them down to 4.
+  const body = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.35, roughness: 0.45 });
+  return { root: bake(root, [headlight, amber, brakeLights], body), brakeLights };
 }
 
 /** One wheel: tyre plus hubcap, spinning about its local z axis. */
@@ -159,5 +161,31 @@ export function buildWheel(): THREE.Group {
     new THREE.MeshStandardMaterial({ color: 0x55595d, metalness: 0.5, roughness: 0.5 }),
   );
   wheel.add(spoke);
-  return wheel;
+  return bake(wheel, [], wheelMaterial);
+}
+
+const wheelMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.4, roughness: 0.6 });
+
+/**
+ * Merge a group of meshes into one mesh per listed material, plus one mesh
+ * for everything else with each part's colour baked into vertex colours.
+ */
+function bake(group: THREE.Group, keep: THREE.Material[], rest: THREE.Material): THREE.Group {
+  group.updateMatrixWorld(true);
+  const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  group.traverse((o) => {
+    if (!(o instanceof THREE.Mesh)) return;
+    const mat = o.material as THREE.MeshStandardMaterial;
+    let g = o.geometry.clone().applyMatrix4(o.matrixWorld);
+    if (g.index) g = g.toNonIndexed();
+    g.deleteAttribute('uv');
+    const colors = new Float32Array(g.attributes.position.count * 3);
+    for (let i = 0; i < colors.length; i += 3) mat.color.toArray(colors, i);
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const target = keep.includes(mat) ? mat : rest;
+    buckets.set(target, [...(buckets.get(target) ?? []), g]);
+  });
+  const out = new THREE.Group();
+  for (const [mat, geos] of buckets) out.add(new THREE.Mesh(mergeGeometries(geos), mat));
+  return out;
 }
