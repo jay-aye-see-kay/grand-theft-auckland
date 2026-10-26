@@ -89,4 +89,9 @@ After tier 3, add the next most valuable tasks here and keep going.
 
 ## Questions for the owner
 
-(none yet)
+- **Deploys from `main` are blocked by the `github-pages` environment** (it
+  only allows the repo's default branch, `claude/gta-style-auckland-game-pffg64`).
+  Workaround in use: every verified push to `main` is also fast-forwarded to
+  that branch, which deploys. To fix properly: Settings → General → default
+  branch = `main`, and Settings → Environments → github-pages → allow `main`.
+  Then the old branch can be deleted.

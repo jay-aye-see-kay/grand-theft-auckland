@@ -137,7 +137,10 @@ assets/landmarks/*.ts     hand-made landmark models built in code like
 
 ## How to run this (orchestration)
 
-All work happens on `main` (CI deploys it to Pages). The owner wants this to
+All work happens on `main`. Until the owner allows `main` in the
+`github-pages` environment, deploy by also pushing `main` to
+`claude/gta-style-auckland-game-pffg64` (`git push origin main main:claude/gta-style-auckland-game-pffg64`).
+Push half-finished work as backups to `backup/wip` (it doesn't deploy). The owner wants this to
 run unattended and **never stop**: there is no finish line. When tier 3 is
 done, add the next most valuable tasks to TASKS.md and keep going.
 
