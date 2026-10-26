@@ -130,7 +130,7 @@ try {
     await page.context().close(); // two games rendering at once starves the software renderer
   }
 
-  // Auckland terrain and buildings: streaming, real heights, physics matching
+  // Auckland terrain, buildings and roads: streaming, real heights, physics matching
   // the data, hill climbing, chunk seams, solid buildings and draw calls.
   {
     const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }));
@@ -160,6 +160,22 @@ try {
       worst = Math.max(worst, ray === null ? Infinity : Math.abs(ray - ground));
     }
     check(worst < 0.02, `physics heightfield matches terrain data (worst ${worst.toFixed(3)} m)`);
+
+    // Roads: the layer streams in with the terrain, and the land use under
+    // points on the centrelines of the main streets (OSM way midpoints) is road.
+    check(s.roadChunks >= 9, `road chunks loaded near spawn (${s.roadChunks})`);
+    const streets = [
+      ['Queen St', -229.7, 431.9], ['Queen St (lower)', -180.5, 242.6], ['Customs St East', -28.8, 72.7],
+      ['Customs St West', -201.0, 11.6], ['Albert St', -275.8, 107.2], ['K Road', -587.9, 1497.3], ['K Road (west)', -793.9, 1479.1],
+    ];
+    const offRoad = [];
+    for (const [name, x, z] of streets) {
+      const { surface } = await game('probe', x, z);
+      if (surface !== 'road') offRoad.push(`${name}: ${surface}`);
+    }
+    check(offRoad.length === 0, `main streets are road (${streets.length - offRoad.length}/${streets.length})${offRoad.length ? ': ' + offRoad.join(', ') : ''}`);
+    const park = (await game('probe', 221, 283)).surface;
+    check(park === 'grass', `Emily Place Reserve is grass (${park})`);
 
     // Drive the purple Corolla from the current spot towards a target while
     // tracking the chassis' clearance above the terrain under it.
@@ -202,7 +218,7 @@ try {
 
     // Upper Queen St towards K Road: ~10% grade, crossing the z = 1376 seam.
     await game('teleportCar', 0, -532, 1268, Math.atan2(-169, -61));
-    let r = await drive((p) => p[2] > 1420, 16000);
+    let r = await drive((p) => p[2] > 1420, 40000);
     const gain = r.end[1] - r.start[1];
     check(gain > 8, `drives uphill on Queen St (+${gain.toFixed(1)} m, ${r.start[2].toFixed(0)} -> ${r.end[2].toFixed(0)} z, ${r.kmh.toFixed(0)} km/h)`);
     check(r.start[2] < 1376 && r.end[2] > 1376, 'crosses a chunk seam going uphill');
@@ -211,9 +227,44 @@ try {
 
     // Customs St East across the x = 6 seam, east of Britomart.
     await game('teleportCar', 0, -90, 51, Math.atan2(-81, 228));
-    r = await drive((p) => p[0] > 70, 12000);
+    r = await drive((p) => p[0] > 70, 40000);
     check(r.start[0] < 6 && r.end[0] > 6, `crosses a chunk seam on the flat (${r.start[0].toFixed(0)} -> ${r.end[0].toFixed(0)} x)`);
     check(r.minClear > 0.2 && r.maxClear < 1.4 && r.maxStep < 0.5, `no seam bump on the flat (clearance ${r.minClear.toFixed(2)}..${r.maxClear.toFixed(2)} m, worst jump ${r.maxStep.toFixed(2)})`);
+
+    // Lower Queen St, gently uphill from near Customs St towards Wellesley
+    // St: about 380 m dead straight (heading within a degree), 6.6 m of road
+    // between buildings. Hands off the wheel, the car should stay on the
+    // asphalt and clear of the shopfronts.
+    {
+      const A = [-147, 113];
+      const B = [-245, 494];
+      const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      const ux = (B[0] - A[0]) / len;
+      const uz = (B[1] - A[1]) / len;
+      await game('teleportCar', 0, A[0] + ux * 12, A[1] + uz * 12, Math.atan2(-uz, ux));
+      await page.waitForTimeout(600);
+      const start = (await state(page)).cars[0];
+      let samples = 0;
+      let onRoad = 0;
+      let maxOff = 0;
+      let last = await state(page);
+      await page.keyboard.down('KeyW');
+      const t0 = Date.now();
+      while (Date.now() - t0 < 40000) {
+        await page.waitForTimeout(80);
+        last = await state(page);
+        const p = last.cars[0];
+        maxOff = Math.max(maxOff, Math.abs((p[0] - A[0]) * uz - (p[2] - A[1]) * ux));
+        samples++;
+        if (last.surface === 'road') onRoad++;
+        if ((p[0] - A[0]) * ux + (p[2] - A[1]) * uz > len - 40) break;
+      }
+      await page.keyboard.up('KeyW');
+      const run = dist(start, last.cars[0]);
+      await page.screenshot({ path: `${shots}/11-queen-st-drive.png` });
+      check(run > 100 && last.cars[0][1] > start[1], `drives up lower Queen St (${run.toFixed(0)} m, +${(last.cars[0][1] - start[1]).toFixed(1)} m, ${last.speedKmh.toFixed(0)} km/h)`);
+      check(onRoad / samples > 0.85 && maxOff < 4.5, `stays on Queen St's road (${onRoad}/${samples} samples on road, up to ${maxOff.toFixed(1)} m off the centreline)`);
+    }
 
     // Buildings: loaded with the terrain, seated on it, and solid. The Chief
     // Post Office (Britomart station, tagged 20 m) has a slanted east wall
@@ -230,9 +281,12 @@ try {
     /** Signed distance from the wall line, positive on the open (east) side. */
     const wallDist = (p) =>
       ((WALL[1][1] - WALL[0][1]) * (p[0] - WALL[0][0]) - (WALL[1][0] - WALL[0][0]) * (p[2] - WALL[0][1])) / wallLen;
-    const ram = async (keys, ms) => {
+    // Holds the keys until `settled` has held for a second (or `ms` runs
+    // out): slow CI runners can simulate well under real time.
+    const ram = async (keys, ms, settled) => {
       let minD = Infinity;
       let peak = 0;
+      let since = null;
       for (const k of keys) await page.keyboard.down(k);
       const t0 = Date.now();
       let last = await state(page);
@@ -242,13 +296,16 @@ try {
         const p = last.mode === 'car' ? last.cars[0] : last.player;
         minD = Math.min(minD, wallDist(p));
         peak = Math.max(peak, last.mode === 'car' ? last.speedKmh : 0);
+        if (!settled({ last, minD, peak })) since = null;
+        else if (since === null) since = Date.now();
+        else if (Date.now() - since > 1000) break;
       }
       for (const k of keys) await page.keyboard.up(k);
       return { minD, peak, last };
     };
     await game('teleportCar', 0, -2, -38, Math.PI);
     await page.waitForTimeout(600);
-    r = await ram(['KeyW'], 6000);
+    r = await ram(['KeyW'], 30000, ({ last, peak }) => peak > 15 && last.speedKmh < 3);
     // Chassis half-length is 2.1 m: its centre should stop about that far out.
     check(r.peak > 15 && r.minD > 1, `car can't drive through a building (hit at ${r.peak.toFixed(0)} km/h, centre stopped ${r.minD.toFixed(2)} m from the wall)`);
     check(r.last.speedKmh < 5, `car stops at the wall (${r.last.speedKmh.toFixed(1)} km/h)`);
@@ -260,7 +317,7 @@ try {
     await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 8000 }).catch(() => {});
     await game('placePlayer', -5, -38, Math.PI);
     await page.waitForTimeout(300);
-    r = await ram(['KeyW', 'ShiftLeft'], 5000);
+    r = await ram(['KeyW', 'ShiftLeft'], 30000, ({ minD }) => minD < 1.5);
     // Capsule radius is 0.3 m; it should reach the wall and stay outside it.
     check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2, `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall)`);
 

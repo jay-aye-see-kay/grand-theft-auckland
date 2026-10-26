@@ -84,7 +84,7 @@ function ringCentroid(r: Ring): Local {
   return { x: cx / (3 * a), z: cz / (3 * a) };
 }
 
-function inRing(r: Ring, x: number, z: number): boolean {
+export function inRing(r: Ring, x: number, z: number): boolean {
   let inside = false;
   for (let k = 0, l = r.length - 1; k < r.length; l = k++) {
     const a = r[k];
@@ -136,7 +136,7 @@ function cleanRing(points: Ring, positive: boolean): Ring | null {
 }
 
 /** Joins member ways end to end into closed rings (node id lists). Unclosable pieces are dropped. */
-function assembleRings(ways: OsmWay[]): number[][] {
+export function assembleRings(ways: OsmWay[]): number[][] {
   const pieces = ways.map((w) => w.nodes.slice()).filter((n) => n.length >= 2);
   const rings: number[][] = [];
   while (pieces.length) {
@@ -154,7 +154,7 @@ function assembleRings(ways: OsmWay[]): number[][] {
   return rings;
 }
 
-function nodesLocal(data: OsmData, nodes: number[]): Ring | null {
+export function nodesLocal(data: OsmData, nodes: number[]): Ring | null {
   const out: Ring = [];
   for (const ref of nodes) {
     const n = data.nodes.get(ref);
@@ -404,11 +404,11 @@ function tagColour(v: string | undefined): number | null {
   return NAMED[s.replace(/[\s_-]/g, '')] ?? null;
 }
 
-const toLinear = (c: number) => {
+export const toLinear = (c: number) => {
   const v = c / 255;
   return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
 };
-const rgb = (hex: number): [number, number, number] => [toLinear((hex >> 16) & 255), toLinear((hex >> 8) & 255), toLinear(hex & 255)];
+export const rgb = (hex: number): [number, number, number] => [toLinear((hex >> 16) & 255), toLinear((hex >> 8) & 255), toLinear(hex & 255)];
 const mix = (a: number[], b: number[], t: number) => a.map((v, k) => v + (b[k] - v) * t) as [number, number, number];
 
 /**
@@ -449,15 +449,18 @@ export class MeshBuilder {
   readonly col: number[] = [];
   readonly idx: number[] = [];
   readonly colliderIdx: number[] = [];
+  /** Per-vertex draw layer (roads only; buildings leave it all 0 and the file omits it). */
+  readonly lay: number[] = [];
 
   get vertexCount() {
     return this.pos.length / 3;
   }
 
-  vertex(x: number, y: number, z: number, n: [number, number, number], c: readonly number[]): number {
+  vertex(x: number, y: number, z: number, n: readonly number[], c: readonly number[], layer = 0): number {
     this.pos.push(x, y, z);
-    this.nor.push(...n);
+    this.nor.push(n[0], n[1], n[2]);
     this.col.push(c[0], c[1], c[2]);
+    this.lay.push(layer);
     return this.pos.length / 3 - 1;
   }
 
@@ -535,7 +538,8 @@ export class MeshBuilder {
     }
     const normals = new Int8Array(this.nor.map((v) => Math.round(v * 127)));
     const colours = new Uint8Array(this.col.map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255)));
-    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices: Uint32Array.from(this.idx), colliderIndices: Uint32Array.from(this.colliderIdx) };
+    const layers = this.lay.some((v) => v) ? Uint8Array.from(this.lay) : undefined;
+    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices: Uint32Array.from(this.idx), colliderIndices: Uint32Array.from(this.colliderIdx), layers };
   }
 }
 

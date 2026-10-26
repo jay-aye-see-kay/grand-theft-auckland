@@ -5,8 +5,8 @@ import { ChunkStreamer } from '../city/streamer.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
 // The real Auckland CBD, generated offline by tools/citygen into
-// public/city/<area>/ and streamed in by chunk: LiDAR terrain and OSM
-// buildings so far; roads (T4) add their own per-chunk layer.
+// public/city/<area>/ and streamed in by chunk: LiDAR terrain tinted by
+// land use, OSM buildings, and OSM roads draped on the terrain.
 
 const AREA = 'cbd';
 /** Ground within this radius of the spawn is loaded before play starts. */
@@ -68,6 +68,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
     ensureLoaded,
     update: (focus) => terrain.update(focus.x, focus.z),
     sync: () => {},
+    surfaceAt: (x, z) => terrain.surfaceAt(x, z),
     debugInfo: () => terrain.stats(),
   };
 }

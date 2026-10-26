@@ -43,6 +43,8 @@ export interface GameMap {
   update(focus: THREE.Vector3): void;
   /** After physics: move dynamic props' visuals. */
   sync(): void;
+  /** Surface under a point ('road', 'footpath', 'grass', ...), null if unknown or not loaded. */
+  surfaceAt?(x: number, z: number): string | null;
   /** Extra numbers for ?debug and the smoke test. */
   debugInfo(): Record<string, number>;
 }

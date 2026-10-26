@@ -98,3 +98,41 @@ export function buildTerrainChunk(dem: Raster, grid: Grid, i: number, j: number)
   }
   return { i, j, cm, minY: lo / 100, maxY: hi / 100 };
 }
+
+/**
+ * The game's collision surface, reproduced offline: lattice heights from
+ * groundCm() (memoised) joined by the same two triangles per cell as
+ * TerrainChunk.heightAt() and Rapier's heightfield. Chunk corners sit on the
+ * global lattice, so one global formula matches every chunk.
+ */
+export class TerrainSampler {
+  private readonly dem: Raster;
+  private readonly cache = new Map<number, number>();
+
+  constructor(dem: Raster) {
+    this.dem = dem;
+  }
+
+  /** Height (m) of lattice point (c, r), i.e. local (c * CELL_SIZE, r * CELL_SIZE). */
+  lattice(c: number, r: number): number {
+    const key = (c + 0x8000) * 0x10000 + (r + 0x8000);
+    let h = this.cache.get(key);
+    if (h === undefined) this.cache.set(key, (h = groundCm(this.dem, c * CELL_SIZE, r * CELL_SIZE) / 100));
+    return h;
+  }
+
+  heightAt(x: number, z: number): number {
+    const lx = x / CELL_SIZE;
+    const lz = z / CELL_SIZE;
+    const c = Math.floor(lx);
+    const r = Math.floor(lz);
+    const fx = lx - c;
+    const fz = lz - r;
+    const h00 = this.lattice(c, r);
+    const h10 = this.lattice(c + 1, r);
+    const h01 = this.lattice(c, r + 1);
+    const h11 = this.lattice(c + 1, r + 1);
+    if (fx + fz <= 1) return h00 + (h10 - h00) * fx + (h01 - h00) * fz;
+    return h11 + (h01 - h11) * (1 - fx) + (h10 - h11) * (1 - fz);
+  }
+}

@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import type { TerrainSamples } from './format.ts';
+import type { GroundSamples, TerrainSamples } from './format.ts';
 import { buildTerrainGeometry, type TerrainLayout } from './terrain-mesh.ts';
 
 // One 250 m chunk of ground: height samples, a render mesh per level of
@@ -20,17 +20,19 @@ export class TerrainChunk {
   readonly size: number;
   private readonly samples: TerrainSamples;
   private readonly layout: TerrainLayout;
+  private readonly ground: GroundSamples | undefined;
   private readonly meshes: (THREE.Mesh | undefined)[] = [];
   private collider: RAPIER.Collider | null = null;
   lod: Lod | null = null;
 
-  constructor(i: number, j: number, x: number, z: number, samples: TerrainSamples, layout: TerrainLayout) {
+  constructor(i: number, j: number, x: number, z: number, samples: TerrainSamples, layout: TerrainLayout, ground?: GroundSamples) {
     this.i = i;
     this.j = j;
     this.x = x;
     this.z = z;
     this.samples = samples;
     this.layout = layout;
+    this.ground = ground;
     this.size = layout.cells * layout.cell;
   }
 
@@ -66,7 +68,7 @@ export class TerrainChunk {
     if (this.lod !== null) this.meshes[this.lod]!.visible = false;
     let mesh = this.meshes[lod];
     if (!mesh) {
-      mesh = new THREE.Mesh(buildTerrainGeometry(this.samples, this.layout, this, LOD_STEPS[lod]), material);
+      mesh = new THREE.Mesh(buildTerrainGeometry(this.samples, this.layout, this, LOD_STEPS[lod], this.ground), material);
       mesh.position.set(this.x, 0, this.z);
       mesh.matrixAutoUpdate = false;
       mesh.updateMatrix();

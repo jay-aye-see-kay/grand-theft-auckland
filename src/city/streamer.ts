@@ -1,7 +1,19 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { BuildingChunk } from './building-chunk.ts';
-import { decodeBuildings, decodeTerrain, type BuildingMesh, type ChunkInfo, type CityManifest, type TerrainSamples } from './format.ts';
+import { BuildingChunk, roadMaterial } from './building-chunk.ts';
+import {
+  decodeBuildings,
+  decodeGround,
+  decodeTerrain,
+  GROUND_APRON,
+  SURFACES,
+  type BuildingMesh,
+  type ChunkInfo,
+  type CityManifest,
+  type GroundSamples,
+  type Surface,
+  type TerrainSamples,
+} from './format.ts';
 import { TerrainChunk, type Lod } from './terrain-chunk.ts';
 import type { TerrainLayout } from './terrain-mesh.ts';
 
@@ -16,10 +28,25 @@ const UNLOAD_RADIUS = 1100;
 const DETAIL_IN = 180; // switch to full detail inside this distance...
 const DETAIL_OUT = 260; // ...and back to coarse beyond this one
 const MAX_IN_FLIGHT = 6;
+/**
+ * Road meshes are drawn only this close: beyond it they're a few pixels
+ * wide and the terrain's land-use tint already shows the streets, so each
+ * far chunk saves a draw call.
+ */
+const ROAD_DRAW = 500;
 /** A chunk asked for explicitly (teleport, debug probe) is kept this long even if out of range, ms. */
 const PIN_MS = 5000;
 
-type Slot = { info: ChunkInfo; chunk?: TerrainChunk; buildings?: BuildingChunk; loading?: Promise<void>; waiters: (() => void)[]; pinnedUntil: number };
+type Slot = {
+  info: ChunkInfo;
+  chunk?: TerrainChunk;
+  buildings?: BuildingChunk;
+  roads?: BuildingChunk;
+  ground?: GroundSamples;
+  loading?: Promise<void>;
+  waiters: (() => void)[];
+  pinnedUntil: number;
+};
 
 export class ChunkStreamer {
   private readonly base: URL;
@@ -29,6 +56,7 @@ export class ChunkStreamer {
   private readonly body: RAPIER.RigidBody;
   private readonly layout: TerrainLayout;
   private readonly material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private readonly roadMaterial = roadMaterial();
   private readonly slots = new Map<string, Slot>();
   private inFlight = 0;
   private focus = { x: 0, z: 0 };
@@ -78,6 +106,18 @@ export class ChunkStreamer {
     return chunk ? chunk.heightAt(x, z) : NaN;
   }
 
+  /** Surface class under a point (nearest 2 m ground sample), null if that chunk isn't loaded. */
+  surfaceAt(x: number, z: number): Surface | null {
+    const slot = this.slotAt(x, z);
+    const g = slot?.ground;
+    if (!slot?.chunk || !g) return null;
+    const o = this.origin(slot.info);
+    const cell = this.manifest.terrain.cellSize;
+    const c = Math.round((x - o.x) / cell) + GROUND_APRON;
+    const r = Math.round((z - o.z) / cell) + GROUND_APRON;
+    return SURFACES[g.classes[r * g.n + c]] ?? null;
+  }
+
   hasCollider(x: number, z: number): boolean {
     return !!this.slotAt(x, z)?.chunk?.hasCollider;
   }
@@ -93,10 +133,14 @@ export class ChunkStreamer {
           slot.chunk = undefined;
           slot.buildings?.dispose(this.scene, this.world);
           slot.buildings = undefined;
+          slot.roads?.dispose(this.scene, this.world);
+          slot.roads = undefined;
+          slot.ground = undefined;
           continue;
         }
         const lod: Lod = d < DETAIL_IN ? 0 : d > DETAIL_OUT ? 1 : (slot.chunk.lod ?? 1);
         slot.chunk.setLod(lod, this.scene, this.material);
+        if (slot.roads) slot.roads.mesh.visible = d < ROAD_DRAW;
       } else if (!slot.loading && d < LOAD_RADIUS) {
         wanted.push(slot);
       }
@@ -131,16 +175,22 @@ export class ChunkStreamer {
   private load(slot: Slot): void {
     this.inFlight++;
     const file = slot.info.files.terrain;
-    const bfile = slot.info.files.buildings;
-    // Terrain and buildings arrive together, so a chunk never has ground
-    // without its walls (or the other way round).
-    slot.loading = Promise.all([fetchTerrain(new URL(file, this.base)), bfile ? fetchBuildings(new URL(bfile, this.base)) : null])
-      .then(([samples, buildings]) => {
+    const { buildings: bfile, roads: rfile, ground: gfile } = slot.info.files;
+    // A chunk's layers arrive together, so it never has ground without its
+    // walls or roads (or the other way round).
+    slot.loading = Promise.all([
+      fetchTerrain(new URL(file, this.base)),
+      bfile ? fetchBuildings(new URL(bfile, this.base)) : null,
+      rfile ? fetchBuildings(new URL(rfile, this.base)) : null,
+      gfile ? fetchGround(new URL(gfile, this.base)) : null,
+    ])
+      .then(([samples, buildings, roads, ground]) => {
         // It may have drifted out of range while downloading; keep it anyway
         // if someone is waiting on it.
         if (this.distance(slot.info, this.focus.x, this.focus.z) > UNLOAD_RADIUS && !slot.waiters.length) return;
         const o = this.origin(slot.info);
-        const chunk = new TerrainChunk(slot.info.i, slot.info.j, o.x, o.z, samples, this.layout);
+        const chunk = new TerrainChunk(slot.info.i, slot.info.j, o.x, o.z, samples, this.layout, ground ?? undefined);
+        slot.ground = ground ?? undefined;
         chunk.addCollider(this.world, this.body);
         const d = this.distance(slot.info, this.focus.x, this.focus.z);
         chunk.setLod(d < DETAIL_IN ? 0 : 1, this.scene, this.material);
@@ -151,6 +201,14 @@ export class ChunkStreamer {
           b.addCollider(this.world, this.body);
           this.scene.add(b.mesh);
           slot.buildings = b;
+        }
+        if (roads) {
+          const s = this.manifest.chunkSize;
+          const r = new BuildingChunk(roads, o.x + s / 2, o.z + s / 2, this.roadMaterial, `roads ${slot.info.i},${slot.info.j}`);
+          r.addCollider(this.world, this.body); // bridge decks
+          r.mesh.visible = d < ROAD_DRAW;
+          this.scene.add(r.mesh);
+          slot.roads = r;
         }
       })
       .catch((err) => {
@@ -168,12 +226,14 @@ export class ChunkStreamer {
     let loaded = 0;
     let detailed = 0;
     let buildingChunks = 0;
+    let roadChunks = 0;
     for (const s of this.slots.values()) {
       if (s.chunk) loaded++;
       if (s.buildings) buildingChunks++;
+      if (s.roads) roadChunks++;
       if (s.chunk?.lod === 0) detailed++;
     }
-    return { chunks: this.slots.size, loaded, detailed, buildingChunks, inFlight: this.inFlight, failures: this.failures };
+    return { chunks: this.slots.size, loaded, detailed, buildingChunks, roadChunks, inFlight: this.inFlight, failures: this.failures };
   }
 }
 
@@ -182,6 +242,13 @@ async function fetchTerrain(url: URL): Promise<TerrainSamples> {
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   const inflated = res.body.pipeThrough(new DecompressionStream('deflate'));
   return decodeTerrain(new Uint8Array(await new Response(inflated).arrayBuffer()));
+}
+
+async function fetchGround(url: URL): Promise<GroundSamples> {
+  const res = await fetch(url);
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const inflated = res.body.pipeThrough(new DecompressionStream('deflate'));
+  return decodeGround(new Uint8Array(await new Response(inflated).arrayBuffer()));
 }
 
 async function fetchBuildings(url: URL): Promise<BuildingMesh> {

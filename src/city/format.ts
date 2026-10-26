@@ -35,6 +35,14 @@ export interface CityManifest {
     seaShelf: number;
     encoding: 'gtat1+deflate';
   };
+  /** Land-use classes on the terrain lattice (see encodeGround). */
+  ground?: {
+    /** Extra lattice points stored beyond each chunk edge. */
+    apron: number;
+    /** Samples per side including the apron. */
+    samples: number;
+    encoding: 'gtag1+deflate';
+  };
   chunks: ChunkInfo[];
 }
 
@@ -129,7 +137,8 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 // vertex-coloured mesh per chunk plus the triangles its collider uses:
 //   0  'GTAB'  magic
 //   4  u16     version (1)
-//   6  u16     flags: bit 0 = 32-bit indices
+//   6  u16     flags: bit 0 = 32-bit indices, bit 1 = per-vertex layers
+//              (roads: which surface sits on top where strips overlap)
 //   8  i32     base height, cm (y of the lowest vertex)
 //  12  u32     vertex count n
 //  16  u32     render index count
@@ -139,6 +148,7 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 //      u16[n]  y, cm above base (u16)             /  the previous value
 //      i8[3n]  normals (snorm, xyz interleaved)
 //      u8[3n]  colours (linear RGB, interleaved)
+//      u8[n]   layers (only with flag bit 1)
 //      u16|u32 render indices, then collider indices (zigzagged deltas)
 // Delta coding keeps neighbouring vertices of a building tiny for deflate.
 const BUILDINGS_MAGIC = 0x42415447; // 'GTAB'
@@ -156,6 +166,8 @@ export interface BuildingMesh {
   indices: Uint32Array;
   /** Triangles for the static collider (a subset of the render triangles' vertices). */
   colliderIndices: Uint32Array;
+  /** Optional per-vertex draw layer (0 = none); the roads layer biases depth by it. */
+  layers?: Uint8Array;
 }
 
 const zig = (d: number) => ((d << 1) ^ (d >> 31)) >>> 0;
@@ -165,12 +177,13 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
   const n = m.xCm.length;
   const wide = n > 0xffff;
   const isz = wide ? 4 : 2;
-  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (m.indices.length + m.colliderIndices.length) * isz;
+  const layered = !!m.layers;
+  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (m.indices.length + m.colliderIndices.length) * isz;
   const out = new Uint8Array(size);
   const view = new DataView(out.buffer);
   view.setUint32(0, BUILDINGS_MAGIC, true);
   view.setUint16(4, BUILDINGS_VERSION, true);
-  view.setUint16(6, wide ? 1 : 0, true);
+  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0), true);
   view.setInt32(8, m.baseCm, true);
   view.setUint32(12, n, true);
   view.setUint32(16, m.indices.length, true);
@@ -191,6 +204,10 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
   o += n * 3;
   out.set(m.colours.subarray(0, n * 3), o);
   o += n * 3;
+  if (m.layers) {
+    out.set(m.layers.subarray(0, n), o);
+    o += n;
+  }
   for (const list of [m.indices, m.colliderIndices]) {
     let prev = 0;
     for (const v of list) {
@@ -209,13 +226,15 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (view.getUint32(0, true) !== BUILDINGS_MAGIC) throw new Error('buildings chunk: bad magic');
   if (view.getUint16(4, true) !== BUILDINGS_VERSION) throw new Error('buildings chunk: unsupported version');
-  const wide = (view.getUint16(6, true) & 1) === 1;
+  const flags = view.getUint16(6, true);
+  const wide = (flags & 1) === 1;
+  const layered = (flags & 2) === 2;
   const baseCm = view.getInt32(8, true);
   const n = view.getUint32(12, true);
   const ni = view.getUint32(16, true);
   const nc = view.getUint32(20, true);
   const isz = wide ? 4 : 2;
-  if (bytes.byteLength < BUILDINGS_HEADER + n * 12 + (ni + nc) * isz) throw new Error('buildings chunk: truncated');
+  if (bytes.byteLength < BUILDINGS_HEADER + n * 12 + (layered ? n : 0) + (ni + nc) * isz) throw new Error('buildings chunk: truncated');
   let o = BUILDINGS_HEADER;
   const planes = [new Int32Array(n), new Int32Array(n), new Int32Array(n)];
   for (const [p, plane] of planes.entries()) {
@@ -231,6 +250,11 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
   o += n * 3;
   const colours = bytes.slice(o, o + n * 3);
   o += n * 3;
+  let layers: Uint8Array | undefined;
+  if (layered) {
+    layers = bytes.slice(o, o + n);
+    o += n;
+  }
   const lists = [new Uint32Array(ni), new Uint32Array(nc)];
   for (const list of lists) {
     let prev = 0;
@@ -241,5 +265,47 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
       o += isz;
     }
   }
-  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1] };
+  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers };
+}
+
+// Ground chunk file (land use under the terrain), before deflate:
+//   0  'GTAG'  magic
+//   4  u16     version (1)
+//   6  u16     n, samples per side (the terrain lattice plus GROUND_APRON each side)
+//   8  u8[n*n] surface class per lattice point, row-major (rows along z)
+// The terrain mesh tints its vertices by class, and the debug probe reports
+// the class under a point.
+const GROUND_MAGIC = 0x47415447; // 'GTAG'
+const GROUND_VERSION = 1;
+const GROUND_HEADER = 8;
+/** Extra lattice points stored beyond each chunk edge, so coarse LODs can average across seams. */
+export const GROUND_APRON = 2;
+
+/** Surface classes, in paint order: later ones win where they overlap. */
+export const SURFACES = ['urban', 'grass', 'trees', 'sand', 'paving', 'footpath', 'road'] as const;
+export type Surface = (typeof SURFACES)[number];
+export const SURFACE_ID = Object.fromEntries(SURFACES.map((s, k) => [s, k])) as Record<Surface, number>;
+
+export interface GroundSamples {
+  n: number;
+  classes: Uint8Array;
+}
+
+export function encodeGround(g: GroundSamples): Uint8Array {
+  const out = new Uint8Array(GROUND_HEADER + g.n * g.n);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, GROUND_MAGIC, true);
+  view.setUint16(4, GROUND_VERSION, true);
+  view.setUint16(6, g.n, true);
+  out.set(g.classes.subarray(0, g.n * g.n), GROUND_HEADER);
+  return out;
+}
+
+export function decodeGround(bytes: Uint8Array): GroundSamples {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== GROUND_MAGIC) throw new Error('ground chunk: bad magic');
+  if (view.getUint16(4, true) !== GROUND_VERSION) throw new Error('ground chunk: unsupported version');
+  const n = view.getUint16(6, true);
+  if (bytes.byteLength < GROUND_HEADER + n * n) throw new Error('ground chunk: truncated');
+  return { n, classes: bytes.slice(GROUND_HEADER, GROUND_HEADER + n * n) };
 }

@@ -381,6 +381,11 @@ async function main() {
           const p = driving ? driving.object.position : player.position;
           return map.heightAt(p.x, p.z);
         })(),
+        /** Surface under the player, or under the car being driven. */
+        surface: (() => {
+          const p = driving ? driving.object.position : player.position;
+          return map.surfaceAt?.(p.x, p.z) ?? null;
+        })(),
         ...map.debugInfo(),
       }),
       groundHeight: (x: number, z: number) => map.heightAt(x, z),
@@ -390,7 +395,7 @@ async function main() {
        * Loads the ground at (x, z), then returns the sampled terrain height,
        * the height of the terrain collider straight down from 1 km up (null if
        * none) and of the first fixed collider of any kind (a roof, if there's
-       * a building there).
+       * a building there), plus the surface class there ('road', 'footpath', ...).
        */
       probe: async (x: number, z: number) => {
         await map.ensureLoaded(x, z);
@@ -399,7 +404,12 @@ async function main() {
         const ray = new RAPIER.Ray({ x, y: 1000, z }, down);
         const hit = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED, TERRAIN_ONLY_QUERY);
         const top = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
-        return { ground: map.heightAt(x, z), ray: hit ? 1000 - hit.timeOfImpact : null, top: top ? 1000 - top.timeOfImpact : null };
+        return {
+          ground: map.heightAt(x, z),
+          ray: hit ? 1000 - hit.timeOfImpact : null,
+          top: top ? 1000 - top.timeOfImpact : null,
+          surface: map.surfaceAt?.(x, z) ?? null,
+        };
       },
       /** Put the player (on foot) at (x, z) on the ground, facing `heading`, with the camera behind. */
       placePlayer: async (x: number, z: number, heading: number) => {
