@@ -6,7 +6,8 @@ and verified.
 
 ## Tier 1: real map, grey box
 
-- [ ] **T1 Data fetch and projection.**
+- [x] **T1 Data fetch and projection.** Done: `npm run citygen:stats`; Britomart 3.6 m,
+  Queen/K Rd 65.8 m. API: `loadCityData()` (fetch.ts), `lonLatToLocal`, `sampleLocal`, `wayLocal`.
   - Build `tools/citygen/fetch.ts` and `project.ts`. Fetch OSM for the CBD
     bbox in tiles, and DEM/DSM windows for the same area.
   - Cache them in `.cache/` (gitignored).
