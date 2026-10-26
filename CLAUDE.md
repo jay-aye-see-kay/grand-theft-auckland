@@ -36,10 +36,28 @@ add a check for it to `scripts/smoke.mjs`.
 - **Physics:** fixed 60 Hz steps with render interpolation (see `main.ts`).
   Order per step: `car.update()` → `player.update()` → `world.step()` →
   `afterStep()`.
-- **Phone budget:** about 150 draw calls (the test town is about 33). Merge
-  static geometry per chunk, bake multi-part models (see `bake()` in
-  `corolla.ts`), use instancing for repeated props, and no real-time shadow
-  maps (use blob shadows).
+- **Phone budget:** measured from the map's three fixed views
+  (`__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`; the overlay
+  and `__game.state()` show triangles, draw calls and JS ms, and
+  `__game.breakdown()` splits triangles by layer). Smoke fails past these:
+
+  | View | Budget | Measured (T7b) |
+  |---|---|---|
+  | Street (`spawn`, `queen-st`) | < 150k triangles, < 60 calls | ~110k, 24–39 calls |
+  | Aerial | < 300k triangles, < 100 calls | ~117k, ~41 calls |
+
+  Street-view triangles are roughly terrain 55k, buildings 30k, roads 22k,
+  cars, player and sky 3k; calls are ~20 chunks plus cars (8 each up close)
+  and the player (5). Each chunk is one draw call (`ChunkMesh` merges its
+  terrain, roads and buildings), so put new static chunk geometry in that
+  mesh (vertex colours, the shared road material, layer 0) rather than new
+  meshes; a new material means one more call per visible chunk (~20 at
+  street level), so prefer one shared material or texture atlas for all
+  chunks. Bake multi-part models (see `bake()` in `corolla.ts`), use
+  instancing for repeated props, LOD anything detailed by distance (cars
+  drop wheels past 120 m), and no real-time shadow maps (use blob shadows).
+  Ground is 2 m only within 90 m (50 m tiles), 10 m beyond; colliders exist
+  only within ~300 m.
 - **In-game text:** no real brand names or logos (GTA parody rules). "Corolla"
   appears only in code identifiers.
 - Comments explain *why*. Match the existing style: small modules, one class
@@ -58,6 +76,11 @@ add a check for it to `scripts/smoke.mjs`.
   means nothing about phone performance.
 - **Skid marks:** they're double-sided, because strips laid while sliding
   backwards face down.
+- **Draped roads:** citygen smooths the ground under streets
+  (`smoothCorridors`) before anything samples it, and the game draws the
+  2 m ground `PAVED_SINK` lower deep under road strips. Anything else draped
+  on the ground must stay a cm or so above the collision surface, or the
+  terrain shows through.
 - **Playwright version:** the package is pinned to 1.63.0 to match the
   sandbox's preinstalled Chromium at `/opt/pw-browsers`. Don't run
   `playwright install` locally.

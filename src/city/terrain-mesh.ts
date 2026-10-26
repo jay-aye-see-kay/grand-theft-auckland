@@ -34,6 +34,8 @@ export const COARSE_STEP = 5;
 export const TILE_CELLS = 25;
 /** How far under road strips the detailed ground is drawn (at least PAVED_SINK). */
 const HIDDEN_AIM = PAVED_SINK + 0.03;
+/** A tile whose coarse ground is never further than this below the 2 m ground (m) is drawn coarse even up close. */
+const FLAT_TILE = 0.04;
 
 // Stylised palette (sRGB hex, converted to linear by THREE.Color).
 const GRASS_LOW = new THREE.Color(0x5d8a43);
@@ -61,9 +63,15 @@ export interface TerrainParts {
   pos: Float32Array;
   nor: Int8Array;
   col: Uint8Array;
+  /**
+   * Colours with the streets left out of the coarse ground, for when the
+   * road strips are drawn: a 10 m grid's street tint would bleed well past
+   * their edges.
+   */
+  colPlain: Uint8Array;
   count: number;
   far: Uint32Array;
-  tiles?: { ground: [Uint32Array, Uint32Array]; skirts: [Uint32Array[], Uint32Array[]] }[];
+  tiles?: { ground: [Uint32Array, Uint32Array]; skirts: [Uint32Array[], Uint32Array[]]; flat: boolean }[];
   /** Tiles per chunk side (tile t = row * tilesPerSide + column). */
   tilesPerSide: number;
 }
@@ -73,13 +81,16 @@ class Verts {
   pos: number[] = [];
   nor: number[] = [];
   col: number[] = [];
+  plain: number[] = [];
   get count() {
     return this.pos.length / 3;
   }
-  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, shade = 1): number {
+  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color): number {
     this.pos.push(x, y, z);
     this.nor.push(Math.round(n.x * 127), Math.round(n.y * 127), Math.round(n.z * 127));
-    this.col.push(Math.round(Math.min(1, c.r * shade) * 255), Math.round(Math.min(1, c.g * shade) * 255), Math.round(Math.min(1, c.b * shade) * 255));
+    for (const [list, k] of [[this.col, c], [this.plain, plain]] as const) {
+      list.push(Math.round(Math.min(1, k.r) * 255), Math.round(Math.min(1, k.g) * 255), Math.round(Math.min(1, k.b) * 255));
+    }
     return this.count - 1;
   }
   /** A copy of vertex k, dropped by `dy` and shaded (skirts). */
@@ -87,6 +98,7 @@ class Verts {
     this.pos.push(this.pos[k * 3], this.pos[k * 3 + 1] + dy, this.pos[k * 3 + 2]);
     this.nor.push(this.nor[k * 3], this.nor[k * 3 + 1], this.nor[k * 3 + 2]);
     this.col.push(...[0, 1, 2].map((a) => Math.round(this.col[k * 3 + a] * shade)));
+    this.plain.push(...[0, 1, 2].map((a) => Math.round(this.plain[k * 3 + a] * shade)));
     return this.count - 1;
   }
 }
@@ -142,12 +154,15 @@ export function buildTerrainParts(
   const v = new Verts();
   const normal = new THREE.Vector3();
   const colour = new THREE.Color();
+  const plain = new THREE.Color();
   const lattice = (r: number, c: number, y: number, lodStep: number) => {
     // Central differences at 2 m, reaching into the apron at the edges, so
     // both chunks on a seam compute identical normals and colours there.
     normal.set(-(h(r, c + 1) - h(r, c - 1)) / (2 * cell), 1, -(h(r + 1, c) - h(r - 1, c)) / (2 * cell)).normalize();
     vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, colour);
-    return v.add(c * cell, y, r * cell, normal, colour);
+    if (lodStep > 1) vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, plain, true);
+    else plain.copy(colour);
+    return v.add(c * cell, y, r * cell, normal, colour, plain);
   };
 
   // Coarse grid, sunk under the drawn ground.
@@ -196,7 +211,21 @@ export function buildTerrainParts(
         const lods = [[fine, side1, 1], [coarse, sideC, step]] as const;
         const ground = lods.map(([g, w, per]) => Uint32Array.from(quads(g, w, per, r0, r1, c0, c1))) as [Uint32Array, Uint32Array];
         const skirts = lods.map(([g, w, per]) => OUT.map((o, e) => skirt(v, edge(g, w, per, e, r0, r1, c0, c1), o))) as [Uint32Array[], Uint32Array[]];
-        tiles.push({ ground, skirts });
+        // The coarse grid's height anywhere in the tile is linear over each
+        // coarse triangle; compare it with every 2 m sample.
+        let flat = true;
+        for (let r = r0; r <= r1 && flat; r++) {
+          for (let c = c0; c <= c1 && flat; c++) {
+            const gz = Math.min(Math.floor(r / step), sideC - 2);
+            const gx = Math.min(Math.floor(c / step), sideC - 2);
+            const fz = r / step - gz;
+            const fx = c / step - gx;
+            const y = (q: number, p: number) => v.pos[coarse[(gz + q) * sideC + gx + p] * 3 + 1];
+            const yc = fx + fz <= 1 ? y(0, 0) + (y(0, 1) - y(0, 0)) * fx + (y(1, 0) - y(0, 0)) * fz : y(1, 1) + (y(1, 0) - y(1, 1)) * (1 - fx) + (y(0, 1) - y(1, 1)) * (1 - fz);
+            flat = hd(r, c) - yc <= FLAT_TILE;
+          }
+        }
+        tiles.push({ ground, skirts, flat });
       }
     }
   }
@@ -204,6 +233,7 @@ export function buildTerrainParts(
     pos: Float32Array.from(v.pos),
     nor: Int8Array.from(v.nor),
     col: Uint8Array.from(v.col),
+    colPlain: Uint8Array.from(v.plain),
     count: v.count,
     far: Uint32Array.from(far),
     tiles,
@@ -281,7 +311,7 @@ const _one = new THREE.Color();
  */
 function vertexColour(
   x: number, z: number, y: number, ny: number, seaShelf: number,
-  ground: GroundSamples | undefined, r: number, c: number, step: number, out: THREE.Color,
+  ground: GroundSamples | undefined, r: number, c: number, step: number, out: THREE.Color, plain = false,
 ): THREE.Color {
   if (!ground) return groundColour(x, z, y, ny, seaShelf, SURFACE_ID.grass, out);
   const at = (rr: number, cc: number) => ground.classes[(rr + GROUND_APRON) * ground.n + cc + GROUND_APRON];
@@ -299,7 +329,8 @@ function vertexColour(
   const counts = new Map<number, number>();
   for (let dr = -half; dr <= half; dr++) {
     for (let dc = -half; dc <= half; dc++) {
-      const k = at(r + dr, c + dc);
+      // Plain: streets left out, for when the road strips are drawn over it.
+      const k = plain && at(r + dr, c + dc) >= SURFACE_ID.paving ? SURFACE_ID.urban : at(r + dr, c + dc);
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
   }

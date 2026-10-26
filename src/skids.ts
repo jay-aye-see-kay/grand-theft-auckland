@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 
 // Skid marks: one ring buffer of quads in a single mesh. Each tyre lays a
-// strip while it's sliding; the oldest marks get overwritten first.
+// strip while it's sliding; the oldest marks get overwritten first. Only the
+// quads laid so far are drawn, and only new ones are uploaded.
 
 const MAX_QUADS = 2000;
 const WIDTH = 0.2;
@@ -22,7 +23,9 @@ export class SkidMarks {
   private next = 0;
   /** Quads laid since load (for tests). */
   laid = 0;
-  private dirty = false;
+  /** Quads changed since the last flush (inclusive), or lo > hi for none. */
+  private dirtyLo = Infinity;
+  private dirtyHi = -Infinity;
   private readonly tracks = new Map<string, Track>();
 
   constructor() {
@@ -54,6 +57,9 @@ export class SkidMarks {
     );
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 1;
+    this.mesh.name = 'skids';
+    this.mesh.visible = false;
+    geo.setDrawRange(0, 0);
   }
 
   /** Extend the track `id` to a contact point. axle is the wheel's sideways direction. */
@@ -85,7 +91,8 @@ export class SkidMarks {
     for (let v = 0; v < 4; v++) this.colors.set([0.05, 0.05, 0.05, a], q * 16 + v * 4);
     track.left.copy(_l);
     track.right.copy(_r);
-    this.dirty = true;
+    this.dirtyLo = Math.min(this.dirtyLo, q);
+    this.dirtyHi = Math.max(this.dirtyHi, q);
   }
 
   /** The tyre stopped sliding; the next mark starts a new strip. */
@@ -94,10 +101,17 @@ export class SkidMarks {
   }
 
   flush(): void {
-    if (!this.dirty) return;
+    if (this.dirtyLo > this.dirtyHi) return;
     const geo = this.mesh.geometry;
-    geo.attributes.position.needsUpdate = true;
-    geo.attributes.color.needsUpdate = true;
-    this.dirty = false;
+    for (const [attr, per] of [[geo.attributes.position, 12], [geo.attributes.color, 16]] as const) {
+      const a = attr as THREE.BufferAttribute;
+      a.clearUpdateRanges();
+      a.addUpdateRange(this.dirtyLo * per, (this.dirtyHi - this.dirtyLo + 1) * per);
+      a.needsUpdate = true;
+    }
+    geo.setDrawRange(0, Math.min(this.laid, MAX_QUADS) * 6);
+    this.mesh.visible = true;
+    this.dirtyLo = Infinity;
+    this.dirtyHi = -Infinity;
   }
 }

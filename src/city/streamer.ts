@@ -32,8 +32,8 @@ import type { TerrainLayout } from './terrain-mesh.ts';
 const LOAD_RADIUS = 900;
 const UNLOAD_RADIUS = 1100;
 /** Ground tiles switch to 2 m detail inside this distance, and back to coarse beyond DETAIL_OUT, m. */
-const DETAIL_IN = 110;
-const DETAIL_OUT = 140;
+const DETAIL_IN = 90;
+const DETAIL_OUT = 120;
 /** Colliders are added inside this distance and removed beyond COLLIDE_OUT, m. */
 const COLLIDE_IN = 300;
 const COLLIDE_OUT = 400;
@@ -316,7 +316,7 @@ export class ChunkStreamer {
       if (s.chunk?.hasCollider) colliders++;
       if (s.buildings) buildingChunks++;
       if (s.roads) roadChunks++;
-      if (s.tiles?.includes(0)) detailed++;
+      if (s.mesh?.near && s.tiles?.includes(0)) detailed++;
     }
     return { chunks: this.slots.size, loaded, detailed, colliders, buildingChunks, roadChunks, inFlight: this.inFlight, failures: this.failures };
   }

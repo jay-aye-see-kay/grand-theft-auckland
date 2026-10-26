@@ -19,7 +19,8 @@ export class ChunkMesh {
   private parts: TerrainParts | null = null;
   private index: THREE.BufferAttribute | null = null;
   private terrainBase = 0;
-  private selection = '';
+  /** What's drawn now, as a number (see update), NaN for nothing yet. */
+  private selection = NaN;
 
   constructor(name: string, cx: number, cz: number, half: number, material: THREE.Material, roads?: BuildingChunk, buildings?: BuildingChunk) {
     this.roads = roads;
@@ -89,7 +90,7 @@ export class ChunkMesh {
     geo.computeBoundingSphere();
     this.mesh.geometry.dispose();
     this.mesh.geometry = geo;
-    this.selection = '';
+    this.selection = NaN;
   }
 
   /**
@@ -101,8 +102,20 @@ export class ChunkMesh {
     const index = this.index;
     if (!parts || !index) return;
     const near = tiles && parts.tiles ? tiles : null;
-    const selection = `${roads ? 1 : 0}${near ? near.join('') : 'far'}`;
+    // Bit 0: roads; then one bit per tile (set = coarse), or -1 / -2 for far.
+    let selection = roads ? -2 : -1;
+    if (near) {
+      selection = roads ? 1 : 0;
+      for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 1);
+    }
     if (selection === this.selection) return;
+    const hadRoads = this.selection === -2 || (this.selection >= 0 && this.selection % 2 === 1);
+    if (Number.isNaN(this.selection) || hadRoads !== roads) {
+      // The coarse ground shows the streets only when the road strips aren't drawn.
+      const colour = this.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
+      (colour.array as Uint8Array).set(roads ? parts.colPlain : parts.col, this.terrainBase * 3);
+      colour.needsUpdate = true;
+    }
     this.selection = selection;
     const out = index.array as Uint16Array | Uint32Array;
     let n = 0;
@@ -111,14 +124,20 @@ export class ChunkMesh {
     };
     // Roads come first in the vertex buffers, then buildings.
     if (roads && this.roads) put(this.roads.indices, 0);
+    const nRoads = n;
     if (this.buildings) put(this.buildings.indices, this.roads?.count ?? 0);
+    const nBuildings = n - nRoads;
     if (!near) put(parts.far, this.terrainBase);
     else {
       const side = parts.tilesPerSide;
-      const lodAt = (r: number, c: number) => (r < 0 || c < 0 || r >= side || c >= side ? -1 : near[r * side + c]);
+      // Tiles where the coarse ground is as good as the 2 m are always coarse.
+      const lodAt = (r: number, c: number) => {
+        if (r < 0 || c < 0 || r >= side || c >= side) return -1;
+        return near[r * side + c] || parts.tiles![r * side + c].flat ? 1 : 0;
+      };
       for (let r = 0; r < side; r++) {
         for (let c = 0; c < side; c++) {
-          const lod = near[r * side + c] ? 1 : 0;
+          const lod = lodAt(r, c) as 0 | 1;
           const tile = parts.tiles![r * side + c];
           put(tile.ground[lod], this.terrainBase);
           // Skirts on the chunk's edge, and where a detailed tile meets a coarse one
@@ -130,6 +149,8 @@ export class ChunkMesh {
         }
       }
     }
+    // Triangles per layer, for ?debug's breakdown.
+    this.mesh.userData.parts = { roads: nRoads / 3, buildings: nBuildings / 3, terrain: (n - nRoads - nBuildings) / 3 };
     this.mesh.geometry.setDrawRange(0, n);
     index.clearUpdateRanges();
     index.addUpdateRange(0, n);

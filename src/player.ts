@@ -1,5 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // On-foot player: a kinematic capsule moved by Rapier's character controller
 // (steps up kerbs, slides along walls, pushes crates) and a low-poly person
@@ -176,48 +177,58 @@ export class Player {
   }
 }
 
-// Shorts, a black tee and jandals. Origin at the feet, facing +x.
+// Shorts, a black tee and jandals. Origin at the feet, facing +x. Each
+// moving part (torso with head, two arms, two legs) is one vertex-coloured
+// mesh, so the whole person is 5 draw calls.
 function buildPerson() {
   const root = new THREE.Group();
-  const skin = new THREE.MeshLambertMaterial({ color: 0xc68a62 });
-  const shirt = new THREE.MeshLambertMaterial({ color: 0x1d1d22 });
-  const shorts = new THREE.MeshLambertMaterial({ color: 0x2f4f7a });
-  const hair = new THREE.MeshLambertMaterial({ color: 0x1a120c });
-  const jandal = new THREE.MeshLambertMaterial({ color: 0x2a6fd6 });
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const skin = new THREE.Color(0xc68a62);
+  const shirt = new THREE.Color(0x1d1d22);
+  const shorts = new THREE.Color(0x2f4f7a);
+  const hair = new THREE.Color(0x1a120c);
+  const jandal = new THREE.Color(0x2a6fd6);
 
-  const box = (w: number, h: number, d: number, mat: THREE.Material, x: number, y: number, z: number) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    return m;
+  type Box = [w: number, h: number, d: number, colour: THREE.Color, x: number, y: number, z: number];
+  const mesh = (boxes: Box[]) => {
+    const geos = boxes.map(([w, h, d, colour, x, y, z]) => {
+      const g = new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed();
+      g.deleteAttribute('uv');
+      const colours = new Float32Array(g.attributes.position.count * 3);
+      for (let i = 0; i < colours.length; i += 3) colour.toArray(colours, i);
+      g.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+      return g;
+    });
+    return new THREE.Mesh(mergeGeometries(geos), material);
   };
 
   // Limbs hang from pivots at the hip and shoulder so they can swing.
-  const limb = (x: number, y: number, z: number, parts: THREE.Mesh[]) => {
+  const limb = (x: number, y: number, z: number, boxes: Box[]) => {
     const pivot = new THREE.Group();
     pivot.position.set(x, y, z);
-    for (const p of parts) pivot.add(p);
+    pivot.add(mesh(boxes));
     return pivot;
   };
 
-  const legL = limb(0, 0.86, -0.11, [
-    box(0.17, 0.36, 0.17, shorts, 0, -0.16, 0),
-    box(0.13, 0.46, 0.13, skin, 0, -0.56, 0),
-    box(0.26, 0.04, 0.12, jandal, 0.04, -0.84, 0),
-  ]);
-  const legR = limb(0, 0.86, 0.11, [
-    box(0.17, 0.36, 0.17, shorts, 0, -0.16, 0),
-    box(0.13, 0.46, 0.13, skin, 0, -0.56, 0),
-    box(0.26, 0.04, 0.12, jandal, 0.04, -0.84, 0),
-  ]);
+  const leg: Box[] = [
+    [0.17, 0.36, 0.17, shorts, 0, -0.16, 0],
+    [0.13, 0.46, 0.13, skin, 0, -0.56, 0],
+    [0.26, 0.04, 0.12, jandal, 0.04, -0.84, 0],
+  ];
+  const legL = limb(0, 0.86, -0.11, leg);
+  const legR = limb(0, 0.86, 0.11, leg);
 
   const torso = new THREE.Group();
   torso.position.y = 0.86;
-  torso.add(box(0.26, 0.56, 0.44, shirt, 0, 0.3, 0));
-  torso.add(box(0.12, 0.08, 0.12, skin, 0, 0.62, 0)); // neck
-  torso.add(box(0.24, 0.26, 0.22, skin, 0.01, 0.78, 0)); // head
-  torso.add(box(0.26, 0.08, 0.24, hair, -0.01, 0.92, 0));
-  const armL = limb(0, 0.54, -0.28, [box(0.13, 0.22, 0.13, shirt, 0, -0.08, 0), box(0.1, 0.4, 0.1, skin, 0, -0.38, 0)]);
-  const armR = limb(0, 0.54, 0.28, [box(0.13, 0.22, 0.13, shirt, 0, -0.08, 0), box(0.1, 0.4, 0.1, skin, 0, -0.38, 0)]);
+  torso.add(mesh([
+    [0.26, 0.56, 0.44, shirt, 0, 0.3, 0],
+    [0.12, 0.08, 0.12, skin, 0, 0.62, 0], // neck
+    [0.24, 0.26, 0.22, skin, 0.01, 0.78, 0], // head
+    [0.26, 0.08, 0.24, hair, -0.01, 0.92, 0],
+  ]));
+  const arm: Box[] = [[0.13, 0.22, 0.13, shirt, 0, -0.08, 0], [0.1, 0.4, 0.1, skin, 0, -0.38, 0]];
+  const armL = limb(0, 0.54, -0.28, arm);
+  const armR = limb(0, 0.54, 0.28, arm);
   torso.add(armL, armR);
 
   root.add(legL, legR, torso);

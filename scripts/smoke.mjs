@@ -494,14 +494,26 @@ try {
       check(s.splashes > before2 && !!ashore, `player who walks off the wharf splashes and is back ashore (${s.player.map((v) => v.toFixed(0)).join(', ')}, ground ${ashore?.ground.toFixed(1)})`);
     }
 
-    // Draw calls: a street view up Queen St and an aerial view over the CBD.
-    const budget = 150;
-    for (const [name, from, at] of [['queen-st', [-120, 6, 40], [-240, 18, 455]], ['aerial', [0, 250, -250], [-300, 0, 500]]]) {
-      await game('lookFrom', from, at);
-      await page.waitForTimeout(3000);
+    // Performance budgets (CLAUDE.md "Phone budget"), from the map's fixed
+    // views once streaming has settled: triangles and draw calls rendered.
+    // Software rendering makes the timings meaningless here; they're logged.
+    const budgets = { spawn: { tris: 150000, calls: 60 }, 'queen-st': { tris: 150000, calls: 60 }, aerial: { tris: 300000, calls: 100 } };
+    check(JSON.stringify(await game('views')) === JSON.stringify(Object.keys(budgets)), `the map has the budget views (${(await game('views')).join(', ')})`);
+    for (const [name, budget] of Object.entries(budgets)) {
+      await game('view', name);
+      await page.waitForTimeout(1500);
+      await page.waitForFunction(() => window.__game.state().inFlight === 0, null, { timeout: 30000 }).catch(() => {});
+      await page.waitForTimeout(2500);
       s = await state(page);
-      check(s.drawCalls > 0 && s.drawCalls < budget, `draw calls in the ${name} view: ${s.drawCalls} (budget ${budget})`);
-      await page.screenshot({ path: `${shots}/10-buildings-${name}.png` });
+      check(s.triangles > 1000 && s.triangles < budget.tris && s.drawCalls > 0 && s.drawCalls < budget.calls,
+        `budget in the ${name} view: ${(s.triangles / 1000).toFixed(0)}k triangles (< ${budget.tris / 1000}k), ${s.drawCalls} draw calls (< ${budget.calls}); ` +
+        `JS ${s.frameMs.toFixed(1)} ms/frame (physics ${s.physicsMs.toFixed(1)}, render ${s.renderMs.toFixed(1)})`);
+      if (name === 'spawn') {
+        check(s.colliders >= 1 && s.colliders < s.loaded && s.detailed >= 1, `colliders and 2 m ground only near the player (${s.colliders} of ${s.loaded} chunks have colliders, ${s.detailed} have 2 m tiles)`);
+        const overlay = await page.locator('#fps').innerText();
+        check(/calls/.test(overlay) && /tris/.test(overlay) && /phys/.test(overlay), `?debug overlay shows the budget numbers (${overlay})`);
+      }
+      await page.screenshot({ path: `${shots}/10-view-${name}.png` });
     }
     await game('lookFrom', null, [0, 0, 0]);
     check(errors.length === 0, `no console errors on terrain${errors.length ? ': ' + errors.join(' | ') : ''}`);

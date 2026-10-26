@@ -599,6 +599,12 @@ async function main() {
           const e = (out[kind] ??= { meshes: 0, tris: 0 });
           e.meshes++;
           e.tris += Math.floor(count / 3);
+          // Merged chunk meshes say how much of each layer they hold.
+          for (const [k, v] of Object.entries((o.userData.parts ?? {}) as Record<string, number>)) {
+            const p = (out[`${kind}.${k}`] ??= { meshes: 0, tris: 0 });
+            p.meshes++;
+            p.tris += v;
+          }
         });
         return out;
       },
