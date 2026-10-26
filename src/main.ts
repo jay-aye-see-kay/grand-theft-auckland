@@ -18,7 +18,8 @@ async function main() {
   const splash = document.getElementById('splash')!;
   const status = document.getElementById('status')!;
 
-  await RAPIER.init();
+  // Only the -compat build needs init(); the browser build (see vite.config.ts) is ready on import.
+  await (RAPIER as { init?: () => Promise<void> }).init?.();
 
   // Renderer: start at a modest pixel ratio on phones and adapt from there.
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
