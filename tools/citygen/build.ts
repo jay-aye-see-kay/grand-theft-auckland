@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeTerrain, GROUND_APRON, type ChunkInfo, type CityManifest } from '../../src/city/format.ts';
 import { buildBuildings, MeshBuilder } from './buildings.ts';
+import { Frontages } from './frontage.ts';
 import { buildParking, writeParking } from './parking.ts';
 import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
@@ -57,12 +58,14 @@ for (const r of collectRoads(data.osm)) {
 console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points under streets`);
 const terrainSampler = new TerrainSampler(data.dem);
 const network = roadNetwork(data, terrainSampler, overrides);
-const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt });
+const frontages = new Frontages(data.osm);
+const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt, frontages });
 const c = blds.counts;
 console.log(
   `Buildings: ${c.outlines} outlines + ${c.parts} parts drawn (${c.hiddenOutlines} outlines replaced by their parts, ${c.outside} outside the grid). ` +
     `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
-    `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks.`,
+    `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks. ` +
+    `${c.verandahs} verandahs (${(c.verandahMetres / 1000).toFixed(1)} km).`,
 );
 const tallest = blds.buildings.slice().sort((a, b) => b.top - b.base - (a.top - a.base)).slice(0, 8);
 console.log(`Tallest: ${tallest.map((b) => `${b.key} ${(b.top - b.base).toFixed(0)} m`).join(', ')}`);

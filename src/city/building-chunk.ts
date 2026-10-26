@@ -1,12 +1,11 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import * as THREE from 'three';
 import type { BuildingMesh } from './format.ts';
 
 // One chunk's buildings (or roads, same format): the render arrays, which
 // ChunkMesh merges with the chunk's terrain into one draw call, and one
 // static trimesh collider (walls and roofs; for roads, bridge decks), which
 // only chunks near the player have. Roads carry a per-vertex draw layer
-// (see roadMaterial).
+// (see cityMaterial).
 
 /**
  * Collision groups (membership << 16 | filter). Buildings are in group 1 and
@@ -22,6 +21,8 @@ export class BuildingChunk {
   readonly normals: Int8Array;
   readonly colours: Uint8Array;
   readonly layers: Uint8Array | undefined;
+  /** Surface detail (see facades.ts), or undefined for plain vertex colour. */
+  readonly detail: BuildingMesh['detail'];
   readonly indices: Uint32Array;
   private collider: RAPIER.Collider | null = null;
   private readonly vertices: Float32Array;
@@ -41,6 +42,7 @@ export class BuildingChunk {
     this.normals = data.normals;
     this.colours = data.colours;
     this.layers = data.layers;
+    this.detail = data.detail;
     this.indices = data.indices;
 
     // The collider lives on the shared fixed body, so it needs world positions.
@@ -77,23 +79,3 @@ export class BuildingChunk {
   }
 }
 
-/**
- * Depth bias per road draw layer, in normalised device depth. Overlapping
- * road surfaces (paving < footpath < road < kerb) already sit a few cm apart,
- * which is plenty up close; further out that falls below the depth buffer's
- * precision (about d^2 / 2^24 / near), so each layer is also pulled towards
- * the camera by this much: about 3 cm per layer at 100 m, 30 cm at 300 m.
- */
-const ROAD_DEPTH_BIAS = 2e-6;
-
-/** Lambert with vertex colours, plus the per-layer depth bias for road surfaces. */
-export function roadMaterial(): THREE.MeshLambertMaterial {
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float roadLayer;')
-      .replace('#include <project_vertex>', `#include <project_vertex>\ngl_Position.z -= roadLayer * ${ROAD_DEPTH_BIAS.toExponential()} * gl_Position.w;`);
-  };
-  material.customProgramCacheKey = () => 'road-layers';
-  return material;
-}

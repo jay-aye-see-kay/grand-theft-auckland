@@ -77,7 +77,7 @@ async function main() {
 
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED_DT;
-  const map = await loadMap(params.get('map'), scene, world);
+  const map = await loadMap(params.get('map'), scene, world, renderer.capabilities.getMaxAnisotropy());
   blurb.textContent = map.blurb;
 
   const { atmosphere } = map;

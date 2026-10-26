@@ -160,7 +160,8 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 //   0  'GTAB'  magic
 //   4  u16     version (1)
 //   6  u16     flags: bit 0 = 32-bit indices, bit 1 = per-vertex layers
-//              (roads: which surface sits on top where strips overlap)
+//              (roads: which surface sits on top where strips overlap),
+//              bit 2 = surface detail (shade, UVs and atlas tile per vertex)
 //   8  i32     base height, cm (y of the lowest vertex)
 //  12  u32     vertex count n
 //  16  u32     render index count
@@ -171,6 +172,9 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 //      i8[3n]  normals (snorm, xyz interleaved)
 //      u8[3n]  colours (linear RGB, interleaved)
 //      u8[n]   layers (only with flag bit 1)
+//      u8[n]   shade: baked light x SHADE_ONE (flag bit 2, as are the next two)
+//      u16[2n] u, v in 1/UV_SCALE repeats (i16, zigzagged deltas, u plane then v)
+//      u8[n]   atlas tile (see facades.ts)
 //      u16|u32 render indices, then collider indices (zigzagged deltas)
 // Delta coding keeps neighbouring vertices of a building tiny for deflate.
 const BUILDINGS_MAGIC = 0x42415447; // 'GTAB'
@@ -190,6 +194,8 @@ export interface BuildingMesh {
   colliderIndices: Uint32Array;
   /** Optional per-vertex draw layer (0 = none); the roads layer biases depth by it. */
   layers?: Uint8Array;
+  /** Optional surface detail (see facades.ts): baked light, atlas UVs (x UV_SCALE) and tile per vertex. */
+  detail?: { shade: Uint8Array; u: Int32Array; v: Int32Array; tile: Uint8Array };
 }
 
 const zig = (d: number) => ((d << 1) ^ (d >> 31)) >>> 0;
@@ -200,12 +206,13 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
   const wide = n > 0xffff;
   const isz = wide ? 4 : 2;
   const layered = !!m.layers;
-  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (m.indices.length + m.colliderIndices.length) * isz;
+  const detailed = !!m.detail;
+  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (m.indices.length + m.colliderIndices.length) * isz;
   const out = new Uint8Array(size);
   const view = new DataView(out.buffer);
   view.setUint32(0, BUILDINGS_MAGIC, true);
   view.setUint16(4, BUILDINGS_VERSION, true);
-  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0), true);
+  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0) | (detailed ? 4 : 0), true);
   view.setInt32(8, m.baseCm, true);
   view.setUint32(12, n, true);
   view.setUint32(16, m.indices.length, true);
@@ -230,6 +237,22 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
     out.set(m.layers.subarray(0, n), o);
     o += n;
   }
+  if (m.detail) {
+    out.set(m.detail.shade.subarray(0, n), o);
+    o += n;
+    for (const plane of [m.detail.u, m.detail.v]) {
+      let prev = 0;
+      for (let k = 0; k < n; k++) {
+        const v = plane[k];
+        if (v < -0x8000 || v > 0x7fff) throw new Error(`encodeBuildings: UV ${v / 64} out of range`);
+        view.setUint16(o, zig((((v - prev) << 16) >> 16)) & 0xffff, true);
+        o += 2;
+        prev = v;
+      }
+    }
+    out.set(m.detail.tile.subarray(0, n), o);
+    o += n;
+  }
   for (const list of [m.indices, m.colliderIndices]) {
     let prev = 0;
     for (const v of list) {
@@ -251,12 +274,13 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
   const flags = view.getUint16(6, true);
   const wide = (flags & 1) === 1;
   const layered = (flags & 2) === 2;
+  const detailed = (flags & 4) === 4;
   const baseCm = view.getInt32(8, true);
   const n = view.getUint32(12, true);
   const ni = view.getUint32(16, true);
   const nc = view.getUint32(20, true);
   const isz = wide ? 4 : 2;
-  if (bytes.byteLength < BUILDINGS_HEADER + n * 12 + (layered ? n : 0) + (ni + nc) * isz) throw new Error('buildings chunk: truncated');
+  if (bytes.byteLength < BUILDINGS_HEADER + n * 12 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (ni + nc) * isz) throw new Error('buildings chunk: truncated');
   let o = BUILDINGS_HEADER;
   const planes = [new Int32Array(n), new Int32Array(n), new Int32Array(n)];
   for (const [p, plane] of planes.entries()) {
@@ -277,6 +301,23 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
     layers = bytes.slice(o, o + n);
     o += n;
   }
+  let detail: BuildingMesh['detail'];
+  if (detailed) {
+    const shade = bytes.slice(o, o + n);
+    o += n;
+    const uv = [new Int32Array(n), new Int32Array(n)];
+    for (const plane of uv) {
+      let prev = 0;
+      for (let k = 0; k < n; k++) {
+        prev = ((prev + unzig(view.getUint16(o, true))) << 16) >> 16;
+        plane[k] = prev;
+        o += 2;
+      }
+    }
+    const tile = bytes.slice(o, o + n);
+    o += n;
+    detail = { shade, u: uv[0], v: uv[1], tile };
+  }
   const lists = [new Uint32Array(ni), new Uint32Array(nc)];
   for (const list of lists) {
     let prev = 0;
@@ -287,7 +328,7 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
       o += isz;
     }
   }
-  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers };
+  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers, detail };
 }
 
 // Ground chunk file (land use under the terrain), before deflate:

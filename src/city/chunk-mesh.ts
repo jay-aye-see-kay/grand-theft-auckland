@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import type { BuildingChunk } from './building-chunk.ts';
 import type { TerrainParts } from './terrain-mesh.ts';
+import { SHADE_ONE, tileOf } from './facades.ts';
+
+const GROUND_TILE = tileOf('ground');
 
 // A chunk's static scenery (ground, roads and buildings) as one mesh: one
 // draw call per chunk however much is in it. They share one material (the
@@ -51,15 +54,30 @@ export class ChunkMesh {
     const nor = new Int8Array(count * 3);
     const col = new Uint8Array(count * 3);
     const layer = new Uint8Array(count);
+    // Surface detail (see facades.ts): baked light, atlas UVs and tile.
+    const shade = new Uint8Array(count).fill(SHADE_ONE);
+    const uv = new Int16Array(count * 2);
+    const tile = new Uint8Array(count);
     let v = 0;
     for (const b of features) {
       pos.set(b.pos, v * 3);
       nor.set(b.normals.subarray(0, b.count * 3), v * 3);
       col.set(b.colours.subarray(0, b.count * 3), v * 3);
       if (b.layers) layer.set(b.layers.subarray(0, b.count), v);
+      const d = b.detail;
+      if (d) {
+        shade.set(d.shade.subarray(0, b.count), v);
+        tile.set(d.tile.subarray(0, b.count), v);
+        for (let k = 0; k < b.count; k++) {
+          uv[(v + k) * 2] = d.u[k];
+          uv[(v + k) * 2 + 1] = d.v[k];
+        }
+      }
       v += b.count;
     }
     this.terrainBase = v;
+    // The ground's grain, mapped from world x/z (no UVs needed).
+    tile.fill(GROUND_TILE, v);
     for (let k = 0; k < parts.count; k++) {
       pos[(v + k) * 3] = parts.pos[k * 3] - this.half;
       pos[(v + k) * 3 + 1] = parts.pos[k * 3 + 1];
@@ -86,6 +104,9 @@ export class ChunkMesh {
     geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3, true));
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
     geo.setAttribute('roadLayer', new THREE.BufferAttribute(layer, 1));
+    geo.setAttribute('aShade', new THREE.BufferAttribute(shade, 1));
+    geo.setAttribute('aUv', new THREE.BufferAttribute(uv, 2));
+    geo.setAttribute('aTile', new THREE.BufferAttribute(tile, 1));
     geo.setIndex(this.index);
     geo.computeBoundingSphere();
     this.mesh.geometry.dispose();

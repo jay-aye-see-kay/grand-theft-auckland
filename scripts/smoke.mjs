@@ -167,6 +167,9 @@ try {
     // Southern hemisphere: the sun is up in the northern half of the sky (north is -z).
     check(s.sun[1] > 0.3 && s.sun[2] < -0.3, `sun is in the northern sky (direction ${s.sun.map((v) => v.toFixed(2)).join(', ')})`);
 
+    // Facade, road and ground textures: one atlas (a texture array) painted at load time.
+    check(s.atlasLayers >= 16 && s.textures >= 2, `texture atlas loaded (${s.atlasLayers} layers, ${s.textures} textures on the GPU)`);
+
     const britomart = await game('groundHeight', 0, 0);
     check(Math.abs(britomart - 3.6) < 0.4, `Britomart ground ${britomart.toFixed(2)} m (expect ~3.6)`);
     check(Math.abs(s.player[1] - s.ground) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m, ground ${s.ground.toFixed(2)})`);

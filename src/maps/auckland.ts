@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { CITY_FORMAT, type CityManifest } from '../city/format.ts';
+import { buildAtlas } from '../city/atlas.ts';
 import { ChunkStreamer } from '../city/streamer.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
@@ -24,7 +25,7 @@ const SEA_SOUTH = 250;
 /** Ground within this radius of the spawn is loaded before play starts. */
 const PRELOAD_RADIUS = 300;
 
-export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Promise<GameMap> {
+export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxAnisotropy = 1): Promise<GameMap> {
   const base = new URL(`city/${AREA}/`, new URL(import.meta.env.BASE_URL, location.href));
   const res = await fetch(new URL('manifest.json', base));
   if (!res.ok) throw new Error(`city manifest: HTTP ${res.status}`);
@@ -38,7 +39,9 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
   const parked = (await pres.json()) as CityParking;
 
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-  const terrain = new ChunkStreamer(base, manifest, scene, world, ground);
+  // Facade, road and ground textures, painted on the spot (atlas.ts).
+  const atlas = buildAtlas(maxAnisotropy);
+  const terrain = new ChunkStreamer(base, manifest, scene, world, ground, atlas);
 
   // On foot outside Britomart, next to the purple Corolla. Cars elsewhere
   // stay frozen (see main.ts) until the ground under them streams in.
@@ -92,6 +95,6 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
       // Over the harbour, looking across the whole CBD towards K Road.
       aerial: { from: [0, 250, -250], at: [-300, -4, 500] },
     },
-    debugInfo: () => terrain.stats(),
+    debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth }),
   };
 }

@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { BuildingChunk, roadMaterial } from './building-chunk.ts';
+import { BuildingChunk } from './building-chunk.ts';
+import { cityMaterial } from './city-material.ts';
 import { ChunkMesh } from './chunk-mesh.ts';
 import {
   decodeBuildings,
@@ -68,7 +69,7 @@ export class ChunkStreamer {
   private readonly world: RAPIER.World;
   private readonly body: RAPIER.RigidBody;
   private readonly layout: TerrainLayout;
-  private readonly material = roadMaterial();
+  private readonly material: THREE.Material;
   private readonly slots = new Map<string, Slot>();
   private inFlight = 0;
   private readonly focus = { x: 0, z: 0 };
@@ -76,7 +77,8 @@ export class ChunkStreamer {
   /** Count of chunk fetches that failed (shown in ?debug). */
   failures = 0;
 
-  constructor(base: URL, manifest: CityManifest, scene: THREE.Scene, world: RAPIER.World, body: RAPIER.RigidBody) {
+  constructor(base: URL, manifest: CityManifest, scene: THREE.Scene, world: RAPIER.World, body: RAPIER.RigidBody, atlas: THREE.Texture) {
+    this.material = cityMaterial(atlas);
     this.base = base;
     this.manifest = manifest;
     this.scene = scene;
