@@ -50,11 +50,13 @@ and verified.
   - Park the other Corollas on real streets.
   - Update the smoke test for the Auckland map.
   - Done when: all smoke checks pass on the Auckland map.
-- [ ] **T6 Overrides.**
+- [x] **T6 Overrides.** Done: `overrides/cbd.json` (+README); ~10 fixes incl. PwC, Customhouse,
+  CMJ ramp decks, canopies as slabs, capped LiDAR heights; 6 landmarks recorded in manifest.
   - `overrides/cbd.json` keyed by OSM ID: delete, height, landmark and
     block.
   - Use it to fix the worst five glitches found in T3–T5.
-- [ ] **T7 Water.**
+- [x] **T7 Water.** Done: shader water at 0 m, sea floor -8 m, sea walls from the DEM, pier decks
+  (Queens Wharf), splash + reset. Left: jagged pontoon slopes, saw-tooth distant coast.
   - Harbour plane, coastline and wharf edges. The car should splash and
     reset, not fall forever.
 - [ ] **T7b Performance pass.** Roads alone are 452k triangles and headless fps fell to
@@ -73,6 +75,7 @@ and verified.
   - asphalt/concrete textures, lane markings and crossings (or the LINZ 7.5 cm
     aerials draped on the ground; evaluate)
   - the Sky Tower visible over the rooftops from the street (distant low-LOD)
+  - the sun is currently in the south: in NZ it should be in the north
   - Done when: a street-level screenshot on Queen St reads as Queen St, within
     budget. Then roll the look out across the map before the rest of tier 2.
 - [ ] **Milestone: tier 1 live.** Add a phone test list to Questions, then carry on.
