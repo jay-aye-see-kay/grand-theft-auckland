@@ -130,8 +130,8 @@ try {
     await page.context().close(); // two games rendering at once starves the software renderer
   }
 
-  // Auckland terrain: streaming, real heights, physics matching the data,
-  // hill climbing and chunk seams.
+  // Auckland terrain and buildings: streaming, real heights, physics matching
+  // the data, hill climbing, chunk seams, solid buildings and draw calls.
   {
     const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }));
     const game = (fn, ...args) => page.evaluate(([f, a]) => window.__game[f](...a), [fn, args]);
@@ -205,6 +205,58 @@ try {
     r = await drive((p) => p[0] > 70, 12000);
     check(r.start[0] < 6 && r.end[0] > 6, `crosses a chunk seam on the flat (${r.start[0].toFixed(0)} -> ${r.end[0].toFixed(0)} x)`);
     check(r.minClear > 0.2 && r.maxClear < 1.4 && r.maxStep < 0.5, `no seam bump on the flat (clearance ${r.minClear.toFixed(2)}..${r.maxClear.toFixed(2)} m, worst jump ${r.maxStep.toFixed(2)})`);
+
+    // Buildings: loaded with the terrain, seated on it, and solid. The Chief
+    // Post Office (Britomart station, tagged 20 m) has its east wall at
+    // x = -24.6 where z = -38, with open ground east of it.
+    s = await state(page);
+    check(s.buildingChunks >= 9, `building chunks loaded near spawn (${s.buildingChunks})`);
+    const cpo = await game('probe', -50.3, -20.3);
+    const cpoRoof = cpo.top === null ? NaN : cpo.top - cpo.ground;
+    check(cpoRoof > 15 && cpoRoof < 25, `Chief Post Office roof ${cpoRoof.toFixed(1)} m above the ground (tagged 20 m)`);
+    const WALL_X = -24.6;
+    const ram = async (start, keys, ms) => {
+      let minX = start[0];
+      let peak = 0;
+      for (const k of keys) await page.keyboard.down(k);
+      const t0 = Date.now();
+      let last = await state(page);
+      while (Date.now() - t0 < ms) {
+        await page.waitForTimeout(80);
+        last = await state(page);
+        const p = last.mode === 'car' ? last.cars[0] : last.player;
+        minX = Math.min(minX, p[0]);
+        peak = Math.max(peak, last.mode === 'car' ? last.speedKmh : 0);
+      }
+      for (const k of keys) await page.keyboard.up(k);
+      return { minX, peak, last };
+    };
+    await game('teleportCar', 0, -2, -38, Math.PI);
+    await page.waitForTimeout(600);
+    r = await ram([-2], ['KeyW'], 6000);
+    check(r.peak > 15 && r.minX > WALL_X, `car can't drive through a building (hit at ${r.peak.toFixed(0)} km/h, got to x=${r.minX.toFixed(1)}, wall at ${WALL_X})`);
+    check(r.last.speedKmh < 5, `car stops at the wall (${r.last.speedKmh.toFixed(1)} km/h)`);
+    await page.screenshot({ path: `${shots}/9-car-at-wall.png` });
+
+    // Park the car out of the way, get out and walk (sprinting) at the same wall.
+    await game('teleportCar', 0, 10, -20, 0);
+    await page.keyboard.press('KeyF');
+    await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 8000 }).catch(() => {});
+    await game('placePlayer', -5, -38, Math.PI);
+    await page.waitForTimeout(300);
+    r = await ram([-5], ['KeyW', 'ShiftLeft'], 5000);
+    check(r.last.mode === 'foot' && r.minX < WALL_X + 3 && r.minX > WALL_X, `player can't walk through a building (got to x=${r.minX.toFixed(1)}, wall at ${WALL_X})`);
+
+    // Draw calls: a street view up Queen St and an aerial view over the CBD.
+    const budget = 150;
+    for (const [name, from, at] of [['queen-st', [-120, 6, 40], [-240, 18, 455]], ['aerial', [0, 250, -250], [-300, 0, 500]]]) {
+      await game('lookFrom', from, at);
+      await page.waitForTimeout(3000);
+      s = await state(page);
+      check(s.drawCalls > 0 && s.drawCalls < budget, `draw calls in the ${name} view: ${s.drawCalls} (budget ${budget})`);
+      await page.screenshot({ path: `${shots}/10-buildings-${name}.png` });
+    }
+    await game('lookFrom', null, [0, 0, 0]);
     check(errors.length === 0, `no console errors on terrain${errors.length ? ': ' + errors.join(' | ') : ''}`);
     await page.context().close();
   }

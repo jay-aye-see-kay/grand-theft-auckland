@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { GameAudio } from './audio.ts';
 import { ChaseCamera, DRIVING, ON_FOOT } from './camera.ts';
+import { TERRAIN_ONLY_QUERY } from './city/building-chunk.ts';
 import { Car } from './car.ts';
 import { Input } from './input.ts';
 import { Player } from './player.ts';
@@ -372,6 +373,8 @@ async function main() {
         cars: cars.map(({ car }) => car.object.position.toArray()),
         audio: audio.state,
         fps,
+        /** Draw calls in the last rendered frame. */
+        drawCalls: renderer.info.render.calls,
         map: map.name,
         /** Ground height under the player, or under the car being driven. */
         ground: (() => {
@@ -384,15 +387,25 @@ async function main() {
       /** Fix the camera at `from` looking at `at` ([x, y, z]); pass null to go back to the chase camera. */
       lookFrom: (from: number[] | null, at: number[]) => (debugView = from ? { from, at } : null),
       /**
-       * Loads the ground at (x, z), then returns the sampled terrain height and
-       * the height of the first fixed collider straight down from 1 km up (null if none).
+       * Loads the ground at (x, z), then returns the sampled terrain height,
+       * the height of the terrain collider straight down from 1 km up (null if
+       * none) and of the first fixed collider of any kind (a roof, if there's
+       * a building there).
        */
       probe: async (x: number, z: number) => {
         await map.ensureLoaded(x, z);
         // New colliders only join scene queries on the next physics step.
         for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
-        const hit = world.castRay(new RAPIER.Ray({ x, y: 1000, z }, down), 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
-        return { ground: map.heightAt(x, z), ray: hit ? 1000 - hit.timeOfImpact : null };
+        const ray = new RAPIER.Ray({ x, y: 1000, z }, down);
+        const hit = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED, TERRAIN_ONLY_QUERY);
+        const top = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
+        return { ground: map.heightAt(x, z), ray: hit ? 1000 - hit.timeOfImpact : null, top: top ? 1000 - top.timeOfImpact : null };
+      },
+      /** Put the player (on foot) at (x, z) on the ground, facing `heading`, with the camera behind. */
+      placePlayer: async (x: number, z: number, heading: number) => {
+        await map.ensureLoaded(x, z);
+        player.place(new THREE.Vector3(x, map.heightAt(x, z) + 0.05, z), heading);
+        chase.snap();
       },
       /** Move a car (default: the purple one) to (x, z) on the ground, facing `heading`. */
       teleportCar: async (index: number, x: number, z: number, heading: number) => {

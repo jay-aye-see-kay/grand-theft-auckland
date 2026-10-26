@@ -124,3 +124,122 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
   for (let k = 0; k < q.length; k++) heights[k] = (base + q[k]) / 100;
   return { n, heights };
 }
+
+// Buildings chunk file, before deflate (all little-endian). One merged,
+// vertex-coloured mesh per chunk plus the triangles its collider uses:
+//   0  'GTAB'  magic
+//   4  u16     version (1)
+//   6  u16     flags: bit 0 = 32-bit indices
+//   8  i32     base height, cm (y of the lowest vertex)
+//  12  u32     vertex count n
+//  16  u32     render index count
+//  20  u32     collider index count
+//  24  u16[n]  x, cm from the chunk centre (i16)  \  each plane stored as the
+//      u16[n]  z, cm from the chunk centre (i16)   } zigzagged difference from
+//      u16[n]  y, cm above base (u16)             /  the previous value
+//      i8[3n]  normals (snorm, xyz interleaved)
+//      u8[3n]  colours (linear RGB, interleaved)
+//      u16|u32 render indices, then collider indices (zigzagged deltas)
+// Delta coding keeps neighbouring vertices of a building tiny for deflate.
+const BUILDINGS_MAGIC = 0x42415447; // 'GTAB'
+const BUILDINGS_VERSION = 1;
+const BUILDINGS_HEADER = 24;
+
+export interface BuildingMesh {
+  /** Vertex positions in cm: x and z relative to the chunk centre, y above `baseCm`. */
+  xCm: Int32Array;
+  zCm: Int32Array;
+  yCm: Int32Array;
+  baseCm: number;
+  normals: Int8Array;
+  colours: Uint8Array;
+  indices: Uint32Array;
+  /** Triangles for the static collider (a subset of the render triangles' vertices). */
+  colliderIndices: Uint32Array;
+}
+
+const zig = (d: number) => ((d << 1) ^ (d >> 31)) >>> 0;
+const unzig = (z: number) => (z >>> 1) ^ -(z & 1);
+
+export function encodeBuildings(m: BuildingMesh): Uint8Array {
+  const n = m.xCm.length;
+  const wide = n > 0xffff;
+  const isz = wide ? 4 : 2;
+  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (m.indices.length + m.colliderIndices.length) * isz;
+  const out = new Uint8Array(size);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, BUILDINGS_MAGIC, true);
+  view.setUint16(4, BUILDINGS_VERSION, true);
+  view.setUint16(6, wide ? 1 : 0, true);
+  view.setInt32(8, m.baseCm, true);
+  view.setUint32(12, n, true);
+  view.setUint32(16, m.indices.length, true);
+  view.setUint32(20, m.colliderIndices.length, true);
+  let o = BUILDINGS_HEADER;
+  for (const [plane, lo, hi] of [[m.xCm, -0x8000, 0x7fff], [m.zCm, -0x8000, 0x7fff], [m.yCm, 0, 0xffff]] as const) {
+    let prev = 0;
+    for (let k = 0; k < n; k++) {
+      const v = plane[k];
+      if (v < lo || v > hi) throw new Error(`encodeBuildings: coordinate ${v} cm out of range`);
+      const d = ((v - prev) << 16) >> 16; // wraps mod 2^16, as int16
+      view.setUint16(o, zig(d) & 0xffff, true);
+      o += 2;
+      prev = v;
+    }
+  }
+  out.set(new Uint8Array(m.normals.buffer, m.normals.byteOffset, n * 3), o);
+  o += n * 3;
+  out.set(m.colours.subarray(0, n * 3), o);
+  o += n * 3;
+  for (const list of [m.indices, m.colliderIndices]) {
+    let prev = 0;
+    for (const v of list) {
+      if (v >= n) throw new Error('encodeBuildings: index out of range');
+      // Narrow deltas wrap mod 2^16, like the positions.
+      if (wide) view.setUint32(o, zig(v - prev), true);
+      else view.setUint16(o, zig(((v - prev) << 16) >> 16) & 0xffff, true);
+      o += isz;
+      prev = v;
+    }
+  }
+  return out;
+}
+
+export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== BUILDINGS_MAGIC) throw new Error('buildings chunk: bad magic');
+  if (view.getUint16(4, true) !== BUILDINGS_VERSION) throw new Error('buildings chunk: unsupported version');
+  const wide = (view.getUint16(6, true) & 1) === 1;
+  const baseCm = view.getInt32(8, true);
+  const n = view.getUint32(12, true);
+  const ni = view.getUint32(16, true);
+  const nc = view.getUint32(20, true);
+  const isz = wide ? 4 : 2;
+  if (bytes.byteLength < BUILDINGS_HEADER + n * 12 + (ni + nc) * isz) throw new Error('buildings chunk: truncated');
+  let o = BUILDINGS_HEADER;
+  const planes = [new Int32Array(n), new Int32Array(n), new Int32Array(n)];
+  for (const [p, plane] of planes.entries()) {
+    let prev = 0;
+    for (let k = 0; k < n; k++) {
+      const v = prev + unzig(view.getUint16(o, true));
+      prev = p === 2 ? v & 0xffff : (v << 16) >> 16;
+      plane[k] = prev;
+      o += 2;
+    }
+  }
+  const normals = new Int8Array(bytes.buffer.slice(bytes.byteOffset + o, bytes.byteOffset + o + n * 3));
+  o += n * 3;
+  const colours = bytes.slice(o, o + n * 3);
+  o += n * 3;
+  const lists = [new Uint32Array(ni), new Uint32Array(nc)];
+  for (const list of lists) {
+    let prev = 0;
+    for (let k = 0; k < list.length; k++) {
+      const z = wide ? view.getUint32(o, true) : view.getUint16(o, true);
+      prev = wide ? prev + unzig(z) : (prev + unzig(z)) & 0xffff;
+      list[k] = prev;
+      o += isz;
+    }
+  }
+  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1] };
+}

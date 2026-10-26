@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
-import { decodeTerrain, type ChunkInfo, type CityManifest, type TerrainSamples } from './format.ts';
+import { BuildingChunk } from './building-chunk.ts';
+import { decodeBuildings, decodeTerrain, type BuildingMesh, type ChunkInfo, type CityManifest, type TerrainSamples } from './format.ts';
 import { TerrainChunk, type Lod } from './terrain-chunk.ts';
 import type { TerrainLayout } from './terrain-mesh.ts';
 
@@ -18,7 +19,7 @@ const MAX_IN_FLIGHT = 6;
 /** A chunk asked for explicitly (teleport, debug probe) is kept this long even if out of range, ms. */
 const PIN_MS = 5000;
 
-type Slot = { info: ChunkInfo; chunk?: TerrainChunk; loading?: Promise<void>; waiters: (() => void)[]; pinnedUntil: number };
+type Slot = { info: ChunkInfo; chunk?: TerrainChunk; buildings?: BuildingChunk; loading?: Promise<void>; waiters: (() => void)[]; pinnedUntil: number };
 
 export class ChunkStreamer {
   private readonly base: URL;
@@ -90,6 +91,8 @@ export class ChunkStreamer {
         if (d > UNLOAD_RADIUS && performance.now() > slot.pinnedUntil) {
           slot.chunk.dispose(this.scene, this.world);
           slot.chunk = undefined;
+          slot.buildings?.dispose(this.scene, this.world);
+          slot.buildings = undefined;
           continue;
         }
         const lod: Lod = d < DETAIL_IN ? 0 : d > DETAIL_OUT ? 1 : (slot.chunk.lod ?? 1);
@@ -128,8 +131,11 @@ export class ChunkStreamer {
   private load(slot: Slot): void {
     this.inFlight++;
     const file = slot.info.files.terrain;
-    slot.loading = fetchTerrain(new URL(file, this.base))
-      .then((samples) => {
+    const bfile = slot.info.files.buildings;
+    // Terrain and buildings arrive together, so a chunk never has ground
+    // without its walls (or the other way round).
+    slot.loading = Promise.all([fetchTerrain(new URL(file, this.base)), bfile ? fetchBuildings(new URL(bfile, this.base)) : null])
+      .then(([samples, buildings]) => {
         // It may have drifted out of range while downloading; keep it anyway
         // if someone is waiting on it.
         if (this.distance(slot.info, this.focus.x, this.focus.z) > UNLOAD_RADIUS && !slot.waiters.length) return;
@@ -139,10 +145,17 @@ export class ChunkStreamer {
         const d = this.distance(slot.info, this.focus.x, this.focus.z);
         chunk.setLod(d < DETAIL_IN ? 0 : 1, this.scene, this.material);
         slot.chunk = chunk;
+        if (buildings) {
+          const s = this.manifest.chunkSize;
+          const b = new BuildingChunk(buildings, o.x + s / 2, o.z + s / 2, this.material, `buildings ${slot.info.i},${slot.info.j}`);
+          b.addCollider(this.world, this.body);
+          this.scene.add(b.mesh);
+          slot.buildings = b;
+        }
       })
       .catch((err) => {
         this.failures++;
-        console.warn(`terrain ${file}: ${err instanceof Error ? err.message : err}`);
+        console.warn(`chunk ${file}: ${err instanceof Error ? err.message : err}`);
       })
       .finally(() => {
         this.inFlight--;
@@ -154,11 +167,13 @@ export class ChunkStreamer {
   stats() {
     let loaded = 0;
     let detailed = 0;
+    let buildingChunks = 0;
     for (const s of this.slots.values()) {
       if (s.chunk) loaded++;
+      if (s.buildings) buildingChunks++;
       if (s.chunk?.lod === 0) detailed++;
     }
-    return { chunks: this.slots.size, loaded, detailed, inFlight: this.inFlight, failures: this.failures };
+    return { chunks: this.slots.size, loaded, detailed, buildingChunks, inFlight: this.inFlight, failures: this.failures };
   }
 }
 
@@ -167,4 +182,11 @@ async function fetchTerrain(url: URL): Promise<TerrainSamples> {
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   const inflated = res.body.pipeThrough(new DecompressionStream('deflate'));
   return decodeTerrain(new Uint8Array(await new Response(inflated).arrayBuffer()));
+}
+
+async function fetchBuildings(url: URL): Promise<BuildingMesh> {
+  const res = await fetch(url);
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const inflated = res.body.pipeThrough(new DecompressionStream('deflate'));
+  return decodeBuildings(new Uint8Array(await new Response(inflated).arrayBuffer()));
 }

@@ -82,6 +82,8 @@ export class Car {
         .setTranslation(spawn.x, spawn.y, spawn.z)
         .setRotation(rotation)
         .setCanSleep(false)
+        // Building walls are thin trimesh sheets: CCD stops a fast car tunnelling through one.
+        .setCcdEnabled(true)
         .setAngularDamping(0.6)
         .setLinearDamping(0.05),
     );

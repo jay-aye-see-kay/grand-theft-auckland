@@ -5,8 +5,8 @@ import { ChunkStreamer } from '../city/streamer.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
 // The real Auckland CBD, generated offline by tools/citygen into
-// public/city/<area>/ and streamed in by chunk. For now that's LiDAR terrain
-// only; buildings (T3) and roads (T4) add their own per-chunk layers.
+// public/city/<area>/ and streamed in by chunk: LiDAR terrain and OSM
+// buildings so far; roads (T4) add their own per-chunk layer.
 
 const AREA = 'cbd';
 /** Ground within this radius of the spawn is loaded before play starts. */
@@ -54,7 +54,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
   const b = manifest.bounds;
   return {
     name: 'auckland',
-    blurb: "Auckland CBD · purple '95 Corolla · real hills, no buildings yet",
+    blurb: "Auckland CBD · purple '95 Corolla · real hills and buildings",
     // Late-afternoon haze: far enough to see across the CBD from the ridge.
     atmosphere: { sky: 0xf2b27a, fogNear: 250, fogFar: 1700, far: 2600 },
     parking,
