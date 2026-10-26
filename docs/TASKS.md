@@ -17,7 +17,9 @@ and verified.
     Queen St / K Road corner. Sanity check: Britomart should be near sea
     level and K Road somewhere around 60–80 m. If not, the projection or
     the DEM window is wrong.
-- [ ] **T2 Terrain.** Depends on T1.
+- [x] **T2 Terrain.** Done: 90 chunks, 1 MB total in `public/city/cbd/`, harbour flat at -2 m
+  until T7. Add layers as `<layer>/<i>_<j>.*` listed in chunk `files`, loaded in
+  `src/city/streamer.ts`. Aerial views hit 73 draw calls already.
   - Generate per-chunk heightfields at 2 m resolution (render mesh +
     Rapier heightfield).
   - Add Auckland loading in the game, with `?map=test` keeping the old
