@@ -1,0 +1,144 @@
+import * as THREE from 'three';
+import type { BuildingChunk } from './building-chunk.ts';
+import type { TerrainParts } from './terrain-mesh.ts';
+
+// A chunk's static scenery (ground, roads and buildings) as one mesh: one
+// draw call per chunk however much is in it. They share one material (the
+// road material, whose depth bias is zero for anything on layer 0), so the
+// merge costs nothing visually. What's drawn is chosen by rewriting the
+// index buffer: roads only within ROAD_DRAW (see streamer.ts), and near the
+// player each 50 m tile of ground at 2 m or 10 m detail. The vertex buffers
+// change only when the chunk switches between its near and far terrain parts.
+
+export class ChunkMesh {
+  readonly mesh: THREE.Mesh;
+  private readonly roads: BuildingChunk | undefined;
+  private readonly buildings: BuildingChunk | undefined;
+  /** Chunk half-size: terrain parts are in the north-west corner's frame, the rest in the centre's. */
+  private readonly half: number;
+  private parts: TerrainParts | null = null;
+  private index: THREE.BufferAttribute | null = null;
+  private terrainBase = 0;
+  private selection = '';
+
+  constructor(name: string, cx: number, cz: number, half: number, material: THREE.Material, roads?: BuildingChunk, buildings?: BuildingChunk) {
+    this.roads = roads;
+    this.buildings = buildings;
+    this.half = half;
+    this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    this.mesh.name = name;
+    this.mesh.position.set(cx, 0, cz);
+    this.mesh.matrixAutoUpdate = false;
+    this.mesh.updateMatrix();
+  }
+
+  /** Whether the near (tiled) terrain parts are in the vertex buffers. */
+  get near(): boolean {
+    return !!this.parts?.tiles;
+  }
+
+  get tilesPerSide(): number {
+    return this.parts?.tilesPerSide ?? 0;
+  }
+
+  /** Replaces the terrain parts, rebuilding the vertex buffers (and, on the next update, the index). */
+  setTerrain(parts: TerrainParts): void {
+    this.parts = parts;
+    const features = [this.roads, this.buildings].filter((b): b is BuildingChunk => !!b);
+    const count = features.reduce((n, b) => n + b.count, 0) + parts.count;
+    const pos = new Float32Array(count * 3);
+    const nor = new Int8Array(count * 3);
+    const col = new Uint8Array(count * 3);
+    const layer = new Uint8Array(count);
+    let v = 0;
+    for (const b of features) {
+      pos.set(b.pos, v * 3);
+      nor.set(b.normals.subarray(0, b.count * 3), v * 3);
+      col.set(b.colours.subarray(0, b.count * 3), v * 3);
+      if (b.layers) layer.set(b.layers.subarray(0, b.count), v);
+      v += b.count;
+    }
+    this.terrainBase = v;
+    for (let k = 0; k < parts.count; k++) {
+      pos[(v + k) * 3] = parts.pos[k * 3] - this.half;
+      pos[(v + k) * 3 + 1] = parts.pos[k * 3 + 1];
+      pos[(v + k) * 3 + 2] = parts.pos[k * 3 + 2] - this.half;
+    }
+    nor.set(parts.nor, v * 3);
+    col.set(parts.col, v * 3);
+
+    // Room for the most that can ever be drawn at once.
+    let terrainMax = parts.far.length;
+    if (parts.tiles) {
+      let tiles = 0;
+      for (const t of parts.tiles) {
+        tiles += Math.max(...[0, 1].map((l) => t.ground[l].length + t.skirts[l].reduce((n, s) => n + s.length, 0)));
+      }
+      terrainMax = Math.max(terrainMax, tiles);
+    }
+    const capacity = features.reduce((n, b) => n + b.indices.length, 0) + terrainMax;
+    this.index = new THREE.BufferAttribute(count > 0xffff ? new Uint32Array(capacity) : new Uint16Array(capacity), 1);
+    this.index.setUsage(THREE.DynamicDrawUsage);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3, true));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3, true));
+    geo.setAttribute('roadLayer', new THREE.BufferAttribute(layer, 1));
+    geo.setIndex(this.index);
+    geo.computeBoundingSphere();
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = geo;
+    this.selection = '';
+  }
+
+  /**
+   * Picks what to draw: roads or not, and per tile 0 (2 m) or 1 (coarse);
+   * `tiles` null draws the far parts. Cheap when nothing changed.
+   */
+  update(roads: boolean, tiles: Uint8Array | null): void {
+    const parts = this.parts;
+    const index = this.index;
+    if (!parts || !index) return;
+    const near = tiles && parts.tiles ? tiles : null;
+    const selection = `${roads ? 1 : 0}${near ? near.join('') : 'far'}`;
+    if (selection === this.selection) return;
+    this.selection = selection;
+    const out = index.array as Uint16Array | Uint32Array;
+    let n = 0;
+    const put = (list: Uint32Array, base: number) => {
+      for (let k = 0; k < list.length; k++) out[n++] = list[k] + base;
+    };
+    // Roads come first in the vertex buffers, then buildings.
+    if (roads && this.roads) put(this.roads.indices, 0);
+    if (this.buildings) put(this.buildings.indices, this.roads?.count ?? 0);
+    if (!near) put(parts.far, this.terrainBase);
+    else {
+      const side = parts.tilesPerSide;
+      const lodAt = (r: number, c: number) => (r < 0 || c < 0 || r >= side || c >= side ? -1 : near[r * side + c]);
+      for (let r = 0; r < side; r++) {
+        for (let c = 0; c < side; c++) {
+          const lod = near[r * side + c] ? 1 : 0;
+          const tile = parts.tiles![r * side + c];
+          put(tile.ground[lod], this.terrainBase);
+          // Skirts on the chunk's edge, and where a detailed tile meets a coarse one
+          // (the coarse ground is never above the detailed, so its skirts aren't needed there).
+          const neighbours = [lodAt(r - 1, c), lodAt(r + 1, c), lodAt(r, c - 1), lodAt(r, c + 1)];
+          for (let e = 0; e < 4; e++) {
+            if (neighbours[e] === -1 || (lod === 0 && neighbours[e] === 1)) put(tile.skirts[lod][e], this.terrainBase);
+          }
+        }
+      }
+    }
+    this.mesh.geometry.setDrawRange(0, n);
+    index.clearUpdateRanges();
+    index.addUpdateRange(0, n);
+    index.needsUpdate = true;
+  }
+
+  dispose(): void {
+    this.mesh.geometry.dispose();
+    this.parts = null;
+    this.index = null;
+  }
+}

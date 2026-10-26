@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { BuildingChunk, roadMaterial } from './building-chunk.ts';
+import { ChunkMesh } from './chunk-mesh.ts';
 import {
   decodeBuildings,
   decodeGround,
@@ -14,19 +15,28 @@ import {
   type Surface,
   type TerrainSamples,
 } from './format.ts';
-import { TerrainChunk, type Lod } from './terrain-chunk.ts';
+import { TerrainChunk } from './terrain-chunk.ts';
 import type { TerrainLayout } from './terrain-mesh.ts';
 
 // Radius-based chunk loading around a focus point (the player or their car).
-// Chunks within LOAD_RADIUS are fetched (nearest first, a few at a time) and
-// get a collider as soon as they arrive; beyond UNLOAD_RADIUS they're thrown
-// away. Close chunks render at full detail, the rest coarse. Proper
-// streaming polish (prefetch by velocity, far skyline) is T13.
+// Chunks within LOAD_RADIUS are fetched (nearest first, a few at a time);
+// beyond UNLOAD_RADIUS they're thrown away. Each chunk is one draw call
+// (ChunkMesh). Ground within DETAIL_IN of the focus is drawn at full 2 m
+// detail, 50 m tile by tile; the rest is coarse, and fog hides the switch.
+// Only chunks within COLLIDE_IN have colliders (terrain heightfield,
+// buildings, bridge decks); further out nothing is close enough to touch
+// them, and cars standing there freeze until they're back in range (see
+// GameMap.hasGround). Proper streaming polish (prefetch by velocity, far
+// skyline) is T13.
 
 const LOAD_RADIUS = 900;
 const UNLOAD_RADIUS = 1100;
-const DETAIL_IN = 180; // switch to full detail inside this distance...
-const DETAIL_OUT = 260; // ...and back to coarse beyond this one
+/** Ground tiles switch to 2 m detail inside this distance, and back to coarse beyond DETAIL_OUT, m. */
+const DETAIL_IN = 110;
+const DETAIL_OUT = 140;
+/** Colliders are added inside this distance and removed beyond COLLIDE_OUT, m. */
+const COLLIDE_IN = 300;
+const COLLIDE_OUT = 400;
 const MAX_IN_FLIGHT = 6;
 /**
  * Road meshes are drawn only this close: beyond it they're a few pixels
@@ -42,6 +52,9 @@ type Slot = {
   chunk?: TerrainChunk;
   buildings?: BuildingChunk;
   roads?: BuildingChunk;
+  mesh?: ChunkMesh;
+  /** Per 50 m tile: 0 = 2 m detail, 1 = coarse. */
+  tiles?: Uint8Array;
   ground?: GroundSamples;
   loading?: Promise<void>;
   waiters: (() => void)[];
@@ -55,11 +68,11 @@ export class ChunkStreamer {
   private readonly world: RAPIER.World;
   private readonly body: RAPIER.RigidBody;
   private readonly layout: TerrainLayout;
-  private readonly material = new THREE.MeshLambertMaterial({ vertexColors: true });
-  private readonly roadMaterial = roadMaterial();
+  private readonly material = roadMaterial();
   private readonly slots = new Map<string, Slot>();
   private inFlight = 0;
-  private focus = { x: 0, z: 0 };
+  private readonly focus = { x: 0, z: 0 };
+  private readonly wanted: Slot[] = [];
   /** Count of chunk fetches that failed (shown in ?debug). */
   failures = 0;
 
@@ -153,28 +166,27 @@ export class ChunkStreamer {
   }
 
   update(x: number, z: number): void {
-    this.focus = { x, z };
-    const wanted: Slot[] = [];
+    this.focus.x = x;
+    this.focus.z = z;
+    const now = performance.now();
+    const wanted = this.wanted;
+    wanted.length = 0;
     for (const slot of this.slots.values()) {
       const d = this.distance(slot.info, x, z);
+      const pinned = now < slot.pinnedUntil;
       if (slot.chunk) {
-        if (d > UNLOAD_RADIUS && performance.now() > slot.pinnedUntil) {
-          slot.chunk.dispose(this.scene, this.world);
-          slot.chunk = undefined;
-          slot.buildings?.dispose(this.scene, this.world);
-          slot.buildings = undefined;
-          slot.roads?.dispose(this.scene, this.world);
-          slot.roads = undefined;
-          slot.ground = undefined;
+        if (d > UNLOAD_RADIUS && !pinned) {
+          this.unload(slot);
           continue;
         }
-        const lod: Lod = d < DETAIL_IN ? 0 : d > DETAIL_OUT ? 1 : (slot.chunk.lod ?? 1);
-        slot.chunk.setLod(lod, this.scene, this.material);
-        if (slot.roads) slot.roads.mesh.visible = d < ROAD_DRAW;
+        if (d < COLLIDE_IN || pinned) this.addColliders(slot);
+        else if (d > COLLIDE_OUT) this.removeColliders(slot);
+        this.updateMesh(slot, d);
       } else if (!slot.loading && d < LOAD_RADIUS) {
         wanted.push(slot);
       }
     }
+    if (!wanted.length || this.inFlight >= MAX_IN_FLIGHT) return;
     wanted.sort((a, b) => this.distance(a.info, x, z) - this.distance(b.info, x, z));
     for (const slot of wanted) {
       if (this.inFlight >= MAX_IN_FLIGHT) break;
@@ -182,10 +194,59 @@ export class ChunkStreamer {
     }
   }
 
+  /** Near terrain (2 m tiles) for chunks with any tile in detail range; roads within ROAD_DRAW. */
+  private updateMesh(slot: Slot, d: number): void {
+    const mesh = slot.mesh!;
+    const chunk = slot.chunk!;
+    if (!mesh.near && d < DETAIL_IN) mesh.setTerrain(chunk.parts(true));
+    else if (mesh.near && d > DETAIL_OUT + 50) mesh.setTerrain(chunk.parts(false));
+    let tiles: Uint8Array | null = null;
+    if (mesh.near) {
+      const side = mesh.tilesPerSide;
+      const size = this.manifest.chunkSize / side;
+      tiles = slot.tiles && slot.tiles.length === side * side ? slot.tiles : (slot.tiles = new Uint8Array(side * side).fill(1));
+      for (let r = 0; r < side; r++) {
+        for (let c = 0; c < side; c++) {
+          const tx = chunk.x + c * size;
+          const tz = chunk.z + r * size;
+          const td = Math.hypot(Math.max(tx - this.focus.x, 0, this.focus.x - tx - size), Math.max(tz - this.focus.z, 0, this.focus.z - tz - size));
+          const k = r * side + c;
+          if (td < DETAIL_IN) tiles[k] = 0;
+          else if (td > DETAIL_OUT) tiles[k] = 1;
+        }
+      }
+    }
+    mesh.update(d < ROAD_DRAW, tiles);
+  }
+
+  private addColliders(slot: Slot): void {
+    if (slot.chunk?.hasCollider) return;
+    slot.chunk?.addCollider(this.world, this.body);
+    slot.buildings?.addCollider(this.world, this.body);
+    slot.roads?.addCollider(this.world, this.body); // bridge decks
+  }
+
+  private removeColliders(slot: Slot): void {
+    if (!slot.chunk?.hasCollider) return;
+    slot.chunk.removeCollider(this.world);
+    slot.buildings?.removeCollider(this.world);
+    slot.roads?.removeCollider(this.world);
+  }
+
+  private unload(slot: Slot): void {
+    this.removeColliders(slot);
+    if (slot.mesh) {
+      this.scene.remove(slot.mesh.mesh);
+      slot.mesh.dispose();
+    }
+    slot.chunk = slot.buildings = slot.roads = slot.mesh = slot.tiles = slot.ground = undefined;
+  }
+
   /** Loads the chunk under (x, z) right away (ahead of the queue) and resolves when it has collision. */
   ensureLoaded(x: number, z: number): Promise<void> {
     const slot = this.slotAt(x, z);
     if (slot) slot.pinnedUntil = performance.now() + PIN_MS;
+    if (slot?.chunk) this.addColliders(slot);
     if (!slot || slot.chunk) return Promise.resolve();
     const done = new Promise<void>((resolve) => slot.waiters.push(resolve));
     if (!slot.loading) this.load(slot);
@@ -219,27 +280,19 @@ export class ChunkStreamer {
         // if someone is waiting on it.
         if (this.distance(slot.info, this.focus.x, this.focus.z) > UNLOAD_RADIUS && !slot.waiters.length) return;
         const o = this.origin(slot.info);
+        const half = this.manifest.chunkSize / 2;
         const chunk = new TerrainChunk(slot.info.i, slot.info.j, o.x, o.z, samples, this.layout, ground ?? undefined);
         slot.ground = ground ?? undefined;
-        chunk.addCollider(this.world, this.body);
-        const d = this.distance(slot.info, this.focus.x, this.focus.z);
-        chunk.setLod(d < DETAIL_IN ? 0 : 1, this.scene, this.material);
         slot.chunk = chunk;
-        if (buildings) {
-          const s = this.manifest.chunkSize;
-          const b = new BuildingChunk(buildings, o.x + s / 2, o.z + s / 2, this.material, `buildings ${slot.info.i},${slot.info.j}`);
-          b.addCollider(this.world, this.body);
-          this.scene.add(b.mesh);
-          slot.buildings = b;
-        }
-        if (roads) {
-          const s = this.manifest.chunkSize;
-          const r = new BuildingChunk(roads, o.x + s / 2, o.z + s / 2, this.roadMaterial, `roads ${slot.info.i},${slot.info.j}`);
-          r.addCollider(this.world, this.body); // bridge decks
-          r.mesh.visible = d < ROAD_DRAW;
-          this.scene.add(r.mesh);
-          slot.roads = r;
-        }
+        slot.buildings = buildings ? new BuildingChunk(buildings, o.x + half, o.z + half) : undefined;
+        slot.roads = roads ? new BuildingChunk(roads, o.x + half, o.z + half) : undefined;
+        const d = this.distance(slot.info, this.focus.x, this.focus.z);
+        const mesh = new ChunkMesh(`chunk ${slot.info.i},${slot.info.j}`, o.x + half, o.z + half, half, this.material, slot.roads, slot.buildings);
+        mesh.setTerrain(chunk.parts(d < DETAIL_IN));
+        slot.mesh = mesh;
+        this.scene.add(mesh.mesh);
+        if (d < COLLIDE_IN || slot.waiters.length || performance.now() < slot.pinnedUntil) this.addColliders(slot);
+        this.updateMesh(slot, d);
       })
       .catch((err) => {
         this.failures++;
@@ -255,15 +308,17 @@ export class ChunkStreamer {
   stats() {
     let loaded = 0;
     let detailed = 0;
+    let colliders = 0;
     let buildingChunks = 0;
     let roadChunks = 0;
     for (const s of this.slots.values()) {
       if (s.chunk) loaded++;
+      if (s.chunk?.hasCollider) colliders++;
       if (s.buildings) buildingChunks++;
       if (s.roads) roadChunks++;
-      if (s.chunk?.lod === 0) detailed++;
+      if (s.tiles?.includes(0)) detailed++;
     }
-    return { chunks: this.slots.size, loaded, detailed, buildingChunks, roadChunks, inFlight: this.inFlight, failures: this.failures };
+    return { chunks: this.slots.size, loaded, detailed, colliders, buildingChunks, roadChunks, inFlight: this.inFlight, failures: this.failures };
   }
 }
 

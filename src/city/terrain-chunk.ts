@@ -1,15 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import * as THREE from 'three';
 import type { GroundSamples, TerrainSamples } from './format.ts';
-import { buildTerrainGeometry, type TerrainLayout } from './terrain-mesh.ts';
+import { buildTerrainParts, type TerrainLayout, type TerrainParts } from './terrain-mesh.ts';
 
-// One 250 m chunk of ground: height samples, a render mesh per level of
-// detail (one draw call each, only one visible at a time) and a Rapier
-// heightfield collider.
-
-/** Vertex step per level of detail: 0 = every 2 m sample, 1 = every 10 m. */
-export const LOD_STEPS = [1, 5] as const;
-export type Lod = 0 | 1;
+// One 250 m chunk of ground: height samples, render parts (drawn by
+// ChunkMesh, merged with the chunk's buildings and roads) and a Rapier
+// heightfield collider, which only chunks near the player have.
 
 export class TerrainChunk {
   readonly i: number;
@@ -21,9 +16,7 @@ export class TerrainChunk {
   private readonly samples: TerrainSamples;
   private readonly layout: TerrainLayout;
   private readonly ground: GroundSamples | undefined;
-  private readonly meshes: (THREE.Mesh | undefined)[] = [];
   private collider: RAPIER.Collider | null = null;
-  lod: Lod | null = null;
 
   constructor(i: number, j: number, x: number, z: number, samples: TerrainSamples, layout: TerrainLayout, ground?: GroundSamples) {
     this.i = i;
@@ -62,22 +55,9 @@ export class TerrainChunk {
     return h11 + (h01 - h11) * (1 - fx) + (h10 - h11) * (1 - fz);
   }
 
-  /** Show the given level of detail, building its mesh on first use. */
-  setLod(lod: Lod, scene: THREE.Scene, material: THREE.Material): void {
-    if (this.lod === lod) return;
-    if (this.lod !== null) this.meshes[this.lod]!.visible = false;
-    let mesh = this.meshes[lod];
-    if (!mesh) {
-      mesh = new THREE.Mesh(buildTerrainGeometry(this.samples, this.layout, this, LOD_STEPS[lod], this.ground), material);
-      mesh.position.set(this.x, 0, this.z);
-      mesh.matrixAutoUpdate = false;
-      mesh.updateMatrix();
-      mesh.name = `terrain ${this.i},${this.j} lod${lod}`;
-      this.meshes[lod] = mesh;
-      scene.add(mesh);
-    }
-    mesh.visible = true;
-    this.lod = lod;
+  /** Render parts: coarse only, or also the 2 m tiles (see buildTerrainParts). */
+  parts(near: boolean): TerrainParts {
+    return buildTerrainParts(this.samples, this.layout, this, this.ground, near);
   }
 
   get hasCollider(): boolean {
@@ -102,14 +82,7 @@ export class TerrainChunk {
     );
   }
 
-  dispose(scene: THREE.Scene, world: RAPIER.World): void {
-    for (const mesh of this.meshes) {
-      if (!mesh) continue;
-      scene.remove(mesh);
-      mesh.geometry.dispose();
-    }
-    this.meshes.length = 0;
-    this.lod = null;
+  removeCollider(world: RAPIER.World): void {
     if (this.collider) world.removeCollider(this.collider, false);
     this.collider = null;
   }
