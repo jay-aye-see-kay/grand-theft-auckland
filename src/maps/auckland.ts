@@ -82,6 +82,15 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
     // The harbour bounds the map to the north; beyond its other edges is land.
     water: manifest.water && { level: manifest.water.level, bounds: b, seaSouth: SEA_SOUTH },
     nearest: (x, z, maxDist, ok) => terrain.nearest(x, z, maxDist, ok),
+    // Performance budgets (CLAUDE.md) are measured from these three views.
+    views: {
+      // Street level at the spawn outside Britomart, looking west along Customs St.
+      spawn: { from: [-8, 2.5, 22], at: [-120, 3, 12] },
+      // Halfway up Queen St, looking uphill towards Wellesley St.
+      'queen-st': { from: [-170, 2.5, 220], at: [-245, 6, 494] },
+      // Over the harbour, looking across the whole CBD towards K Road.
+      aerial: { from: [0, 250, -250], at: [-300, -4, 500] },
+    },
     debugInfo: () => terrain.stats(),
   };
 }

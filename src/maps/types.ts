@@ -22,6 +22,15 @@ export interface Atmosphere {
   far: number;
 }
 
+/**
+ * A fixed camera for ?debug screenshots and the smoke test's performance
+ * budgets. Heights are metres above the ground under each point.
+ */
+export interface DebugView {
+  from: [number, number, number];
+  at: [number, number, number];
+}
+
 export interface GameMap {
   readonly name: string;
   /** Splash-screen subtitle. */
@@ -58,6 +67,8 @@ export interface GameMap {
    * accepts (given its surface and height), or null.
    */
   nearest?(x: number, z: number, maxDist: number, ok: (x: number, z: number, surface: string, height: number) => boolean): { x: number; z: number } | null;
+  /** Named reproducible camera views (?debug): budgets are measured from these. */
+  readonly views?: Record<string, DebugView>;
   /** Extra numbers for ?debug and the smoke test. */
   debugInfo(): Record<string, number>;
 }

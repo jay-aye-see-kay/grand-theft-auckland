@@ -50,7 +50,8 @@ async function main() {
   // Renderer: start at a modest pixel ratio on phones and adapt from there.
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   const coarse = matchMedia('(pointer: coarse)').matches;
-  const maxRatio = Math.min(devicePixelRatio, coarse ? 2 : 2.5);
+  // Past 2x the extra pixels cost far more fill rate than they show.
+  const maxRatio = Math.min(devicePixelRatio, 2);
   let pixelRatio = Math.min(devicePixelRatio, coarse ? 1.5 : 2);
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(innerWidth, innerHeight);
@@ -271,8 +272,10 @@ async function main() {
   const up = new THREE.Vector3(0, 1, 0);
   const _n = new THREE.Vector3();
   const _yawQ = new THREE.Quaternion();
+  const shadowRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, down);
   const placeShadow = (shadow: THREE.Mesh, from: THREE.Vector3, yaw: number, exclude: RAPIER.Collider, reach: number) => {
-    const hit = world.castRayAndGetNormal(new RAPIER.Ray(from, down), reach, true, undefined, undefined, exclude);
+    shadowRay.origin = { x: from.x, y: from.y, z: from.z };
+    const hit = world.castRayAndGetNormal(shadowRay, reach, true, undefined, undefined, exclude);
     shadow.visible = !!hit;
     if (!hit) return;
     _n.set(hit.normal.x, hit.normal.y, hit.normal.z);
@@ -322,6 +325,11 @@ async function main() {
 
   /** ?debug fixed viewpoint (screenshots), overriding the chase camera. */
   let debugView: { from: number[]; at: number[] } | null = null;
+  // ?debug timing: JS ms per frame, smoothed (physics steps, render submit, whole frame).
+  const perf = { physicsMs: 0, renderMs: 0, frameMs: 0 };
+  const smooth = (prev: number, v: number) => prev + (v - prev) * 0.1;
+  const _euler = new THREE.Euler();
+  const _look = new THREE.Vector3();
   let accumulator = 0;
   let last = performance.now();
   let fpsFrames = 0;
@@ -331,6 +339,7 @@ async function main() {
   const _a = new THREE.Vector3();
 
   renderer.setAnimationLoop((now) => {
+    const t0 = performance.now();
     const frameDt = Math.min((now - last) / 1000, 0.1);
     last = now;
 
@@ -399,6 +408,7 @@ async function main() {
     const playerFrozen = !driving && !map.hasGround(player.position.x, player.position.z);
 
     accumulator += frameDt;
+    const tPhys = performance.now();
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < MAX_STEPS) {
       for (const { car, frozen } of cars) {
@@ -416,6 +426,7 @@ async function main() {
       steps++;
     }
     if (steps === MAX_STEPS) accumulator = 0;
+    perf.physicsMs = smooth(perf.physicsMs, performance.now() - tPhys);
 
     if (driving && exitRequested && Math.abs(driving.forwardSpeed()) < 1.5) exit(driving);
 
@@ -430,7 +441,7 @@ async function main() {
     const alpha = accumulator / FIXED_DT;
     for (const [n, { car, shadow }] of cars.entries()) {
       car.render(alpha);
-      const yaw = new THREE.Euler().setFromQuaternion(car.object.quaternion, 'YXZ').y;
+      const yaw = _euler.setFromQuaternion(car.object.quaternion, 'YXZ').y;
       placeShadow(shadow, car.object.position, yaw, car.collider, 2.6);
 
       // Skid marks from any sliding car, not just the one we're in.
@@ -453,7 +464,7 @@ async function main() {
     if (driving) {
       input.consumeLook(frameDt); // camera stays behind the car
       const speed = driving.forwardSpeed();
-      const heading = new THREE.Euler().setFromQuaternion(driving.object.quaternion, 'YXZ').y;
+      const heading = _euler.setFromQuaternion(driving.object.quaternion, 'YXZ').y;
       chase.update(frameDt, DRIVING, driving.object.position, heading, speed, driving.collider);
       speedo.textContent = `${Math.round(Math.abs(speed) * 3.6)}`;
       audio.setEngine(true, speed, driving.throttle);
@@ -483,11 +494,15 @@ async function main() {
     }
     if (debugView) {
       camera.position.fromArray(debugView.from);
-      camera.lookAt(new THREE.Vector3().fromArray(debugView.at));
+      camera.lookAt(_look.fromArray(debugView.at));
     }
     skyDome.follow(camera);
     water?.update(camera, clock);
+    const tRender = performance.now();
     renderer.render(scene, camera);
+    const tEnd = performance.now();
+    perf.renderMs = smooth(perf.renderMs, tEnd - tRender);
+    perf.frameMs = smooth(perf.frameMs, tEnd - t0);
 
     // Adaptive resolution: trade sharpness for frame rate on slower phones.
     fpsFrames++;
@@ -497,7 +512,13 @@ async function main() {
       if (fps < 45 && pixelRatio > 0.75) pixelRatio = Math.max(0.75, pixelRatio - 0.25);
       else if (fps > 58 && pixelRatio < maxRatio) pixelRatio = Math.min(maxRatio, pixelRatio + 0.25);
       if (renderer.getPixelRatio() !== pixelRatio) renderer.setPixelRatio(pixelRatio);
-      if (debug) fpsEl.textContent = `${fps.toFixed(0)} fps · ${pixelRatio.toFixed(2)}x · ${renderer.info.render.calls} calls`;
+      if (debug) {
+        const { render, memory } = renderer.info;
+        fpsEl.textContent =
+          `${fps.toFixed(0)} fps · ${pixelRatio.toFixed(2)}x · ${render.calls} calls · ${(render.triangles / 1000).toFixed(0)}k tris · ` +
+          `${memory.geometries} geo ${memory.textures} tex · js ${perf.frameMs.toFixed(1)} ms (phys ${perf.physicsMs.toFixed(1)}, ` +
+          `render ${perf.renderMs.toFixed(1)}) · ${map.debugInfo().loaded ?? 0} chunks`;
+      }
       fpsFrames = 0;
       fpsTime = 0;
     }
@@ -519,8 +540,13 @@ async function main() {
         cars: cars.map(({ car }) => car.object.position.toArray()),
         audio: audio.state,
         fps,
-        /** Draw calls in the last rendered frame. */
+        /** Draw calls and triangles in the last rendered frame. */
         drawCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures,
+        /** Smoothed JS ms per frame: physics steps, render submission, the whole frame. */
+        ...perf,
         map: map.name,
         /** Sea level, or null if the map has no water. */
         water: water ? water.level : null,
@@ -542,6 +568,20 @@ async function main() {
       groundHeight: (x: number, z: number) => map.heightAt(x, z),
       /** Fix the camera at `from` looking at `at` ([x, y, z]); pass null to go back to the chase camera. */
       lookFrom: (from: number[] | null, at: number[]) => (debugView = from ? { from, at } : null),
+      /** Names of the map's fixed views (performance budgets are measured from them). */
+      views: () => Object.keys(map.views ?? {}),
+      /** Fix the camera on one of the map's named views, its heights above the ground there. */
+      view: async (name: string) => {
+        const v = map.views?.[name];
+        if (!v) throw new Error(`no view ${name}`);
+        const lift = async ([x, y, z]: number[]) => {
+          await map.ensureLoaded(x, z);
+          const g = map.heightAt(x, z);
+          return [x, (Number.isNaN(g) ? 0 : g) + y, z];
+        };
+        debugView = { from: await lift(v.from), at: await lift(v.at) };
+        return debugView;
+      },
       /**
        * Loads the ground at (x, z), then returns the sampled terrain height,
        * the height of the terrain collider straight down from 1 km up (null if
