@@ -66,6 +66,24 @@ canvas {
   border-radius: 999px;
 }
 
+/* Data credits (OSM ODbL, LINZ CC BY 4.0): required on the title screen. */
+#splash .credits {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  margin: 0;
+  padding: 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+#splash .credits a {
+  color: #e3ccff;
+  text-underline-offset: 2px;
+}
+
 #hud {
   position: absolute;
   inset: 0;

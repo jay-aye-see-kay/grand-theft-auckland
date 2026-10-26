@@ -8,6 +8,9 @@ export interface ParkingSpot {
   pos: THREE.Vector3;
   /** 0 faces +x (east), PI/2 faces -z (north). */
   heading: number;
+  /** Nose up and left side up, radians, so it sits flush on a slope (default level). */
+  pitch?: number;
+  roll?: number;
   paint: number;
 }
 

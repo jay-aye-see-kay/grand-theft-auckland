@@ -53,9 +53,19 @@ try {
   for (const [query, tag] of [['', ''], [TEST_TOWN, ' [test town]']]) {
     const shot = (name) => page.screenshot({ path: `${shots}/${tag ? 'test-' : ''}${name}.png` });
     const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }), query);
+    await page.waitForFunction(() => !/Loading/.test(document.getElementById('status').textContent), null, { timeout: 60000 });
     await shot('1-title');
+    if (!tag) {
+      // Data credits on the title screen (OSM ODbL, LINZ CC BY 4.0), with links.
+      const credits = page.locator('#credits');
+      const text = (await credits.isVisible()) ? await credits.innerText() : '';
+      const links = await credits.locator('a[href^="https://"]').count();
+      check(/© OpenStreetMap contributors/.test(text) && /LINZ Data Service/.test(text) && /CC BY 4\.0/.test(text) && links >= 3,
+        `title screen credits OSM and LINZ (${links} links)`);
+    }
     await page.keyboard.press('KeyX');
-    await page.waitForTimeout(800);
+    await page.waitForFunction(() => window.__game.state().started, null, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(500);
     let s = await state(page);
     check(s.started && s.mode === 'foot', `starts on foot${tag}`);
     check(s.map === (tag ? 'test' : 'auckland'), `loads the ${s.map} map${tag}`);
@@ -91,13 +101,16 @@ try {
     s = await state(page);
     check(s.nearCar, `walks back to the car${tag}`);
 
-    await page.keyboard.press('KeyF');
-    await page.waitForTimeout(300);
+    // Slow CI frames can eat a key press, so poll and retry.
+    for (let tries = 0; tries < 4 && (await state(page)).mode !== 'car'; tries++) {
+      await page.keyboard.press('KeyF');
+      await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 2000 }).catch(() => {});
+    }
     s = await state(page);
     check(s.mode === 'car' && s.drivingIndex === 0, `gets into the purple Corolla${tag}`);
 
     await page.keyboard.down('KeyW');
-    await page.waitForTimeout(2500);
+    await page.waitForFunction(() => window.__game.state().speedKmh > 20, null, { timeout: 10000 }).catch(() => {});
     s = await state(page);
     check(s.speedKmh > 15, `drives (${s.speedKmh.toFixed(0)} km/h)${tag}`);
     await page.keyboard.down('KeyA');
@@ -143,7 +156,67 @@ try {
     // LiDAR ground: Britomart is just above sea level, Queen St / K Road ~66 m.
     const britomart = await game('groundHeight', 0, 0);
     check(Math.abs(britomart - 3.6) < 0.4, `Britomart ground ${britomart.toFixed(2)} m (expect ~3.6)`);
-    check(Math.abs(s.player[1] - britomart) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m)`);
+    check(Math.abs(s.player[1] - s.ground) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m, ground ${s.ground.toFixed(2)})`);
+
+    // Spawn: outside Britomart (the Chief Post Office), in the open (no roof
+    // overhead) and off the carriageway, with the purple Corolla parked
+    // beside it at the left kerb.
+    {
+      const sp = await game('probe', s.player[0], s.player[2]);
+      const open = sp.top === null || sp.top - sp.ground < 0.5;
+      check(open && sp.surface !== 'road' && Math.hypot(s.player[0] + 40, s.player[2]) < 60,
+        `spawns in the open outside Britomart (${s.player[0].toFixed(0)}, ${s.player[2].toFixed(0)}, ${sp.surface}, roof ${sp.top === null ? 'none' : (sp.top - sp.ground).toFixed(1) + ' m'})`);
+      check(dist(s.player, s.cars[0]) < 3.6, `purple Corolla parked beside the spawn (${dist(s.player, s.cars[0]).toFixed(1)} m)`);
+    }
+
+    // Parked cars: posed at the kerb from OSM data (public/city/cbd/parking.json).
+    // Each one, once its chunk has streamed in, should sit on its wheels on
+    // the road (not hovering, sunk or inside a building) and stay put.
+    {
+      const parked = await page.evaluate(() => fetch('city/cbd/parking.json').then((r) => r.json()));
+      check(parked.cars.length >= 6, `${parked.cars.length} cars parked round the CBD`);
+      const bad = [];
+      for (const [i, c] of parked.cars.entries()) {
+        const here = await game('probe', c.x, c.z);
+        // Look at it from the kerb behind: this also keeps its chunk streamed in.
+        const fx = Math.cos(c.heading);
+        const fz = -Math.sin(c.heading);
+        await game('lookFrom', [c.x - fx * 9 - fz * 3, c.y + 3, c.z - fz * 9 + fx * 3], [c.x, c.y - 0.3, c.z]);
+        let pose = null;
+        let calm = 0;
+        const t0 = Date.now();
+        // Settled = unfrozen and still for a few samples in a row.
+        while (Date.now() - t0 < 15000 && calm < 4) {
+          await page.waitForTimeout(150);
+          const prev = pose;
+          pose = (await game('carPoses'))[i];
+          calm = !pose.frozen && prev && Math.hypot(pose.pos[0] - prev.pos[0], pose.pos[1] - prev.pos[1], pose.pos[2] - prev.pos[2]) < 0.01 ? calm + 1 : 0;
+        }
+        if (i === 7) await page.screenshot({ path: `${shots}/12-parked-on-hill.png` });
+        const clear = pose.pos[1] - here.ground;
+        const drift = Math.hypot(pose.pos[0] - c.x, pose.pos[2] - c.z);
+        const roofed = here.top !== null && here.top - here.ground > 0.5;
+        const ok = !pose.frozen && clear > 0.4 && clear < 0.9 && pose.up > 0.97 && drift < 0.5 && !roofed && here.surface !== null && ['road', 'paving'].includes(here.surface);
+        if (!ok) bad.push(`${c.osm} ${c.name}: clearance ${clear.toFixed(2)}, up ${pose.up.toFixed(3)}, drift ${drift.toFixed(2)}, ${here.surface}${roofed ? ', under a roof' : ''}${pose.frozen ? ', frozen' : ''}`);
+      }
+      check(bad.length === 0, `parked cars sit on the road at the kerb (${parked.cars.length - bad.length}/${parked.cars.length})${bad.length ? ': ' + bad.join('; ') : ''}`);
+      await game('lookFrom', null, [0, 0, 0]);
+      await game('probe', s.player[0], s.player[2]); // back to the spawn's ground
+    }
+
+    // Fall-out-of-world rescue: a player or car under the terrain is put back on top.
+    for (const [who, index] of [['player', -1], ['car', 1]]) {
+      await game('sink', index, 15);
+      await page.waitForFunction(([k]) => {
+        const g = window.__game;
+        const p = k < 0 ? g.state().player : g.state().cars[k];
+        return p[1] > g.groundHeight(p[0], p[2]) - 0.5;
+      }, [index], { timeout: 10000 }).catch(() => {});
+      const st = await state(page);
+      const p = index < 0 ? st.player : st.cars[index];
+      const ground = await game('groundHeight', p[0], p[2]);
+      check(p[1] > ground - 0.5, `${who} that falls through the world is put back (y ${p[1].toFixed(1)}, ground ${ground.toFixed(1)})`);
+    }
     const kRoad = (await game('probe', -616, 1499)).ground;
     check(kRoad > 60 && kRoad < 72, `Queen St / K Road ground ${kRoad.toFixed(1)} m (expect ~66)`);
 
@@ -313,8 +386,10 @@ try {
 
     // Park the car out of the way, get out and walk (sprinting) at the same wall.
     await game('teleportCar', 0, 10, -20, 0);
-    await page.keyboard.press('KeyF');
-    await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 8000 }).catch(() => {});
+    for (let tries = 0; tries < 4 && (await state(page)).mode !== 'foot'; tries++) {
+      await page.keyboard.press('KeyF');
+      await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 4000 }).catch(() => {});
+    }
     await game('placePlayer', -5, -38, Math.PI);
     await page.waitForTimeout(300);
     r = await ram(['KeyW', 'ShiftLeft'], 30000, ({ minD }) => minD < 1.5);

@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeTerrain, GROUND_APRON, type ChunkInfo, type CityManifest } from '../../src/city/format.ts';
 import { buildBuildings } from './buildings.ts';
+import { buildParking, writeParking } from './parking.ts';
 import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
@@ -124,6 +125,10 @@ const manifest: CityManifest = {
 const { chunks: list, ...head } = manifest;
 const headJson = JSON.stringify(head, null, 2).replace(/\n}$/, '');
 writeFileSync(join(OUT, 'manifest.json'), `${headJson},\n  "chunks": [\n${list.map((c) => `    ${JSON.stringify(c)}`).join(',\n')}\n  ]\n}\n`);
+
+const parking = buildParking(data, terrainSampler);
+writeParking(parking, join(OUT, 'parking.json'));
+console.log(`Parking: ${parking.cars.length} cars, spawn (${parking.spawn.x}, ${parking.spawn.z})`);
 
 const size = (dir: string): number =>
   readdirSync(dir).reduce((s, f) => {

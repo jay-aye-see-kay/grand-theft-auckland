@@ -62,3 +62,15 @@ before every deploy and keeps the screenshots as a build artifact.
 
 `.github/workflows/deploy.yml` builds and publishes to GitHub Pages. One-time
 setup: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+## Attribution
+
+The Auckland map is generated from open data (see `tools/citygen/`):
+
+- Streets, buildings and land use: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright),
+  available under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/).
+- Terrain (2024 Auckland LiDAR 1 m DEM/DSM): contains data sourced from the
+  [LINZ Data Service](https://data.linz.govt.nz/), licensed for reuse under
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+
+Both credits are also shown on the game's title screen.

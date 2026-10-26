@@ -4,6 +4,12 @@ import { CITY_FORMAT, type CityManifest } from '../city/format.ts';
 import { ChunkStreamer } from '../city/streamer.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
+/** public/city/<area>/parking.json, written by tools/citygen/parking.ts. */
+interface CityParking {
+  spawn: { x: number; y: number; z: number; heading: number };
+  cars: { osm: string; name: string; x: number; y: number; z: number; heading: number; pitch: number; roll: number; paint: number }[];
+}
+
 // The real Auckland CBD, generated offline by tools/citygen into
 // public/city/<area>/ and streamed in by chunk: LiDAR terrain tinted by
 // land use, OSM buildings, and OSM roads draped on the terrain.
@@ -11,8 +17,6 @@ import type { GameMap, ParkingSpot } from './types.ts';
 const AREA = 'cbd';
 /** Ground within this radius of the spawn is loaded before play starts. */
 const PRELOAD_RADIUS = 300;
-/** Chassis centre above the ground for a car settled on its wheels, plus a little drop. */
-const CAR_RIDE_HEIGHT = 0.9;
 
 export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Promise<GameMap> {
   const base = new URL(`city/${AREA}/`, new URL(import.meta.env.BASE_URL, location.href));
@@ -21,44 +25,44 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
   const manifest = (await res.json()) as CityManifest;
   if (manifest.format !== CITY_FORMAT) throw new Error(`city data format ${manifest.format}, expected ${CITY_FORMAT}`);
 
+  // Spawn and kerbside parking, posed offline from OSM roads and the terrain
+  // (tools/citygen/parking.ts).
+  const pres = await fetch(new URL('parking.json', base));
+  if (!pres.ok) throw new Error(`city parking: HTTP ${pres.status}`);
+  const parked = (await pres.json()) as CityParking;
+
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   const terrain = new ChunkStreamer(base, manifest, scene, world, ground);
 
-  // Spawn on foot outside Britomart (the local origin). Proper kerbside
-  // parking comes with the street data in T5; until then the cars sit on
-  // the open ground nearby.
-  const spawn = new THREE.Vector3(0, 0, 0);
-  await terrain.ensureAround(spawn.x, spawn.z, PRELOAD_RADIUS);
-  terrain.update(spawn.x, spawn.z);
+  // On foot outside Britomart, next to the purple Corolla. Cars elsewhere
+  // stay frozen (see main.ts) until the ground under them streams in.
+  const s0 = parked.spawn;
+  await terrain.ensureAround(s0.x, s0.z, PRELOAD_RADIUS);
+  terrain.update(s0.x, s0.z);
 
   const heightAt = (x: number, z: number) => terrain.heightAt(x, z);
   const ensureLoaded = async (x: number, z: number) => {
     await terrain.ensureLoaded(x, z);
     terrain.update(x, z);
   };
-  spawn.y = heightAt(spawn.x, spawn.z);
+  const spawn = new THREE.Vector3(s0.x, heightAt(s0.x, s0.z), s0.z);
 
-  const park = (x: number, z: number, heading: number, paint: number): ParkingSpot => ({
-    pos: new THREE.Vector3(x, heightAt(x, z) + CAR_RIDE_HEIGHT, z),
-    heading,
-    paint,
-  });
-  const parking = [
-    // Purple '95 Corolla, facing east with its driver's door (right side) towards you.
-    park(spawn.x - 0.5, spawn.z - 2.2, 0, 0x7a3db8),
-    park(spawn.x - 10, spawn.z - 2.4, 0, 0xe9e9e4),
-    park(spawn.x - 12, spawn.z + 7, Math.PI, 0xa9adb3),
-    park(spawn.x + 16, spawn.z + 9, Math.PI / 2, 0x6e1a24),
-  ];
+  const parking: ParkingSpot[] = parked.cars.map((c) => ({
+    pos: new THREE.Vector3(c.x, c.y, c.z),
+    heading: c.heading,
+    pitch: c.pitch,
+    roll: c.roll,
+    paint: c.paint,
+  }));
 
   const b = manifest.bounds;
   return {
     name: 'auckland',
-    blurb: "Auckland CBD · purple '95 Corolla · real hills and buildings",
+    blurb: "Auckland CBD · purple '95 sedan · real hills and buildings",
     // Late-afternoon haze: far enough to see across the CBD from the ridge.
     atmosphere: { sky: 0xf2b27a, fogNear: 250, fogFar: 1700, far: 2600 },
     parking,
-    spawn: { feet: spawn, heading: 0 },
+    spawn: { feet: spawn, heading: s0.heading },
     heightAt,
     hasGround: (x, z) => !terrain.insideGrid(x, z) || terrain.hasCollider(x, z),
     clamp: (x, z) => ({

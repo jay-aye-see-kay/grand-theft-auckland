@@ -46,6 +46,12 @@ const IDLE: DriveControls = { throttle: 0, brake: 0, steer: 0, handbrake: false 
 
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+const _e = new THREE.Euler();
+
+/** Heading about +y, then pitch (nose up, about local z) and roll (left side up, about local x). */
+export function carRotation(heading: number, pitch = 0, roll = 0): THREE.Quaternion {
+  return new THREE.Quaternion().setFromEuler(_e.set(roll, heading, pitch, 'YZX'));
+}
 
 export class Car {
   readonly body: RAPIER.RigidBody;
@@ -74,8 +80,8 @@ export class Car {
   private readonly currPos = new THREE.Vector3();
   private readonly currQuat = new THREE.Quaternion();
 
-  constructor(world: RAPIER.World, spawn: THREE.Vector3, heading = 0, paint = COROLLA.paint) {
-    const rotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
+  constructor(world: RAPIER.World, spawn: THREE.Vector3, heading = 0, paint = COROLLA.paint, pitch = 0, roll = 0) {
+    const rotation = carRotation(heading, pitch, roll);
 
     this.body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
@@ -263,8 +269,8 @@ export class Car {
     this.place(new THREE.Vector3(t.x, Math.max(t.y, groundY) + 1.2, t.z), heading);
   }
 
-  place(pos: THREE.Vector3, heading: number): void {
-    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), heading);
+  place(pos: THREE.Vector3, heading: number, pitch = 0, roll = 0): void {
+    const q = carRotation(heading, pitch, roll);
     this.body.setTranslation(pos, true);
     this.body.setRotation(q, true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);

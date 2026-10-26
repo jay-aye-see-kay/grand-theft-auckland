@@ -199,7 +199,7 @@ export function buildTestTown(scene: THREE.Scene, world: RAPIER.World): GameMap 
 
   return {
     name: 'test',
-    blurb: "Test town · purple '95 Corolla · get in, get out, make some noise",
+    blurb: "Test town · purple '95 sedan · get in, get out, make some noise",
     atmosphere: { sky: 0xf2b27a, fogNear: 120, fogFar: 520, far: 1200 },
     parking,
     // By the driver's door (right-hand drive) of the purple Corolla.

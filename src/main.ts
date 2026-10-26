@@ -18,6 +18,10 @@ const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
 /** Cars that fall this far below sea level (off the map edge) get put back. */
 const FALL_LIMIT = -30;
+/** Anything this far below the terrain has fallen through it and gets put back on top. */
+const UNDERGROUND = 2;
+/** Anything that wanders this far outside the map gets brought back in. */
+const OUT_OF_BOUNDS = 40;
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -68,7 +72,7 @@ async function main() {
   const carShadow = new THREE.PlaneGeometry(4.6, 2.1).rotateX(-Math.PI / 2);
 
   const cars = map.parking.map((spot) => {
-    const car = new Car(world, spot.pos, spot.heading, spot.paint);
+    const car = new Car(world, spot.pos, spot.heading, spot.paint, spot.pitch, spot.roll);
     scene.add(car.object);
     const shadow = new THREE.Mesh(carShadow, shadowMat);
     scene.add(shadow);
@@ -150,7 +154,16 @@ async function main() {
     car.reset(Number.isNaN(ground) ? 0 : ground);
   };
 
-  /** Fell off the edge of the world: put it back just inside the map. */
+  /** Below the world, under the terrain or well off the map: needs putting back. */
+  const lost = (p: { x: number; y: number; z: number }) => {
+    if (p.y < FALL_LIMIT) return true;
+    const c = map.clamp(p.x, p.z);
+    if (Math.hypot(c.x - p.x, c.z - p.z) > OUT_OF_BOUNDS) return true;
+    const ground = map.heightAt(p.x, p.z);
+    return !Number.isNaN(ground) && p.y < ground - UNDERGROUND;
+  };
+
+  /** Fell out of the world: put it back on the ground, just inside the map. */
   const rescue = (car: Car) => {
     const t = car.body.translation();
     const { x, z } = map.clamp(t.x, t.z);
@@ -206,7 +219,10 @@ async function main() {
       }
     }
   };
-  splash.addEventListener('pointerup', start);
+  splash.addEventListener('pointerup', (e) => {
+    // The data credits are links: following one shouldn't also start the game.
+    if (!(e.target instanceof Element && e.target.closest('a'))) start();
+  });
   addEventListener('keydown', start, { once: true });
   // Some mobile browsers suspend audio when backgrounded; any touch brings it back.
   addEventListener('pointerdown', () => started && audio.unlock());
@@ -255,7 +271,15 @@ async function main() {
       const frozen = !map.hasGround(p.x, p.z);
       if (frozen !== c.frozen) c.car.body.setEnabled(!frozen);
       c.frozen = frozen;
-      if (p.y < FALL_LIMIT) rescue(c.car);
+      if (lost(p)) rescue(c.car);
+    }
+    // The physics body, not the interpolated model, which sits at the origin until the first render.
+    const feet = player.body.translation();
+    if (!driving && lost(feet)) {
+      const { x, z } = map.clamp(feet.x, feet.z);
+      const ground = map.heightAt(x, z);
+      player.place(new THREE.Vector3(x, (Number.isNaN(ground) ? 0 : ground) + 0.5, z), player.heading);
+      chase.snap();
     }
     const playerFrozen = !driving && !map.hasGround(player.position.x, player.position.z);
 
@@ -417,6 +441,20 @@ async function main() {
         player.place(new THREE.Vector3(x, map.heightAt(x, z) + 0.05, z), heading);
         chase.snap();
       },
+      /** Drop the player (index -1) or a car this far below the terrain, to test the fall-out-of-world rescue. */
+      sink: async (index: number, depth: number) => {
+        const p = index < 0 ? player.position.clone() : cars[index].car.object.position.clone();
+        await map.ensureLoaded(p.x, p.z);
+        p.y = map.heightAt(p.x, p.z) - depth;
+        if (index < 0) player.place(p, player.heading);
+        else cars[index].car.place(p, 0);
+      },
+      /** Parked cars' poses: position and up vector's y (1 = level). */
+      carPoses: () => cars.map(({ car, frozen }) => ({
+        pos: car.object.position.toArray(),
+        up: new THREE.Vector3(0, 1, 0).applyQuaternion(car.object.quaternion).y,
+        frozen,
+      })),
       /** Move a car (default: the purple one) to (x, z) on the ground, facing `heading`. */
       teleportCar: async (index: number, x: number, z: number, heading: number) => {
         await map.ensureLoaded(x, z);
