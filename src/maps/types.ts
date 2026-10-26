@@ -15,7 +15,10 @@ export interface ParkingSpot {
 }
 
 export interface Atmosphere {
+  /** Haze at the horizon: the fog and the bottom of the sky dome. */
   sky: number;
+  /** Top of the sky dome (default a soft blue). */
+  zenith?: number;
   fogNear: number;
   fogFar: number;
   /** Camera far plane, m. */

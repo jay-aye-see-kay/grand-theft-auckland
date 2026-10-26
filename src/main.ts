@@ -8,6 +8,7 @@ import { Input } from './input.ts';
 import { Player } from './player.ts';
 import { SkidMarks } from './skids.ts';
 import { Sky } from './sky.ts';
+import { SUN_DIRECTION } from './sun.ts';
 import { Splash } from './splash.ts';
 import { Water } from './city/water.ts';
 import { loadMap } from './maps/index.ts';
@@ -60,12 +61,18 @@ async function main() {
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(innerWidth, innerHeight);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // Filmic tone mapping: bright sunlit walls roll off instead of clipping,
+  // which is most of the step from flat PS1 shading to a PS2/PS3 look.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
   app.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.add(new THREE.HemisphereLight(0xffe3c4, 0x4a5a3a, 1.6));
-  const sun = new THREE.DirectionalLight(0xffd2a0, 2.2);
-  sun.position.set(-200, 150, 120);
+  // Blue sky above, warm sunlit pavement bouncing light from below.
+  scene.add(new THREE.HemisphereLight(0xc4dcff, 0x9a8a72, 2.4));
+  // Afternoon sun in the north-north-west (southern hemisphere), see sun.ts.
+  const sun = new THREE.DirectionalLight(0xfff0dc, 2.8);
+  sun.position.fromArray(SUN_DIRECTION).multiplyScalar(300);
   scene.add(sun);
 
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
@@ -78,7 +85,7 @@ async function main() {
   scene.background = sky;
   scene.fog = new THREE.Fog(sky, atmosphere.fogNear, atmosphere.fogFar);
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, atmosphere.far);
-  const skyDome = new Sky(sky, atmosphere.far * 0.9);
+  const skyDome = new Sky(sky, atmosphere.far * 0.9, atmosphere.zenith, sun.position);
   scene.add(skyDome.mesh);
 
   // The harbour (Auckland only), reflecting a sky a little bluer than the haze.
@@ -561,6 +568,8 @@ async function main() {
         /** Smoothed JS ms per frame: physics steps, render submission, the whole frame. */
         ...perf,
         map: map.name,
+        /** Unit vector towards the sun (north is -z). */
+        sun: sun.position.clone().normalize().toArray(),
         /** Sea level, or null if the map has no water. */
         water: water ? water.level : null,
         /** Splashes so far, and whether the player or any car is in the water right now. */

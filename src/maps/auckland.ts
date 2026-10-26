@@ -65,8 +65,9 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
   return {
     name: 'auckland',
     blurb: "Auckland CBD · purple '95 sedan · real hills and buildings",
-    // Late-afternoon haze: far enough to see across the CBD from the ridge.
-    atmosphere: { sky: 0xf2b27a, fogNear: 250, fogFar: 1700, far: 2600 },
+    // A clear afternoon: pale sea haze at the horizon under a deep blue sky,
+    // far enough to see across the CBD from the ridge.
+    atmosphere: { sky: 0xc9d7e3, zenith: 0x3d74b8, fogNear: 250, fogFar: 1800, far: 2600 },
     parking,
     spawn: { feet: spawn, heading: s0.heading },
     heightAt,

@@ -21,6 +21,7 @@ import { lonLatToLocal, type Local } from './project.ts';
 import { sampleLocal, type Raster } from './raster.ts';
 import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
+import { SUN_DIRECTION } from '../../src/sun.ts';
 
 export const LEVEL_HEIGHT = 3.2;
 export const DEFAULT_HEIGHT = 9;
@@ -122,13 +123,13 @@ function inSolid(s: Solid, x: number, z: number): boolean {
   return s.polygons.some((p) => inPolygon(p, x, z));
 }
 
-/** Footprints bucketed on a coarse grid, for point-in-building tests. */
-class Footprints {
-  private readonly buckets = new Map<number, Solid[]>();
+/** Footprints bucketed on a coarse grid, for point-in-building tests, each with a payload. */
+class Footprints<T = Solid> {
+  private readonly buckets = new Map<number, { s: Solid; v: T }[]>();
   private static readonly SIZE = 32;
   private key = (i: number, j: number) => (i + 0x8000) * 0x10000 + (j + 0x8000);
 
-  add(s: Solid) {
+  add(s: Solid, v: T = s as unknown as T) {
     const pts = s.polygons.flatMap((p) => p.outer);
     const S = Footprints.SIZE;
     const i0 = Math.floor(Math.min(...pts.map((p) => p.x)) / S);
@@ -139,14 +140,19 @@ class Footprints {
       for (let j = j0; j <= j1; j++) {
         const k = this.key(i, j);
         if (!this.buckets.has(k)) this.buckets.set(k, []);
-        this.buckets.get(k)!.push(s);
+        this.buckets.get(k)!.push({ s, v });
       }
     }
   }
 
+  /** Payloads of footprints whose bucket holds (x, z) (not necessarily containing it). */
+  at(x: number, z: number): T[] {
+    return (this.buckets.get(this.key(Math.floor(x / Footprints.SIZE), Math.floor(z / Footprints.SIZE))) ?? []).map((e) => e.v);
+  }
+
   covers(x: number, z: number): boolean {
     const list = this.buckets.get(this.key(Math.floor(x / Footprints.SIZE), Math.floor(z / Footprints.SIZE)));
-    return !!list && list.some((s) => inSolid(s, x, z));
+    return !!list && list.some((e) => inSolid(e.s, x, z));
   }
 }
 
@@ -516,12 +522,61 @@ function wallColour(key: string, tags: Tags, height: number): [number, number, n
 
 function roofColour(key: string, tags: Tags, wall: [number, number, number]): [number, number, number] {
   const tagged = tagColour(tags['roof:colour']);
-  // Roofs a little darker and greyer than the walls: they read as tops from the street and from the air.
-  const base = mix(wall, rgb(0x8a8984), 0.35).map((v) => v * 0.8) as [number, number, number];
+  // Roofs greyer than the walls and a touch lighter (membranes, gravel and
+  // plant decks catch the full sky): they read as tops from the street and from the air.
+  const base = mix(wall, rgb(0xa8a7a2), 0.5).map((v) => v * 1.05) as [number, number, number];
   return tagged !== null ? mix(base, rgb(tagged), 0.5) : base.map((v) => v * (0.95 + 0.1 * hash(key, 3))) as [number, number, number];
 }
 
 // ---------------------------------------------------------------- meshing
+
+/** Baked light for one wall: colour multipliers at its foot, at the band row (BASE_BAND up) and at its top. */
+export type WallShade = (a: Local, b: Local, n: readonly number[], bottom: number, top: number, grounded: boolean) => { foot: number; band: number; top: number };
+
+/** How far out from a wall to look for the building across the street, m. */
+const CANYON_REACH = 40;
+const CANYON_STEP = 1.5;
+const SUN_H = Math.hypot(SUN_DIRECTION[0], SUN_DIRECTION[2]);
+
+/**
+ * Cheap baked lighting for walls (no shadow maps at run time):
+ * - a sun-facing term: walls in shade differ by how far they turn from the
+ *   sun, so the faces of a block read distinctly instead of one flat tone;
+ * - street-canyon occlusion: the taller and closer the building across the
+ *   way, the darker the lower floors (sky hidden), fading up the wall;
+ * - ground contact: the foot of a wall that stands on the ground is darkest.
+ * `across(x, z, y)` is the top (m above sea level) of the nearest other
+ * building's footprint covering (x, z), or -Infinity.
+ */
+export function canyonShade(across: (x: number, z: number, self: unknown) => number, self: unknown): WallShade {
+  return (a, b, n, bottom, top, grounded) => {
+    // Sun term: 1 facing the sun, down to 0.8 facing directly away (on top of the real-time light).
+    const facing = (n[0] * SUN_DIRECTION[0] + n[2] * SUN_DIRECTION[2]) / SUN_H;
+    const sun = facing > 0 ? 1 : 1 - 0.2 * -facing;
+    // The opposite building's elevation angle from three points along the wall.
+    let elevFoot = 0;
+    let elevBand = 0;
+    let elevTop = 0;
+    for (const t of [0.2, 0.5, 0.8]) {
+      const mx = a.x + (b.x - a.x) * t + n[0] * 0.3;
+      const mz = a.z + (b.z - a.z) * t + n[2] * 0.3;
+      for (let d = CANYON_STEP; d <= CANYON_REACH; d += CANYON_STEP) {
+        const h = across(mx + n[0] * d, mz + n[2] * d, self);
+        if (h === -Infinity) continue;
+        elevFoot += Math.atan2(Math.max(0, h - bottom), d) / 3;
+        elevBand += Math.atan2(Math.max(0, h - bottom - BASE_BAND), d) / 3;
+        elevTop += Math.atan2(Math.max(0, h - top), d) / 3;
+        break;
+      }
+    }
+    const occ = (e: number) => e / (Math.PI / 2);
+    const foot = (grounded ? 0.62 : 0.85) * (1 - 0.45 * occ(elevFoot));
+    const band = 0.95 * (1 - 0.4 * occ(elevBand));
+    // Tops in the open sky get a little lift; a low building in a canyon stays dim.
+    const crown = 1.06 * (1 - 0.35 * occ(elevTop));
+    return { foot: foot * sun, band: band * sun, top: crown * sun };
+  };
+}
 
 /** Accumulates one chunk's merged mesh in absolute local metres. */
 export class MeshBuilder {
@@ -548,17 +603,17 @@ export class MeshBuilder {
   /**
    * One footprint as a prism from `bottom` to `top`. Ground-level walls get
    * an extra row of vertices BASE_BAND up so the darkening at their foot
-   * stays near the street instead of fading over the whole tower.
+   * stays near the street instead of fading over the whole tower. `shade`
+   * gives each wall its baked light (see WallShade): multipliers for the
+   * foot, the band row and the top of the wall.
    */
-  prism(s: Pick<Solid, 'polygons'>, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean, visible = true) {
+  prism(s: Pick<Solid, 'polygons'>, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean, visible = true, shade?: WallShade) {
     if (!visible) {
       this.colliderPrism(s.polygons, bottom, top);
       return;
     }
     const band = grounded && top - bottom > BASE_BAND * 2;
-    const foot = wall.map((v) => v * (grounded ? 0.55 : 0.85));
-    const mid = wall.map((v) => v * 0.93);
-    const crown = wall.map((v) => v * 1.04);
+    const tint = (k: number) => wall.map((v) => v * k);
     for (const poly of s.polygons) {
       for (const ring of [poly.outer, ...poly.holes]) {
         for (let k = 0; k < ring.length; k++) {
@@ -566,15 +621,16 @@ export class MeshBuilder {
           const b = ring[(k + 1) % ring.length];
           const len = Math.hypot(b.x - a.x, b.z - a.z);
           const n: [number, number, number] = [(b.z - a.z) / len, 0, -(b.x - a.x) / len];
-          const a0 = this.vertex(a.x, bottom, a.z, n, foot);
-          const b0 = this.vertex(b.x, bottom, b.z, n, foot);
-          const a1 = this.vertex(a.x, top, a.z, n, crown);
-          const b1 = this.vertex(b.x, top, b.z, n, crown);
+          const l = shade ? shade(a, b, n, bottom, top, grounded) : { foot: grounded ? 0.55 : 0.85, band: 0.93, top: 1.04 };
+          const a0 = this.vertex(a.x, bottom, a.z, n, tint(l.foot));
+          const b0 = this.vertex(b.x, bottom, b.z, n, tint(l.foot));
+          const a1 = this.vertex(a.x, top, a.z, n, tint(l.top));
+          const b1 = this.vertex(b.x, top, b.z, n, tint(l.top));
           // Outward-facing (counter-clockwise seen from outside) for rings wound as cleanRing() leaves them.
           if (band) {
             const ys = bottom + BASE_BAND;
-            const am = this.vertex(a.x, ys, a.z, n, mid);
-            const bm = this.vertex(b.x, ys, b.z, n, mid);
+            const am = this.vertex(a.x, ys, a.z, n, tint(l.band));
+            const bm = this.vertex(b.x, ys, b.z, n, tint(l.band));
             this.idx.push(a0, bm, b0, a0, am, bm, am, b1, bm, am, a1, b1);
           } else {
             this.idx.push(a0, b1, b0, a0, a1, b1);
@@ -739,6 +795,9 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   }
   const famTopAbs = new Map<string, number>();
   const cover = new Footprints();
+  // First where everything stands, then the meshes: walls are shaded by the buildings around them.
+  type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean };
+  const placed: Placed[] = [];
   for (const s of visible) {
     const h = heights.get(s.key)!;
     if (h.minHeight >= h.height - 0.1) continue;
@@ -756,8 +815,6 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const fam = s.parent ?? s.key;
     famTopAbs.set(fam, Math.max(famTopAbs.get(fam) ?? -Infinity, top));
     const famTags = parent && !s.tags['building:colour'] ? { ...parent.tags, ...s.tags } : s.tags;
-    const wall = wallColour(fam, famTags, familyTop.get(fam)!);
-    const roof = roofColour(s.key, famTags, wall);
     const hide = hideKey(s);
     const o = overrides.get(s.key);
     const po = s.parent ? overrides.get(s.parent) : undefined;
@@ -766,13 +823,28 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       counts.hidden++;
       continue;
     }
-    mb.prism(s, bottom, top, wall, roof, grounded, !hide);
+    placed.push({ s, h, mb, base, bottom, top, grounded, famTags, fam, hide });
+  }
+  // Occluders for the canyon shading: drawn, standing on the ground, more than a kiosk.
+  const occluders = new Footprints<Placed>();
+  for (const p of placed) if (!p.hide && p.grounded && p.top - p.bottom > 2.5) occluders.add(p.s, p);
+  const across = (x: number, z: number, self: unknown) => {
+    let best = -Infinity;
+    const me = self as Placed;
+    for (const p of occluders.at(x, z)) if (p.fam !== me.fam && p.top > best && inSolid(p.s, x, z)) best = p.top;
+    return best;
+  };
+  for (const p of placed) {
+    const { s, h, mb, bottom, top, grounded, famTags, fam, hide } = p;
+    const wall = wallColour(fam, famTags, familyTop.get(fam)!);
+    const roof = roofColour(s.key, famTags, wall);
+    mb.prism(s, bottom, top, wall, roof, grounded, !hide, canyonShade(across, p));
     if (grounded && !hide && top - bottom > 2.5) cover.add(s);
     if (hide) counts.hidden++;
     counts[h.source]++;
     if (s.isPart) counts.parts++;
     else counts.outlines++;
-    buildings.push({ key: s.key, base, bottom, top, source: h.source });
+    buildings.push({ key: s.key, base: p.base, bottom, top, source: h.source });
   }
 
   // Landmarks: where they stand, for the hand-made models.

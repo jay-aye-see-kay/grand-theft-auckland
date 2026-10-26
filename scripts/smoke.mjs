@@ -164,6 +164,9 @@ try {
     check(s.loaded >= 9 && s.detailed >= 1 && s.failures === 0, `terrain chunks loaded near spawn (${s.loaded}/${s.chunks}, ${s.detailed} detailed)`);
 
     // LiDAR ground: Britomart is just above sea level, Queen St / K Road ~66 m.
+    // Southern hemisphere: the sun is up in the northern half of the sky (north is -z).
+    check(s.sun[1] > 0.3 && s.sun[2] < -0.3, `sun is in the northern sky (direction ${s.sun.map((v) => v.toFixed(2)).join(', ')})`);
+
     const britomart = await game('groundHeight', 0, 0);
     check(Math.abs(britomart - 3.6) < 0.4, `Britomart ground ${britomart.toFixed(2)} m (expect ~3.6)`);
     check(Math.abs(s.player[1] - s.ground) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m, ground ${s.ground.toFixed(2)})`);
