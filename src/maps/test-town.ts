@@ -1,10 +1,12 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import type { GameMap } from './types.ts';
 
-// Placeholder test town for M0/M1: a grid of blocks with roads, kerbs, a few
-// ramps and some crates to smash. Real Auckland streets replace this in M2.
-// Everything static is merged into a handful of meshes to keep draw calls low.
+// Placeholder test town from M0/M1 (?map=test): a flat grid of blocks with
+// roads, kerbs, a few ramps and some crates to smash. Handy for handling
+// work away from Auckland's hills. Everything static is merged into a
+// handful of meshes to keep draw calls low.
 
 const BLOCKS = 7;
 const BLOCK = 56; // block size, m
@@ -12,19 +14,6 @@ const ROAD = 14; // road width, m
 const CELL = BLOCK + ROAD;
 const SIZE = BLOCKS * CELL + ROAD;
 const HALF = SIZE / 2;
-
-export interface ParkingSpot {
-  pos: THREE.Vector3;
-  heading: number;
-  paint: number;
-}
-
-export interface Town {
-  /** Parked cars; the first is the player's purple Corolla. */
-  parking: ParkingSpot[];
-  /** Advance dynamic props' visuals after a physics step. */
-  sync(): void;
-}
 
 function rng(seed: number) {
   return () => {
@@ -49,7 +38,7 @@ function addStaticBox(world: RAPIER.World, body: RAPIER.RigidBody, hx: number, h
   world.createCollider(desc, body);
 }
 
-export function buildTown(scene: THREE.Scene, world: RAPIER.World): Town {
+export function buildTestTown(scene: THREE.Scene, world: RAPIER.World): GameMap {
   const rand = rng(1995);
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
 
@@ -199,15 +188,28 @@ export function buildTown(scene: THREE.Scene, world: RAPIER.World): Town {
   };
   sync();
 
+  // heading 0 faces +x (east), PI/2 faces -z (north). NZ parks on the left.
+  const parking = [
+    // Purple '95 Corolla on the road west of the plaza, lined up with the first ramp.
+    { pos: new THREE.Vector3(cx - BLOCK / 2 - ROAD / 2, 1.2, cz), heading: 0, paint: 0x7a3db8 },
+    { pos: new THREE.Vector3(cx - 6, 1.2, cz + BLOCK / 2 + ROAD / 2 - 3.5), heading: 0, paint: 0xe9e9e4 },
+    { pos: new THREE.Vector3(cx + BLOCK / 2 + ROAD / 2 - 3.5, 1.2, cz + 8), heading: Math.PI / 2, paint: 0xa9adb3 },
+    { pos: new THREE.Vector3(cx + 10, 1.2, cz - BLOCK / 2 - ROAD / 2 + 3.5), heading: Math.PI, paint: 0x6e1a24 },
+  ];
+
   return {
-    // heading 0 faces +x (east), PI/2 faces -z (north). NZ parks on the left.
-    parking: [
-      // Purple '95 Corolla on the road west of the plaza, lined up with the first ramp.
-      { pos: new THREE.Vector3(cx - BLOCK / 2 - ROAD / 2, 1.2, cz), heading: 0, paint: 0x7a3db8 },
-      { pos: new THREE.Vector3(cx - 6, 1.2, cz + BLOCK / 2 + ROAD / 2 - 3.5), heading: 0, paint: 0xe9e9e4 },
-      { pos: new THREE.Vector3(cx + BLOCK / 2 + ROAD / 2 - 3.5, 1.2, cz + 8), heading: Math.PI / 2, paint: 0xa9adb3 },
-      { pos: new THREE.Vector3(cx + 10, 1.2, cz - BLOCK / 2 - ROAD / 2 + 3.5), heading: Math.PI, paint: 0x6e1a24 },
-    ],
+    name: 'test',
+    blurb: "Test town · purple '95 Corolla · get in, get out, make some noise",
+    atmosphere: { sky: 0xf2b27a, fogNear: 120, fogFar: 520, far: 1200 },
+    parking,
+    // By the driver's door (right-hand drive) of the purple Corolla.
+    spawn: { feet: parking[0].pos.clone().add(new THREE.Vector3(0.5, -1.2, 2.2)), heading: 0 },
+    heightAt: () => 0,
+    hasGround: () => true,
+    clamp: (x, z) => ({ x: THREE.MathUtils.clamp(x, -HALF, HALF), z: THREE.MathUtils.clamp(z, -HALF, HALF) }),
+    ensureLoaded: async () => {},
+    update: () => {},
     sync,
+    debugInfo: () => ({}),
   };
 }

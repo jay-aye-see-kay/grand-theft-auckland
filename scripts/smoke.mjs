@@ -9,6 +9,7 @@ import { chromium, devices } from 'playwright';
 
 const PORT = 4179;
 const URL = `http://localhost:${PORT}/?debug`;
+const TEST_TOWN = '&map=test';
 const shots = process.argv[2] ?? 'smoke-shots';
 mkdirSync(shots, { recursive: true });
 
@@ -34,12 +35,12 @@ async function waitForServer() {
 const state = (page) => page.evaluate(() => window.__game.state());
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 
-async function openGame(context) {
+async function openGame(context, query = '') {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
-  await page.goto(URL);
+  await page.goto(URL + query);
   await page.waitForFunction(() => !!window.__game, null, { timeout: 30000 });
   return { page, errors };
 }
@@ -48,17 +49,19 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 try {
   await waitForServer();
 
-  // Desktop, keyboard.
-  {
-    const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }));
-    await page.screenshot({ path: `${shots}/1-title.png` });
+  // Desktop, keyboard: the core actions on Auckland, then again in the test town.
+  for (const [query, tag] of [['', ''], [TEST_TOWN, ' [test town]']]) {
+    const shot = (name) => page.screenshot({ path: `${shots}/${tag ? 'test-' : ''}${name}.png` });
+    const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }), query);
+    await shot('1-title');
     await page.keyboard.press('KeyX');
     await page.waitForTimeout(800);
     let s = await state(page);
-    check(s.started && s.mode === 'foot', 'starts on foot');
-    check(s.nearCar, 'spawns next to a car');
-    check(s.audio === 'running', `audio unlocked (${s.audio})`);
-    await page.screenshot({ path: `${shots}/2-on-foot.png` });
+    check(s.started && s.mode === 'foot', `starts on foot${tag}`);
+    check(s.map === (tag ? 'test' : 'auckland'), `loads the ${s.map} map${tag}`);
+    check(s.nearCar, `spawns next to a car${tag}`);
+    check(s.audio === 'running', `audio unlocked (${s.audio})${tag}`);
+    await shot('2-on-foot');
 
     // Walk away from the car and back.
     const p0 = s.player;
@@ -66,35 +69,37 @@ try {
     await page.waitForTimeout(1500);
     await page.keyboard.up('KeyD');
     s = await state(page);
-    check(dist(p0, s.player) > 1.5, `walks (moved ${dist(p0, s.player).toFixed(1)} m)`);
-    check(s.playerGrounded && s.player[1] > -0.1 && s.player[1] < 0.5, `stays on the ground (y=${s.player[1].toFixed(2)})`);
-    await page.screenshot({ path: `${shots}/3-walked.png` });
+    check(dist(p0, s.player) > 1.5, `walks (moved ${dist(p0, s.player).toFixed(1)} m)${tag}`);
+    const above = s.player[1] - s.ground;
+    check(s.playerGrounded && above > -0.1 && above < 0.4, `stays on the ground (y=${s.player[1].toFixed(2)}, ground ${s.ground.toFixed(2)})${tag}`);
+    await shot('3-walked');
 
     // Sample the peak rather than one moment: CI frame timing varies a lot.
+    const standY = s.player[1];
     await page.keyboard.press('Space');
-    let peakY = 0;
+    let peakY = standY;
     for (let i = 0; i < 12; i++) {
       await page.waitForTimeout(50);
       peakY = Math.max(peakY, (await state(page)).player[1]);
     }
-    check(peakY > 0.4, `jumps (peak y=${peakY.toFixed(2)})`);
+    check(peakY - standY > 0.4, `jumps (peak +${(peakY - standY).toFixed(2)} m)${tag}`);
     await page.waitForTimeout(600);
 
     await page.keyboard.down('KeyA');
     await page.waitForTimeout(1500);
     await page.keyboard.up('KeyA');
     s = await state(page);
-    check(s.nearCar, 'walks back to the car');
+    check(s.nearCar, `walks back to the car${tag}`);
 
     await page.keyboard.press('KeyF');
     await page.waitForTimeout(300);
     s = await state(page);
-    check(s.mode === 'car' && s.drivingIndex === 0, 'gets into the purple Corolla');
+    check(s.mode === 'car' && s.drivingIndex === 0, `gets into the purple Corolla${tag}`);
 
     await page.keyboard.down('KeyW');
     await page.waitForTimeout(2500);
     s = await state(page);
-    check(s.speedKmh > 15, `drives (${s.speedKmh.toFixed(0)} km/h)`);
+    check(s.speedKmh > 15, `drives (${s.speedKmh.toFixed(0)} km/h)${tag}`);
     await page.keyboard.down('KeyA');
     await page.keyboard.down('Space');
     let maxSkid = 0;
@@ -102,12 +107,12 @@ try {
       await page.waitForTimeout(100);
       maxSkid = Math.max(maxSkid, (await state(page)).skid);
     }
-    check(maxSkid > 0.25, `handbrake turn slides (max skid ${maxSkid.toFixed(2)})`);
+    check(maxSkid > 0.25, `handbrake turn slides (max skid ${maxSkid.toFixed(2)})${tag}`);
     await page.waitForTimeout(400);
-    await page.screenshot({ path: `${shots}/4b-skid-marks.png` });
+    await shot('4b-skid-marks');
     const quads = (await state(page)).skidQuads;
-    check(quads > 5, `lays skid marks (${quads} quads)`);
-    await page.screenshot({ path: `${shots}/4-handbrake.png` });
+    check(quads > 5, `lays skid marks (${quads} quads)${tag}`);
+    await shot('4-handbrake');
     await page.keyboard.up('Space');
     await page.keyboard.up('KeyA');
     await page.keyboard.up('KeyW');
@@ -116,13 +121,92 @@ try {
     await page.keyboard.press('KeyF');
     await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 8000 }).catch(() => {});
     s = await state(page);
-    check(s.mode === 'foot', 'gets out (after braking)');
+    check(s.mode === 'foot', `gets out (after braking)${tag}`);
     const car = s.cars[0];
-    check(dist(car, s.player) < 3, `steps out beside the car (${dist(car, s.player).toFixed(1)} m)`);
+    check(dist(car, s.player) < 3, `steps out beside the car (${dist(car, s.player).toFixed(1)} m)${tag}`);
     await page.waitForTimeout(500);
-    await page.screenshot({ path: `${shots}/5-got-out.png` });
-    check(errors.length === 0, `no console errors${errors.length ? ': ' + errors.join(' | ') : ''}`);
+    await shot('5-got-out');
+    check(errors.length === 0, `no console errors${tag}${errors.length ? ': ' + errors.join(' | ') : ''}`);
     await page.context().close(); // two games rendering at once starves the software renderer
+  }
+
+  // Auckland terrain: streaming, real heights, physics matching the data,
+  // hill climbing and chunk seams.
+  {
+    const { page, errors } = await openGame(await browser.newContext({ viewport: { width: 1280, height: 720 } }));
+    const game = (fn, ...args) => page.evaluate(([f, a]) => window.__game[f](...a), [fn, args]);
+    await page.keyboard.press('KeyX');
+    await page.waitForTimeout(500);
+    let s = await state(page);
+    check(s.loaded >= 9 && s.detailed >= 1 && s.failures === 0, `terrain chunks loaded near spawn (${s.loaded}/${s.chunks}, ${s.detailed} detailed)`);
+
+    // LiDAR ground: Britomart is just above sea level, Queen St / K Road ~66 m.
+    const britomart = await game('groundHeight', 0, 0);
+    check(Math.abs(britomart - 3.6) < 0.4, `Britomart ground ${britomart.toFixed(2)} m (expect ~3.6)`);
+    check(Math.abs(s.player[1] - britomart) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m)`);
+    const kRoad = (await game('probe', -616, 1499)).ground;
+    check(kRoad > 60 && kRoad < 72, `Queen St / K Road ground ${kRoad.toFixed(1)} m (expect ~66)`);
+
+    // Physics heightfield vs the sampler, either side of chunk seams (x = 6,
+    // z = 126) and round a corner shared by four chunks. Points sit just off
+    // the 2 m lattice: Rapier's ray cast can miss a perfectly vertical ray
+    // that runs exactly down a heightfield grid line.
+    let worst = 0;
+    const probes = [[0.3, 0.7], [5.99, 40.7], [6.01, 40.7], [-30.3, 125.99], [-30.3, 126.01], [5.99, 125.99], [6.01, 126.01],
+      [-533.3, 1301.7], [-574.1, 1375.9], [-243.9, 876.1], [131.7, -77.9]];
+    for (const [x, z] of probes) {
+      const { ray, ground } = await game('probe', x, z);
+      if (ray === null || Math.abs(ray - ground) > 0.02) console.log(`  probe ${x},${z}: ray ${ray} ground ${ground}`);
+      worst = Math.max(worst, ray === null ? Infinity : Math.abs(ray - ground));
+    }
+    check(worst < 0.02, `physics heightfield matches terrain data (worst ${worst.toFixed(3)} m)`);
+
+    // Drive the purple Corolla from the current spot towards a target while
+    // tracking the chassis' clearance above the terrain under it.
+    const drive = async (until, timeoutMs) => {
+      await page.waitForTimeout(600); // settle on the suspension
+      const start = await state(page);
+      let minClear = Infinity;
+      let maxClear = -Infinity;
+      let maxStep = 0;
+      let prev = null;
+      let last = start;
+      await page.keyboard.down('KeyW');
+      const t0 = Date.now();
+      while (Date.now() - t0 < timeoutMs) {
+        await page.waitForTimeout(80);
+        last = await state(page);
+        const clear = last.cars[0][1] - last.ground;
+        minClear = Math.min(minClear, clear);
+        maxClear = Math.max(maxClear, clear);
+        if (prev !== null) maxStep = Math.max(maxStep, Math.abs(clear - prev));
+        prev = clear;
+        if (until(last.cars[0])) break;
+      }
+      await page.keyboard.up('KeyW');
+      return { start: start.cars[0], end: last.cars[0], minClear, maxClear, maxStep, kmh: last.speedKmh };
+    };
+
+    await page.keyboard.press('KeyF');
+    await page.waitForTimeout(300);
+    check((await state(page)).mode === 'car', 'gets in for the hill climb');
+
+    // Upper Queen St towards K Road: ~10% grade, crossing the z = 1376 seam.
+    await game('teleportCar', 0, -532, 1268, Math.atan2(-169, -61));
+    let r = await drive((p) => p[2] > 1420, 16000);
+    const gain = r.end[1] - r.start[1];
+    check(gain > 8, `drives uphill on Queen St (+${gain.toFixed(1)} m, ${r.start[2].toFixed(0)} -> ${r.end[2].toFixed(0)} z, ${r.kmh.toFixed(0)} km/h)`);
+    check(r.start[2] < 1376 && r.end[2] > 1376, 'crosses a chunk seam going uphill');
+    check(r.minClear > 0.2 && r.maxClear < 1.4 && r.maxStep < 0.5, `stays on the terrain uphill (clearance ${r.minClear.toFixed(2)}..${r.maxClear.toFixed(2)} m, worst jump ${r.maxStep.toFixed(2)})`);
+    await page.screenshot({ path: `${shots}/8-queen-st-hill.png` });
+
+    // Customs St East across the x = 6 seam, east of Britomart.
+    await game('teleportCar', 0, -90, 51, Math.atan2(-81, 228));
+    r = await drive((p) => p[0] > 70, 12000);
+    check(r.start[0] < 6 && r.end[0] > 6, `crosses a chunk seam on the flat (${r.start[0].toFixed(0)} -> ${r.end[0].toFixed(0)} x)`);
+    check(r.minClear > 0.2 && r.maxClear < 1.4 && r.maxStep < 0.5, `no seam bump on the flat (clearance ${r.minClear.toFixed(2)}..${r.maxClear.toFixed(2)} m, worst jump ${r.maxStep.toFixed(2)})`);
+    check(errors.length === 0, `no console errors on terrain${errors.length ? ': ' + errors.join(' | ') : ''}`);
+    await page.context().close();
   }
 
   // Phone, touch.
@@ -156,7 +240,7 @@ try {
     await page.waitForTimeout(1000);
     await touch('touchEnd');
     await page.locator('.btn-enter').tap({ force: true }); // it pulses, so never "stable"
-    await page.waitForTimeout(300);
+    await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 3000 }).catch(() => {});
     const s = await state(page);
     check(s.mode === 'car', 'touch enter button gets in');
     check(await page.locator('.btn-gas').isVisible(), 'driving touch layout');

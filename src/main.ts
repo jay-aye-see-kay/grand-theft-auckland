@@ -6,13 +6,17 @@ import { Car } from './car.ts';
 import { Input } from './input.ts';
 import { Player } from './player.ts';
 import { SkidMarks } from './skids.ts';
-import { buildTown } from './world.ts';
+import { Sky } from './sky.ts';
+import { loadMap } from './maps/index.ts';
 import './style.css';
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS = 5;
 const ENTER_RANGE = 3.6; // m from the car's centre
-const debug = new URLSearchParams(location.search).has('debug');
+const params = new URLSearchParams(location.search);
+const debug = params.has('debug');
+/** Cars that fall this far below sea level (off the map edge) get put back. */
+const FALL_LIMIT = -30;
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -24,6 +28,7 @@ async function main() {
   const muteBtn = document.getElementById('mute')!;
   const splash = document.getElementById('splash')!;
   const status = document.getElementById('status')!;
+  const blurb = document.getElementById('blurb')!;
 
   // Only the -compat build needs init(); the browser build (see vite.config.ts) is ready on import.
   await (RAPIER as { init?: () => Promise<void> }).init?.();
@@ -39,35 +44,38 @@ async function main() {
   app.prepend(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const sky = new THREE.Color(0xf2b27a);
-  scene.background = sky;
-  scene.fog = new THREE.Fog(sky, 120, 520);
   scene.add(new THREE.HemisphereLight(0xffe3c4, 0x4a5a3a, 1.6));
   const sun = new THREE.DirectionalLight(0xffd2a0, 2.2);
   sun.position.set(-200, 150, 120);
   scene.add(sun);
 
-  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.2, 1200);
-
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
   world.timestep = FIXED_DT;
-  const town = buildTown(scene, world);
+  const map = await loadMap(params.get('map'), scene, world);
+  blurb.textContent = map.blurb;
+
+  const { atmosphere } = map;
+  const sky = new THREE.Color(atmosphere.sky);
+  scene.background = sky;
+  scene.fog = new THREE.Fog(sky, atmosphere.fogNear, atmosphere.fogFar);
+  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, atmosphere.far);
+  const skyDome = new Sky(sky, atmosphere.far * 0.9);
+  scene.add(skyDome.mesh);
 
   // Cheap blob shadows instead of real-time shadow maps.
   const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
   const carShadow = new THREE.PlaneGeometry(4.6, 2.1).rotateX(-Math.PI / 2);
 
-  const cars = town.parking.map((spot) => {
+  const cars = map.parking.map((spot) => {
     const car = new Car(world, spot.pos, spot.heading, spot.paint);
     scene.add(car.object);
     const shadow = new THREE.Mesh(carShadow, shadowMat);
     scene.add(shadow);
-    return { car, shadow };
+    return { car, shadow, frozen: false };
   });
 
   // Start on foot by the driver's door (right-hand drive) of the purple Corolla.
-  const first = town.parking[0];
-  const player = new Player(world, first.pos.clone().add(new THREE.Vector3(0.5, -1.2, 2.2)), 0);
+  const player = new Player(world, map.spawn.feet, map.spawn.heading);
   scene.add(player.object);
   const playerShadow = new THREE.Mesh(new THREE.CircleGeometry(0.4, 12).rotateX(-Math.PI / 2), shadowMat);
   scene.add(playerShadow);
@@ -124,13 +132,45 @@ async function main() {
         break;
       }
     }
-    spot.y = Math.max(spot.y - 0.6, 0.05);
+    const ground = map.heightAt(spot.x, spot.z);
+    spot.y = Math.max(spot.y - 0.6, (Number.isNaN(ground) ? 0 : ground) + 0.05);
     player.place(spot, heading);
     player.setActive(true);
     driving = null;
     exitRequested = false;
     input.setMode('foot');
     for (let i = 0; i < 4; i++) skids.lift(`${cars.findIndex((c) => c.car === car)}:${i}`);
+  };
+
+  /** Back on its wheels where it is, never below the ground. */
+  const resetCar = (car: Car) => {
+    const t = car.body.translation();
+    const ground = map.heightAt(t.x, t.z);
+    car.reset(Number.isNaN(ground) ? 0 : ground);
+  };
+
+  /** Fell off the edge of the world: put it back just inside the map. */
+  const rescue = (car: Car) => {
+    const t = car.body.translation();
+    const { x, z } = map.clamp(t.x, t.z);
+    const ground = map.heightAt(x, z);
+    const heading = new THREE.Euler().setFromQuaternion(car.object.quaternion, 'YXZ').y;
+    car.place(new THREE.Vector3(x, (Number.isNaN(ground) ? 0 : ground) + 1.5, z), heading);
+    if (car === driving) chase.snap();
+  };
+
+  // Blob shadows lie on whatever is underneath, tilted to match slopes.
+  const down = { x: 0, y: -1, z: 0 };
+  const up = new THREE.Vector3(0, 1, 0);
+  const _n = new THREE.Vector3();
+  const _yawQ = new THREE.Quaternion();
+  const placeShadow = (shadow: THREE.Mesh, from: THREE.Vector3, yaw: number, exclude: RAPIER.Collider, reach: number) => {
+    const hit = world.castRayAndGetNormal(new RAPIER.Ray(from, down), reach, true, undefined, undefined, exclude);
+    shadow.visible = !!hit;
+    if (!hit) return;
+    _n.set(hit.normal.x, hit.normal.y, hit.normal.z);
+    shadow.position.set(from.x, from.y - hit.timeOfImpact, from.z).addScaledVector(_n, 0.04);
+    shadow.quaternion.setFromUnitVectors(up, _n).multiply(_yawQ.setFromAxisAngle(up, yaw));
   };
 
   addEventListener('resize', () => {
@@ -170,6 +210,8 @@ async function main() {
   // Some mobile browsers suspend audio when backgrounded; any touch brings it back.
   addEventListener('pointerdown', () => started && audio.unlock());
 
+  /** ?debug fixed viewpoint (screenshots), overriding the chase camera. */
+  let debugView: { from: number[]; at: number[] } | null = null;
   let accumulator = 0;
   let last = performance.now();
   let fpsFrames = 0;
@@ -194,7 +236,7 @@ async function main() {
       else if (nearby) enter(nearby);
     }
     if (input.consume('reset') && driving) {
-      driving.reset();
+      resetCar(driving);
       chase.snap();
     }
     const jump = input.consume('jump');
@@ -204,18 +246,31 @@ async function main() {
     const moveX = Math.cos(cy) * input.moveY - Math.sin(cy) * input.moveX;
     const moveZ = Math.sin(cy) * input.moveY + Math.cos(cy) * input.moveX;
 
+    map.update(debugView ? _p.fromArray(debugView.from) : driving ? driving.object.position : player.position);
+    // Freeze anything standing on ground that hasn't streamed in yet, rather
+    // than let it fall through the world.
+    for (const c of cars) {
+      const p = c.car.body.translation();
+      const frozen = !map.hasGround(p.x, p.z);
+      if (frozen !== c.frozen) c.car.body.setEnabled(!frozen);
+      c.frozen = frozen;
+      if (p.y < FALL_LIMIT) rescue(c.car);
+    }
+    const playerFrozen = !driving && !map.hasGround(player.position.x, player.position.z);
+
     accumulator += frameDt;
     let steps = 0;
     while (accumulator >= FIXED_DT && steps < MAX_STEPS) {
-      for (const { car } of cars) {
+      for (const { car, frozen } of cars) {
+        if (frozen) continue;
         if (car !== driving) car.update(null, FIXED_DT);
         // Like GTA III: asking to get out at speed brakes to a stop first.
         else if (exitRequested) car.update({ throttle: 0, brake: Math.abs(car.forwardSpeed()) > 1 ? 1 : 0, steer: 0, handbrake: false }, FIXED_DT);
         else car.update(input.drive, FIXED_DT);
       }
-      if (!driving) player.update({ moveX, moveZ, sprint: input.sprint, jump: jump && steps === 0 }, FIXED_DT);
+      if (!driving && !playerFrozen) player.update({ moveX, moveZ, sprint: input.sprint, jump: jump && steps === 0 }, FIXED_DT);
       world.step();
-      for (const { car } of cars) car.afterStep(FIXED_DT);
+      for (const { car, frozen } of cars) if (!frozen) car.afterStep(FIXED_DT);
       if (!driving) player.afterStep();
       accumulator -= FIXED_DT;
       steps++;
@@ -227,17 +282,16 @@ async function main() {
     // Stuck on its roof for a couple of seconds: flip it back over.
     upsideDownTime = driving && driving.isUpsideDown() && Math.abs(driving.forwardSpeed()) < 1 ? upsideDownTime + frameDt : 0;
     if (driving && upsideDownTime > 2) {
-      driving.reset();
+      resetCar(driving);
       upsideDownTime = 0;
     }
 
-    town.sync();
+    map.sync();
     const alpha = accumulator / FIXED_DT;
     for (const [n, { car, shadow }] of cars.entries()) {
       car.render(alpha);
-      shadow.position.set(car.object.position.x, 0.03, car.object.position.z);
-      shadow.rotation.y = new THREE.Euler().setFromQuaternion(car.object.quaternion, 'YXZ').y;
-      shadow.visible = car.object.position.y < 3;
+      const yaw = new THREE.Euler().setFromQuaternion(car.object.quaternion, 'YXZ').y;
+      placeShadow(shadow, car.object.position, yaw, car.collider, 2.6);
 
       // Skid marks from any sliding car, not just the one we're in.
       for (let i = 0; i < 4; i++) {
@@ -265,7 +319,7 @@ async function main() {
       audio.setSkid(driving.skid, speed);
     } else {
       player.render(alpha, frameDt);
-      playerShadow.position.set(player.position.x, player.position.y + 0.03, player.position.z);
+      placeShadow(playerShadow, _p.copy(player.position).setY(player.position.y + 0.9), 0, player.collider, 3);
       // Swing in behind only while heading away from the camera, so walking
       // sideways or towards the camera doesn't send it spinning.
       const awayFromCamera = input.moveY > 0.3 && input.moveY > Math.abs(input.moveX) * 0.5;
@@ -281,6 +335,11 @@ async function main() {
     input.setCanEnter(!!nearby);
     prompt.textContent = nearby ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in') : '';
 
+    if (debugView) {
+      camera.position.fromArray(debugView.from);
+      camera.lookAt(new THREE.Vector3().fromArray(debugView.at));
+    }
+    skyDome.follow(camera);
     renderer.render(scene, camera);
 
     // Adaptive resolution: trade sharpness for frame rate on slower phones.
@@ -313,7 +372,35 @@ async function main() {
         cars: cars.map(({ car }) => car.object.position.toArray()),
         audio: audio.state,
         fps,
+        map: map.name,
+        /** Ground height under the player, or under the car being driven. */
+        ground: (() => {
+          const p = driving ? driving.object.position : player.position;
+          return map.heightAt(p.x, p.z);
+        })(),
+        ...map.debugInfo(),
       }),
+      groundHeight: (x: number, z: number) => map.heightAt(x, z),
+      /** Fix the camera at `from` looking at `at` ([x, y, z]); pass null to go back to the chase camera. */
+      lookFrom: (from: number[] | null, at: number[]) => (debugView = from ? { from, at } : null),
+      /**
+       * Loads the ground at (x, z), then returns the sampled terrain height and
+       * the height of the first fixed collider straight down from 1 km up (null if none).
+       */
+      probe: async (x: number, z: number) => {
+        await map.ensureLoaded(x, z);
+        // New colliders only join scene queries on the next physics step.
+        for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+        const hit = world.castRay(new RAPIER.Ray({ x, y: 1000, z }, down), 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
+        return { ground: map.heightAt(x, z), ray: hit ? 1000 - hit.timeOfImpact : null };
+      },
+      /** Move a car (default: the purple one) to (x, z) on the ground, facing `heading`. */
+      teleportCar: async (index: number, x: number, z: number, heading: number) => {
+        await map.ensureLoaded(x, z);
+        const car = cars[index].car;
+        car.place(new THREE.Vector3(x, map.heightAt(x, z) + 0.9, z), heading);
+        if (car === driving) chase.snap();
+      },
     };
   }
 }

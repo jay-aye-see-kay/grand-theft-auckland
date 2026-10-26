@@ -253,12 +253,12 @@ export class Car {
     }
   }
 
-  /** Put the car back on its wheels where it is, facing the same way. */
-  reset(): void {
+  /** Put the car back on its wheels where it is, facing the same way, never below `groundY`. */
+  reset(groundY = 0): void {
     const t = this.body.translation();
     const fwd = _v.set(1, 0, 0).applyQuaternion(this.rotation());
     const heading = Math.atan2(-fwd.z, fwd.x);
-    this.place(new THREE.Vector3(t.x, Math.max(t.y, 0) + 1.2, t.z), heading);
+    this.place(new THREE.Vector3(t.x, Math.max(t.y, groundY) + 1.2, t.z), heading);
   }
 
   place(pos: THREE.Vector3, heading: number): void {
