@@ -9,12 +9,17 @@
 // the hill on the uphill side.
 //
 // Heights, in order: `height`, `building:levels` (+ `roof:levels`) x 3.2 m,
-// the median of DSM - DEM inside the footprint, else 9 m.
+// the median of DSM - DEM inside the footprint, else 9 m. Some general
+// corrections follow (see solidHeight): canopies are thin slabs at verandah
+// height, LiDAR heights of tiny footprints are capped (the DSM there is
+// usually a tree or the tower next door), and buildings on a bridge deck
+// stand on the deck. Hand fixes go in overrides/<area>.json.
 import earcut from 'earcut';
 import type { BuildingMesh } from '../../src/city/format.ts';
 import type { OsmData, OsmWay, Tags } from './osm.ts';
 import { lonLatToLocal, type Local } from './project.ts';
 import { sampleLocal, type Raster } from './raster.ts';
+import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 
 export const LEVEL_HEIGHT = 3.2;
@@ -26,6 +31,21 @@ const DSM_MAX = 250;
 const BASE_SINK = 0.3;
 /** Canopies (building=roof) without a min_height become slabs this thick. */
 const CANOPY_THICKNESS = 0.8;
+/**
+ * Canopy height when nothing better is known: verandahs and forecourt roofs
+ * sit a storey or so up. The DSM is no use under glass or beside towers.
+ */
+const CANOPY_DEFAULT = 5;
+const CANOPY_DSM_MAX = 12;
+/** LiDAR heights for footprints smaller than this (m²) are capped at SLENDER x sqrt(area). */
+const SMALL_FOOTPRINT = 200;
+const SLENDER = 1.2;
+/** Things that really are tall and thin, so their LiDAR heights stand. */
+const TALL_THIN = new Set(['silo', 'tower', 'chimney', 'transformer_tower', 'water_tower', 'bell_tower', 'church', 'cathedral']);
+/** A tagged height below this on a footprint bigger than 50 m² is a typo or a level count; ignore it. */
+const MIN_TAGGED = 2;
+/** Bus shelters, when nothing is tagged. */
+const SHELTER_HEIGHT = 3;
 /** Height of the darker band at the foot of ground-level walls. */
 const BASE_BAND = 4;
 
@@ -280,10 +300,23 @@ function linkParts(solids: Solid[], relParent: Map<string, string>) {
   }
 }
 
-/** Outlines to draw plus parts to draw. Hidden outlines still provide the base and colour for their parts. */
+/**
+ * Outlines to draw plus parts to draw. Hidden outlines still provide the
+ * base and colour for their parts. Parts that sit on top of their outline's
+ * tagged height (a crown with min_height at the roof) don't count towards
+ * covering it: a tower mapped as an outline plus just its crown would
+ * otherwise lose its shaft and leave the crown floating.
+ */
 export function visibleSolids(solids: Solid[]): { visible: Solid[]; hidden: Set<string> } {
+  const byKey = new Map(solids.map((s) => [s.key, s]));
+  const tagTop = (t: Tags) => parseLength(t.height) || Number(t['building:levels']) * LEVEL_HEIGHT || Infinity;
+  const partBottom = (t: Tags) => Math.max(parseLength(t.min_height) || 0, (Number(t['building:min_level']) || 0) * LEVEL_HEIGHT);
   const covered = new Map<string, number>();
-  for (const s of solids) if (s.isPart && s.parent) covered.set(s.parent, (covered.get(s.parent) ?? 0) + s.area);
+  for (const s of solids) {
+    if (!s.isPart || !s.parent) continue;
+    if (partBottom(s.tags) >= tagTop(byKey.get(s.parent)!.tags) - 1) continue;
+    covered.set(s.parent, (covered.get(s.parent) ?? 0) + s.area);
+  }
   const hidden = new Set<string>();
   for (const s of solids) if (!s.isPart && (covered.get(s.key) ?? 0) >= 0.5 * s.area) hidden.add(s.key);
   return { visible: solids.filter((s) => !hidden.has(s.key)), hidden };
@@ -321,31 +354,51 @@ const median = (v: number[]) => {
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
-/** Height above ground of the roof and of the underside (min_height), with where the height came from. */
-export function solidHeight(s: Solid, dem: Raster, dsm: Raster): { height: number; minHeight: number; source: HeightSource } {
-  const h = rawHeight(s, dem, dsm);
+export type SolidHeight = { height: number; minHeight: number; source: HeightSource };
+
+const isCanopy = (t: Tags) => t.building === 'roof' || t['building:part'] === 'roof';
+
+/**
+ * Height above its base of the roof and of the underside (min_height), with
+ * where the height came from. `deck` is the bridge deck height under a
+ * building with layer > 0 that stands on one (the DSM is measured from the
+ * DEM, which has the bridge removed, so it would read from the gully floor).
+ */
+export function solidHeight(s: Solid, dem: Raster, dsm: Raster, deck: number | null = null): SolidHeight {
+  const t = s.tags;
+  const h = rawHeight(s, dem, dsm, deck);
+  const canopy = isCanopy(t);
+  if (canopy && (h.source === 'default' || (h.source === 'dsm' && h.height > CANOPY_DSM_MAX))) {
+    h.height = Math.max(CANOPY_DEFAULT, h.minHeight + CANOPY_THICKNESS);
+    h.source = 'default';
+  }
   // building=roof is a canopy (station platforms, forecourts) with open space
   // under it: a slab you can drive beneath, not a solid block.
-  const canopy = s.tags.building === 'roof' || s.tags['building:part'] === 'roof';
   if (canopy && h.minHeight === 0 && h.height > CANOPY_THICKNESS + 2) h.minHeight = h.height - CANOPY_THICKNESS;
+  // A kiosk under a tower's overhang or a tree reads as a 40-80 m spike.
+  if (h.source === 'dsm' && s.area < SMALL_FOOTPRINT && !TALL_THIN.has(t.building ?? '') && !t.man_made) {
+    h.height = Math.max(h.minHeight + 1, Math.min(h.height, Math.max(4, SLENDER * Math.sqrt(s.area))));
+  }
   return h;
 }
 
-function rawHeight(s: Solid, dem: Raster, dsm: Raster): { height: number; minHeight: number; source: HeightSource } {
+function rawHeight(s: Solid, dem: Raster, dsm: Raster, deck: number | null): SolidHeight {
   const t = s.tags;
   let minHeight = parseLength(t.min_height);
   if (!(minHeight >= 0)) minHeight = Number(t['building:min_level']) * LEVEL_HEIGHT;
   if (!(minHeight >= 0)) minHeight = 0;
   const tagged = parseLength(t.height);
-  if (tagged > 0) return { height: tagged, minHeight, source: 'height' };
+  if (tagged > 0 && (tagged >= MIN_TAGGED || s.area <= 50 || s.isPart)) return { height: tagged, minHeight, source: 'height' };
   const levels = Number(t['building:levels']);
   if (levels > 0) {
     const roof = Number(t['roof:levels']);
     return { height: (levels + (roof > 0 ? roof : 0)) * LEVEL_HEIGHT, minHeight, source: 'levels' };
   }
+  // Bus shelters: the DSM there is usually the tree or awning over them.
+  if (t.amenity === 'shelter') return { height: SHELTER_HEIGHT, minHeight, source: 'default' };
   const diffs: number[] = [];
   for (const p of interiorSamples(s)) {
-    const d = sampleLocal(dsm, p.x, p.z) - sampleLocal(dem, p.x, p.z);
+    const d = sampleLocal(dsm, p.x, p.z) - (deck ?? sampleLocal(dem, p.x, p.z));
     if (Number.isFinite(d)) diffs.push(d);
   }
   if (diffs.length >= 3) {
@@ -469,7 +522,11 @@ export class MeshBuilder {
    * an extra row of vertices BASE_BAND up so the darkening at their foot
    * stays near the street instead of fading over the whole tower.
    */
-  prism(s: Solid, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean) {
+  prism(s: Pick<Solid, 'polygons'>, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean, visible = true) {
+    if (!visible) {
+      this.colliderPrism(s.polygons, bottom, top);
+      return;
+    }
     const band = grounded && top - bottom > BASE_BAND * 2;
     const foot = wall.map((v) => v * (grounded ? 0.55 : 0.85));
     const mid = wall.map((v) => v * 0.93);
@@ -523,6 +580,37 @@ export class MeshBuilder {
     }
   }
 
+  /**
+   * An invisible solid: walls and a lid in the collider only (its vertices
+   * ride along in the render buffers but no drawn triangle uses them).
+   */
+  colliderPrism(polygons: Polygon[], bottom: number, top: number) {
+    const none = [0, 0, 0] as const;
+    for (const poly of polygons) {
+      for (const ring of [poly.outer, ...poly.holes]) {
+        for (let k = 0; k < ring.length; k++) {
+          const a = ring[k];
+          const b = ring[(k + 1) % ring.length];
+          const a0 = this.vertex(a.x, bottom, a.z, none, none);
+          const b0 = this.vertex(b.x, bottom, b.z, none, none);
+          const a1 = this.vertex(a.x, top, a.z, none, none);
+          const b1 = this.vertex(b.x, top, b.z, none, none);
+          this.colliderIdx.push(a0, b1, b0, a0, a1, b1);
+        }
+      }
+      const flat: number[] = [];
+      const holes: number[] = [];
+      for (const r of [poly.outer, ...poly.holes]) {
+        if (r !== poly.outer) holes.push(flat.length / 2);
+        for (const p of r) flat.push(p.x, p.z);
+      }
+      const first = this.vertexCount;
+      for (let k = 0; k < flat.length; k += 2) this.vertex(flat[k], top, flat[k + 1], none, none);
+      const tris = earcut(flat, holes);
+      for (let k = 0; k < tris.length; k += 3) this.colliderIdx.push(first + tris[k], first + tris[k + 2], first + tris[k + 1]);
+    }
+  }
+
   /** Quantises to the file format, relative to the chunk centre (cx, cz). */
   encode(cx: number, cz: number): BuildingMesh {
     const n = this.vertexCount;
@@ -547,41 +635,87 @@ export type BuildingsResult = {
   /** Per chunk "i,j" -> merged mesh builder. */
   chunks: Map<string, MeshBuilder>;
   buildings: ExtrudedBuilding[];
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number };
+  landmarks: Landmark[];
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number };
+};
+
+/** A building tagged as a landmark in the overrides, for hand-made models (T9). */
+export type Landmark = {
+  id: string;
+  /** 'way/123' or 'relation/456'. */
+  osm: string;
+  name?: string;
+  /** Footprint centroid, local metres. */
+  x: number;
+  z: number;
+  /** Ground under it (the lowest point) and the top of its tallest part, metres above sea level. */
+  base: number;
+  top: number;
+  /** Outer ring of the biggest polygon, local metres (0.1 m). */
+  footprint: [number, number][];
+  /** True when the OSM geometry is left out of the mesh (only its collider remains). */
+  hidden: boolean;
+};
+
+export type BuildOptions = {
+  overrides?: Overrides;
+  /** Bridge deck height at a point, or null off any bridge (see roads.ts). */
+  deckAt?: (x: number, z: number) => number | null;
 };
 
 /** Extrudes every visible building and part and merges them into the chunk containing each centroid. */
-export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster }, grid: Grid): BuildingsResult {
+export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster }, grid: Grid, opts: BuildOptions = {}): BuildingsResult {
+  const overrides = opts.overrides ?? new Overrides('none');
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0 };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0 };
   const chunks = new Map<string, MeshBuilder>();
+  const chunkAt = (x: number, z: number) => {
+    const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+    const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+    if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+    const key = `${i},${j}`;
+    let mb = chunks.get(key);
+    if (!mb) chunks.set(key, (mb = new MeshBuilder()));
+    return mb;
+  };
   const buildings: ExtrudedBuilding[] = [];
   const baseCache = new Map<string, number>();
-  const baseOf = (s: Solid) => {
+  const lowest = (s: Solid) => {
     let b = baseCache.get(s.key);
-    if (b === undefined) baseCache.set(s.key, (b = lowestGround(s, data.dem) - BASE_SINK));
+    if (b === undefined) baseCache.set(s.key, (b = lowestGround(s, data.dem)));
     return b;
   };
+  // Raised buildings (layer > 0) standing on a bridge deck: the bus shelters on the K Road bridge.
+  const deckUnder = new Map<string, number>();
+  for (const s of solids) {
+    const layer = Number(s.tags.layer);
+    if (!(layer > 0) || !opts.deckAt) continue;
+    const d = opts.deckAt(s.centroid.x, s.centroid.z);
+    if (d !== null && d > lowest(s) + 2) deckUnder.set(s.key, d);
+  }
+  const baseOf = (s: Solid) => deckUnder.get(s.key) ?? lowest(s) - BASE_SINK;
+  // Overrides that hide an outline hide its parts too.
+  const hideKey = (s: Solid) => !!(overrides.get(s.key)?.hide || (s.parent && overrides.get(s.parent)?.hide));
   // Tallest point of each outline's family, so a podium's colour family follows its tower.
   const familyTop = new Map<string, number>();
-  const heights = new Map<string, ReturnType<typeof solidHeight>>();
+  const heights = new Map<string, SolidHeight>();
   for (const s of visible) {
-    const h = solidHeight(s, data.dem, data.dsm);
+    const h = solidHeight(s, data.dem, data.dsm, deckUnder.get(s.key) ?? null);
     heights.set(s.key, h);
     const fam = s.parent ?? s.key;
     familyTop.set(fam, Math.max(familyTop.get(fam) ?? 0, h.height));
   }
+  const famTopAbs = new Map<string, number>();
   for (const s of visible) {
-    const i = Math.floor((s.centroid.x - grid.x0) / CHUNK_SIZE);
-    const j = Math.floor((s.centroid.z - grid.z0) / CHUNK_SIZE);
-    if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) {
+    const h = heights.get(s.key)!;
+    if (h.minHeight >= h.height - 0.1) continue;
+    const mb = chunkAt(s.centroid.x, s.centroid.z);
+    if (!mb) {
       counts.outside++;
       continue;
     }
-    const h = heights.get(s.key)!;
-    if (h.minHeight >= h.height - 0.1) continue;
     const parent = s.parent ? byKey.get(s.parent) : undefined;
     // Parts share their outline's base so podium, shaft and pod line up.
     const base = parent ? Math.min(baseOf(parent), baseOf(s)) : baseOf(s);
@@ -589,17 +723,117 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const bottom = grounded ? base : base + h.minHeight;
     const top = base + h.height;
     const fam = s.parent ?? s.key;
+    famTopAbs.set(fam, Math.max(famTopAbs.get(fam) ?? -Infinity, top));
     const famTags = parent && !s.tags['building:colour'] ? { ...parent.tags, ...s.tags } : s.tags;
     const wall = wallColour(fam, famTags, familyTop.get(fam)!);
     const roof = roofColour(s.key, famTags, wall);
-    const key = `${i},${j}`;
-    let mb = chunks.get(key);
-    if (!mb) chunks.set(key, (mb = new MeshBuilder()));
-    mb.prism(s, bottom, top, wall, roof, grounded);
+    const hide = hideKey(s);
+    const o = overrides.get(s.key);
+    const po = s.parent ? overrides.get(s.parent) : undefined;
+    // A hidden building keeps its collider unless told otherwise.
+    if (hide && (o?.block === false || po?.block === false)) {
+      counts.hidden++;
+      continue;
+    }
+    mb.prism(s, bottom, top, wall, roof, grounded, !hide);
+    if (hide) counts.hidden++;
     counts[h.source]++;
     if (s.isPart) counts.parts++;
     else counts.outlines++;
     buildings.push({ key: s.key, base, bottom, top, source: h.source });
   }
-  return { chunks, buildings, counts };
+
+  // Landmarks: where they stand, for the hand-made models.
+  const landmarks: Landmark[] = [];
+  for (const s of solids) {
+    const o = overrides.get(s.key);
+    if (!o?.landmark) continue;
+    const big = s.polygons.reduce((a, b) => (Math.abs(signedArea(b.outer)) > Math.abs(signedArea(a.outer)) ? b : a));
+    const r1 = (v: number) => Math.round(v * 10) / 10;
+    landmarks.push({
+      id: o.landmark,
+      osm: longKey(s.key),
+      ...(s.tags.name ? { name: s.tags.name } : {}),
+      x: r1(s.centroid.x),
+      z: r1(s.centroid.z),
+      base: r1(lowest(s)),
+      top: r1(famTopAbs.get(s.key) ?? lowest(s) + (heights.get(s.key)?.height ?? solidHeight(s, data.dem, data.dsm).height)),
+      footprint: big.outer.map((p) => [r1(p.x), r1(p.z)]),
+      hidden: !!o.hide,
+    });
+  }
+  landmarks.sort((a, b) => a.id.localeCompare(b.id) || a.osm.localeCompare(b.osm));
+
+  counts.blocks = addBlocks(data, overrides, new Set(solids.map((s) => s.key)), chunkAt);
+  return { chunks, buildings, landmarks, counts };
+}
+
+/** Default height of an invisible block (a road block, a fence line), m. */
+const BLOCK_HEIGHT = 2;
+const BLOCK_THICKNESS = 0.5;
+
+/**
+ * Invisible colliders from `block` overrides on anything that isn't a
+ * building (buildings are solid already; a hidden one keeps its collider):
+ * an area becomes a prism, a line a thin wall following it.
+ */
+function addBlocks(
+  data: { osm: OsmData; dem: Raster },
+  overrides: Overrides,
+  buildingKeys: Set<string>,
+  chunkAt: (x: number, z: number) => MeshBuilder | null,
+): number {
+  let n = 0;
+  const ground = (x: number, z: number) => groundCm(data.dem, x, z) / 100;
+  for (const key of overrides.keys()) {
+    const o = overrides.get(key)!;
+    if (!o.block || o.delete) continue;
+    const [type, idStr] = key.split('/');
+    const short = `${type[0]}${idStr}`;
+    if (buildingKeys.has(short)) continue;
+    const height = typeof o.block === 'number' ? o.block : BLOCK_HEIGHT;
+    let rings: Ring[] = [];
+    let line: Ring | null = null;
+    if (type === 'way') {
+      const way = data.osm.ways.get(Number(idStr));
+      const pts = way && nodesLocal(data.osm, way.nodes);
+      if (!way || !pts) continue;
+      if (way.nodes.length >= 4 && way.nodes[0] === way.nodes[way.nodes.length - 1]) {
+        const r = cleanRing(pts, true);
+        if (r) rings = [r];
+      } else line = pts;
+    } else {
+      const rel = data.osm.relations.get(Number(idStr));
+      if (!rel) continue;
+      const ways = rel.members.filter((m) => m.type === 'way' && m.role !== 'inner').map((m) => data.osm.ways.get(m.ref)).filter((w): w is OsmWay => !!w);
+      rings = assembleRings(ways).map((r) => nodesLocal(data.osm, r)).map((r) => r && cleanRing(r, true)).filter((r): r is Ring => !!r);
+    }
+    for (const outer of rings) {
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const p of outer) {
+        lo = Math.min(lo, ground(p.x, p.z));
+        hi = Math.max(hi, ground(p.x, p.z));
+      }
+      const c = ringCentroid(outer);
+      chunkAt(c.x, c.z)?.colliderPrism([{ outer, holes: [] }], lo - BASE_SINK, hi + height);
+    }
+    if (line) {
+      for (let k = 0; k + 1 < line.length; k++) {
+        const a = line[k];
+        const b = line[k + 1];
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        if (len < 0.05) continue;
+        const nx = ((b.z - a.z) / len) * (BLOCK_THICKNESS / 2);
+        const nz = (-(b.x - a.x) / len) * (BLOCK_THICKNESS / 2);
+        const quad: Ring = [{ x: a.x + nx, z: a.z + nz }, { x: b.x + nx, z: b.z + nz }, { x: b.x - nx, z: b.z - nz }, { x: a.x - nx, z: a.z - nz }];
+        if (signedArea(quad) < 0) quad.reverse();
+        const lo = Math.min(ground(a.x, a.z), ground(b.x, b.z));
+        const hi = Math.max(ground(a.x, a.z), ground(b.x, b.z));
+        chunkAt((a.x + b.x) / 2, (a.z + b.z) / 2)?.colliderPrism([{ outer: quad, holes: [] }], lo - BASE_SINK, hi + height);
+      }
+    }
+    n++;
+  }
+  return n;
 }

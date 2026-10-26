@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { parseLength, collectSolids, inRing, type Solid } from './buildings.ts';
 import { loadCityData, type CityData } from './fetch.ts';
 import { CBD_BBOX, type Local } from './project.ts';
+import { Overrides } from './overrides.ts';
 import { collectRoads } from './roads.ts';
 import { TerrainSampler } from './terrain.ts';
 
@@ -224,6 +225,7 @@ export function writeParking(parking: Parking, path: string) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const data = await loadCityData(CBD_BBOX);
+  Overrides.load('cbd').apply(data.osm); // same corrected data as build.ts
   const parking = buildParking(data);
   const out = fileURLToPath(new URL('../../public/city/cbd/parking.json', import.meta.url));
   writeParking(parking, out);

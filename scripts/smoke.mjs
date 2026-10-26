@@ -349,6 +349,28 @@ try {
     const cpo = await game('probe', -50.3, -20.3);
     const cpoRoof = cpo.top === null ? NaN : cpo.top - cpo.ground;
     check(cpoRoof > 15 && cpoRoof < 25, `Chief Post Office roof ${cpoRoof.toFixed(1)} m above the ground (tagged 20 m)`);
+
+    // Overrides (overrides/cbd.json) and the general height rules: the
+    // Glasshouse is 16 m (OSM: one level, 3.2 m), the PwC Tower's crown tops
+    // out under 180 m above sea level (OSM: 200 m), the kiosk by the Sky
+    // Tower is low (LiDAR: 80 m) and the Galway St canopy is a slab at
+    // verandah height with open space under it.
+    {
+      const roofAt = async (x, z) => {
+        const p = await game('probe', x, z);
+        return p.top === null ? NaN : p.top - p.ground;
+      };
+      const glass = await roofAt(-23, -14);
+      const pwc = (await game('probe', -180, -37)).top;
+      const kiosk = await roofAt(-454, 414);
+      const canopy = await roofAt(-21, 28);
+      check(glass > 14 && glass < 18 && pwc > 170 && pwc < 180 && kiosk < 6 && canopy > 3.5 && canopy < 6,
+        `overridden heights: Glasshouse ${glass.toFixed(1)} m, PwC crown top ${pwc?.toFixed(0)} m asl, kiosk ${kiosk.toFixed(1)} m, Galway St canopy ${canopy.toFixed(1)} m`);
+      const manifest = await page.evaluate(() => fetch('city/cbd/manifest.json').then((r) => r.json()));
+      const ids = new Set((manifest.landmarks ?? []).map((l) => l.id));
+      check(['sky-tower', 'ferry-building', 'britomart', 'civic-theatre', 'town-hall', 'wynyard-silos'].every((id) => ids.has(id)),
+        `landmarks recorded in the manifest (${[...ids].join(', ')})`);
+    }
     const WALL = [[-23.4, -43.4], [-41.2, 8.8]];
     const wallLen = Math.hypot(WALL[1][0] - WALL[0][0], WALL[1][1] - WALL[0][1]);
     /** Signed distance from the wall line, positive on the open (east) side. */

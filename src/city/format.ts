@@ -43,7 +43,27 @@ export interface CityManifest {
     samples: number;
     encoding: 'gtag1+deflate';
   };
+  /** Buildings marked as landmarks in overrides/<area>.json, for hand-made models. */
+  landmarks?: LandmarkInfo[];
   chunks: ChunkInfo[];
+}
+
+export interface LandmarkInfo {
+  /** e.g. 'sky-tower'; several entries can share one (the Wynyard silos). */
+  id: string;
+  /** 'way/123' or 'relation/456'. */
+  osm: string;
+  name?: string;
+  /** Footprint centroid, local metres. */
+  x: number;
+  z: number;
+  /** Lowest ground under it and the top of its tallest part, metres above sea level. */
+  base: number;
+  top: number;
+  /** Outer ring of the footprint, local metres. */
+  footprint: [number, number][];
+  /** The OSM geometry is left out of the buildings mesh (its collider stays). */
+  hidden: boolean;
 }
 
 export interface ChunkInfo {

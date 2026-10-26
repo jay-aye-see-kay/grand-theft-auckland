@@ -1,0 +1,29 @@
+{
+  "// buildings": "heights checked against the 2024 LiDAR DSM (median of DSM - DEM inside the footprint)",
+  "way/816075709": { "height": 156, "note": "PwC Tower: tagged 180 m (its full height); the main roof is at ~156 m in the LiDAR" },
+  "way/1173589904": { "height": 156, "note": "PwC Tower glass shaft, as above" },
+  "way/1173588444": { "height": 173, "min_height": 156, "note": "PwC Tower crown: tagged 180-200 m; LiDAR tops out 173 m above the ground (~178 m above sea level)" },
+  "way/766845442": { "height": 4.5, "note": "single-storey retail pavilion tagged height=1" },
+  "way/464644562": { "height": 4, "note": "kiosk read as 80 m from the tower beside it in the LiDAR" },
+  "relation/12738128": { "height": 13.5, "note": "Fanshawe St car park: the DEM includes the structure (roof deck ~16.5 m above sea level), so DSM - DEM reads 0" },
+  "way/23907642": { "min_height": 0, "height": 34, "note": "Customhouse apartments, 50 Anzac Ave: building:min_level=4 counts from the street below the cliff, so it floated 13 m up the slope; 34 m in the LiDAR" },
+  "way/24252617": { "height": 16, "note": "The Glasshouse (Britomart): one tall glass level, 16 m in the LiDAR" },
+
+  "// roads": "deck heights per node (metres above sea level, null = leave to the generator)",
+  "way/620912278": { "deck": [50.2, 51.2, 52.0, 52.6, 53.0, 53.3, 53.5, 53.5, 53.4, 53.3], "note": "CMJ flyover ramp (layer 2): DSM shows the deck at ~53.5 m, well above the graded line between its ends" },
+  "way/119020515": { "deck": [53.3, 53.0, 52.7, 52.3, 51.6, 50.9], "note": "CMJ flyover ramp, continuing the one above" },
+
+  "// landmarks": "recorded in manifest.json for the hand-made models (T9); add \"hide\": true once a model replaces the OSM shape",
+  "relation/19745928": { "landmark": "sky-tower" },
+  "way/23904427": { "landmark": "ferry-building" },
+  "way/23904390": { "landmark": "britomart" },
+  "way/23906749": { "landmark": "civic-theatre" },
+  "way/23904006": { "landmark": "town-hall" },
+  "way/158614640": { "landmark": "wynyard-silos" },
+  "way/403963164": { "landmark": "wynyard-silos" },
+  "way/1137191819": { "landmark": "wynyard-silos" },
+  "way/1137191820": { "landmark": "wynyard-silos" },
+  "way/1137191821": { "landmark": "wynyard-silos" },
+  "way/1137191822": { "landmark": "wynyard-silos" },
+  "way/1137191823": { "landmark": "wynyard-silos" }
+}

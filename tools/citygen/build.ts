@@ -19,13 +19,19 @@ import { buildParking, writeParking } from './parking.ts';
 import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
-import { buildRoads } from './roads.ts';
+import { Overrides } from './overrides.ts';
+import { buildRoads, roadNetwork } from './roads.ts';
 import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, SAMPLES, SEA_SHELF, TerrainSampler } from './terrain.ts';
 
 const AREA = 'cbd';
 const OUT = fileURLToPath(new URL(`../../public/city/${AREA}/`, import.meta.url));
 
 const data = await loadCityData(CBD_BBOX);
+// Hand fixes first, so everything downstream reads the corrected tags.
+const overrides = Overrides.load(AREA);
+const stale = overrides.apply(data.osm);
+for (const w of stale) console.warn(`overrides/${AREA}.json: ${w}`);
+console.log(`Overrides: ${overrides.size} entries, ${stale.length} stale`);
 const grid = chunkGrid(CBD_BBOX);
 console.log(`Grid ${grid.nx}x${grid.nz} chunks of ${CHUNK_SIZE} m from x0=${grid.x0} z0=${grid.z0}`);
 
@@ -35,19 +41,21 @@ for (const layer of ['terrain', 'buildings', 'roads', 'ground']) {
   mkdirSync(join(OUT, layer), { recursive: true });
 }
 
-const blds = buildBuildings(data, grid);
+const terrainSampler = new TerrainSampler(data.dem);
+const network = roadNetwork(data, terrainSampler, overrides);
+const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt });
 const c = blds.counts;
 console.log(
   `Buildings: ${c.outlines} outlines + ${c.parts} parts drawn (${c.hiddenOutlines} outlines replaced by their parts, ${c.outside} outside the grid). ` +
-    `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}.`,
+    `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
+    `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks.`,
 );
 const tallest = blds.buildings.slice().sort((a, b) => b.top - b.base - (a.top - a.base)).slice(0, 8);
 console.log(`Tallest: ${tallest.map((b) => `${b.key} ${(b.top - b.base).toFixed(0)} m`).join(', ')}`);
 const ground = new GroundRaster(grid);
 const landUse = paintLandUse(data.osm, ground);
 console.log(`Land use: ${Object.entries(landUse).map(([k, n]) => `${n} ${k}`).join(', ')} polygons`);
-const terrainSampler = new TerrainSampler(data.dem);
-const roads = buildRoads(data, grid, terrainSampler, ground);
+const roads = buildRoads(grid, terrainSampler, ground, network);
 console.log(
   `Roads: ${roads.counts.ways} ways (${roads.counts.bridges} bridges), ` +
     Object.entries(roads.counts.km).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)} km`).join(', '),
@@ -119,11 +127,13 @@ const manifest: CityManifest = {
   },
   terrain: { cellSize: CELL_SIZE, apron: APRON, samples: SAMPLES, seaShelf: SEA_SHELF, encoding: 'gtat1+deflate' },
   ground: { apron: GROUND_APRON, samples: GROUND_SAMPLES, encoding: 'gtag1+deflate' },
+  landmarks: blds.landmarks,
   chunks,
 };
 // One line per chunk keeps the manifest readable and diffs small.
-const { chunks: list, ...head } = manifest;
-const headJson = JSON.stringify(head, null, 2).replace(/\n}$/, '');
+const { chunks: list, landmarks, ...head } = manifest;
+const landmarkJson = (landmarks ?? []).map((l) => `    ${JSON.stringify(l)}`).join(',\n');
+const headJson = JSON.stringify(head, null, 2).replace(/\n}$/, '') + (landmarkJson ? `,\n  "landmarks": [\n${landmarkJson}\n  ]` : `,\n  "landmarks": []`);
 writeFileSync(join(OUT, 'manifest.json'), `${headJson},\n  "chunks": [\n${list.map((c) => `    ${JSON.stringify(c)}`).join(',\n')}\n  ]\n}\n`);
 
 const parking = buildParking(data, terrainSampler);

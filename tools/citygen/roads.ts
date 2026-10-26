@@ -27,6 +27,7 @@
 import { MeshBuilder, parseLength, rgb } from './buildings.ts';
 import type { GroundRaster } from './ground.ts';
 import { DRIVEABLE_HIGHWAYS, type OsmData, type Tags } from './osm.ts';
+import type { Overrides } from './overrides.ts';
 import { lonLatToLocal, type Local } from './project.ts';
 import { sampleLocal, type Raster } from './raster.ts';
 import { CHUNK_SIZE, type Grid, type TerrainSampler } from './terrain.ts';
@@ -54,6 +55,10 @@ const AIM = 0.01;
 const BRIDGE_GRADE = 0.1;
 /** Visible thickness of a bridge deck's edge, m. */
 const DECK_DEPTH = 1.2;
+/** Headroom a bridge deck keeps over a road on a lower layer that it crosses, m. */
+const CLEARANCE = 6;
+/** Steepest a deck climbs to clear a crossing (flyover ramps run at 5-7 %). */
+const RAMP_GRADE = 0.07;
 
 type RGB = [number, number, number];
 type Level = { lift: number; layer: number; colour: RGB };
@@ -92,6 +97,8 @@ type Road = {
   left: boolean;
   right: boolean;
   bridge: boolean;
+  /** OSM layer (0 when untagged; 1 for an untagged bridge). */
+  layer: number;
 };
 
 function skipped(t: Tags): boolean {
@@ -142,7 +149,8 @@ export function collectRoads(osm: OsmData): Road[] {
     const s = [0];
     for (let k = 1; k < pts.length; k++) s.push(s[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z));
     const bridge = t.bridge !== undefined && t.bridge !== 'no';
-    roads.push({ id: way.id, highway, nodes, pts, s, surface, width: roadWidth(t), ...footpathSides(t), bridge });
+    const layer = Number.isFinite(Number(t.layer)) && t.layer !== undefined ? Number(t.layer) : bridge ? 1 : 0;
+    roads.push({ id: way.id, highway, nodes, pts, s, surface, width: roadWidth(t), ...footpathSides(t), bridge, layer });
   }
   return roads;
 }
@@ -457,9 +465,13 @@ const median = (v: number[]) => {
  * are pulled down so no stretch climbs faster than BRIDGE_GRADE. Never
  * below ground.
  */
-function bridgeHeights(roads: Road[], terrain: TerrainSampler, dsm: Raster, at: Map<number, Local>): Map<number, number> {
+export function bridgeHeights(
+  roads: Road[], terrain: TerrainSampler, dsm: Raster, at: Map<number, Local>, fixed: Map<number, number> = new Map(),
+): Map<number, number> {
   const atGrade = new Set<number>();
   for (const r of roads) if (!r.bridge) for (const n of r.nodes) atGrade.add(n);
+  // Heights pinned by overrides act like at-grade anchors.
+  for (const n of fixed.keys()) atGrade.add(n);
   const h = new Map<number, number>();
   const edges = new Map<number, { to: number; d: number }[]>();
   for (const r of roads) {
@@ -469,7 +481,8 @@ function bridgeHeights(roads: Road[], terrain: TerrainSampler, dsm: Raster, at: 
       if (!h.has(n)) {
         const p = at.get(n)!;
         const ground = terrain.heightAt(p.x, p.z);
-        if (atGrade.has(n)) h.set(n, ground);
+        if (fixed.has(n)) h.set(n, fixed.get(n)!);
+        else if (atGrade.has(n)) h.set(n, ground);
         else {
           const samples: number[] = [];
           for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) if (dx * dx + dz * dz <= 9) samples.push(sampleLocal(dsm, p.x + dx, p.z + dz));
@@ -529,6 +542,32 @@ function bridgeHeights(roads: Road[], terrain: TerrainSampler, dsm: Raster, at: 
     for (const n of comp) graded.add(n);
   }
 
+  // Flyovers: a deck that crosses a road on a lower layer keeps CLEARANCE
+  // over it, and the ramps either side climb to that at RAMP_GRADE (a
+  // max-plus relaxation from the highest requirement down). Anchored nodes
+  // stay put, so a crossing right next to one makes a steeper ramp.
+  const need = crossingNeeds(roads, terrain, h);
+  const queue2 = [...need.keys()].sort((a, b) => need.get(b)! - need.get(a)! || a - b);
+  const settled = new Set<number>();
+  while (queue2.length) {
+    queue2.sort((a, b) => need.get(b)! - need.get(a)! || a - b);
+    const n = queue2.shift()!;
+    if (settled.has(n)) continue;
+    settled.add(n);
+    for (const e of edges.get(n) ?? []) {
+      const want = need.get(n)! - RAMP_GRADE * e.d;
+      if (!settled.has(e.to) && !atGrade.has(e.to) && want > (need.get(e.to) ?? -Infinity)) {
+        need.set(e.to, want);
+        queue2.push(e.to);
+      }
+    }
+  }
+  for (const [n, v] of need) {
+    if (atGrade.has(n) || !h.has(n)) continue;
+    if (v > h.get(n)!) h.set(n, v);
+    graded.add(n);
+  }
+
   // Min-plus relaxation (a Dijkstra from the lowest nodes up): h(n) <= h(m) + grade * d(n, m).
   const order = [...h.keys()].sort((a, b) => h.get(a)! - h.get(b)! || a - b);
   const done = new Set<number>();
@@ -548,6 +587,54 @@ function bridgeHeights(roads: Road[], terrain: TerrainSampler, dsm: Raster, at: 
     h.set(n, Math.max(v, terrain.heightAt(p.x, p.z)));
   }
   return h;
+}
+
+/**
+ * For each bridge node next to a crossing over a road on a lower layer: the
+ * deck height that clears it. The lower road's height is the terrain there,
+ * or its own deck (as first estimated) if it's a bridge too.
+ */
+function crossingNeeds(roads: Road[], terrain: TerrainSampler, h: Map<number, number>): Map<number, number> {
+  const need = new Map<number, number>();
+  type Seg = { r: Road; k: number; minX: number; maxX: number; minZ: number; maxZ: number };
+  const segs: Seg[] = [];
+  for (const r of roads) {
+    for (let k = 0; k + 1 < r.pts.length; k++) {
+      const a = r.pts[k];
+      const b = r.pts[k + 1];
+      segs.push({ r, k, minX: Math.min(a.x, b.x), maxX: Math.max(a.x, b.x), minZ: Math.min(a.z, b.z), maxZ: Math.max(a.z, b.z) });
+    }
+  }
+  const heightOn = (r: Road, k: number, f: number, x: number, z: number) => {
+    if (!r.bridge) return terrain.heightAt(x, z);
+    const ha = h.get(r.nodes[k]) ?? terrain.heightAt(x, z);
+    const hb = h.get(r.nodes[k + 1]) ?? terrain.heightAt(x, z);
+    return ha + (hb - ha) * f;
+  };
+  for (const top of segs) {
+    if (!top.r.bridge) continue;
+    const a = top.r.pts[top.k];
+    const b = top.r.pts[top.k + 1];
+    for (const low of segs) {
+      if (low.r === top.r || low.r.layer >= top.r.layer) continue;
+      if (low.maxX < top.minX || low.minX > top.maxX || low.maxZ < top.minZ || low.minZ > top.maxZ) continue;
+      const c = low.r.pts[low.k];
+      const d = low.r.pts[low.k + 1];
+      if (low.r.nodes[low.k] === top.r.nodes[top.k] || low.r.nodes[low.k + 1] === top.r.nodes[top.k + 1] ||
+        low.r.nodes[low.k] === top.r.nodes[top.k + 1] || low.r.nodes[low.k + 1] === top.r.nodes[top.k]) continue;
+      // Proper intersection of a-b with c-d.
+      const den = (b.x - a.x) * (d.z - c.z) - (b.z - a.z) * (d.x - c.x);
+      if (Math.abs(den) < 1e-9) continue;
+      const t = ((c.x - a.x) * (d.z - c.z) - (c.z - a.z) * (d.x - c.x)) / den;
+      const u = ((c.x - a.x) * (b.z - a.z) - (c.z - a.z) * (b.x - a.x)) / den;
+      if (t <= 0 || t >= 1 || u <= 0 || u >= 1) continue;
+      const x = a.x + (b.x - a.x) * t;
+      const z = a.z + (b.z - a.z) * t;
+      const req = heightOn(low.r, low.k, u, x, z) + CLEARANCE;
+      for (const n of [top.r.nodes[top.k], top.r.nodes[top.k + 1]]) need.set(n, Math.max(need.get(n) ?? -Infinity, req));
+    }
+  }
+  return need;
 }
 
 // ---------------------------------------------------------------- junctions
@@ -645,9 +732,18 @@ export type RoadsResult = {
   counts: { ways: number; bridges: number; km: Record<string, number> };
 };
 
-export function buildRoads(data: { osm: OsmData; dsm: Raster }, grid: Grid, terrain: TerrainSampler, ground: GroundRaster): RoadsResult {
+/** Roads collected and bridge decks solved, before meshing: buildings need the decks too. */
+export type RoadNetwork = {
+  roads: Road[];
+  at: Map<number, Local>;
+  byNode: Map<number, { road: Road; k: number }[]>;
+  deck: Map<number, number>;
+  /** Deck height under a point on a bridge (its carriageway, footpaths and a margin), else null. */
+  deckAt: (x: number, z: number) => number | null;
+};
+
+export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: TerrainSampler, overrides?: Overrides): RoadNetwork {
   const roads = collectRoads(data.osm);
-  const out = new ChunkMeshes(grid);
   const at = new Map<number, Local>();
   const byNode = new Map<number, { road: Road; k: number }[]>();
   for (const r of roads) {
@@ -657,7 +753,49 @@ export function buildRoads(data: { osm: OsmData; dsm: Raster }, grid: Grid, terr
       byNode.get(n)!.push({ road: r, k });
     });
   }
-  const deck = bridgeHeights(roads, terrain, data.dsm, at);
+  // Deck heights pinned per node by overrides ({ "deck": [h0, h1, ...] } on a bridge way).
+  const fixed = new Map<number, number>();
+  for (const r of roads) {
+    const d = overrides?.get(`w${r.id}`)?.deck;
+    if (!Array.isArray(d)) continue;
+    const way = data.osm.ways.get(r.id)!;
+    if (d.length !== way.nodes.length) {
+      console.warn(`overrides: way/${r.id} deck has ${d.length} heights for ${way.nodes.length} nodes; ignored`);
+      continue;
+    }
+    way.nodes.forEach((n, k) => {
+      if (typeof d[k] === 'number') fixed.set(n, d[k]);
+    });
+  }
+  const deck = bridgeHeights(roads, terrain, data.dsm, at, fixed);
+  const bridges = roads.filter((r) => r.bridge);
+  const deckAt = (x: number, z: number): number | null => {
+    // The highest deck in reach: where decks cross, things on them sit on the top one.
+    let best: number | null = null;
+    for (const r of bridges) {
+      // Footpaths mapped as separate ways run alongside: allow for them too.
+      const reach = r.width / 2 + FOOTPATH_WIDTH + 2;
+      for (let k = 0; k + 1 < r.pts.length; k++) {
+        const a = r.pts[k];
+        const b = r.pts[k + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const len2 = dx * dx + dz * dz || 1;
+        const f = Math.min(1, Math.max(0, ((x - a.x) * dx + (z - a.z) * dz) / len2));
+        const d = Math.hypot(x - a.x - f * dx, z - a.z - f * dz);
+        if (d > reach) continue;
+        const y = deck.get(r.nodes[k])! + (deck.get(r.nodes[k + 1])! - deck.get(r.nodes[k])!) * f;
+        if (best === null || y > best) best = y;
+      }
+    }
+    return best;
+  };
+  return { roads, at, byNode, deck, deckAt };
+}
+
+export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork): RoadsResult {
+  const { roads, at, byNode, deck } = net;
+  const out = new ChunkMeshes(grid);
   const drape = (x: number, z: number) => terrain.heightAt(x, z);
   const km: Record<string, number> = {};
 
