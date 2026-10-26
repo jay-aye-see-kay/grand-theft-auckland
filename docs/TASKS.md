@@ -47,7 +47,7 @@ and verified.
   - Harbour plane, coastline and wharf edges. The car should splash and
     reset, not fall forever.
 - [ ] **T8 Attribution.** OSM and LINZ credits on the title screen.
-- [ ] **Milestone: tier 1 live.** Tell the owner, with what to test.
+- [ ] **Milestone: tier 1 live.** Add a phone test list to Questions, then carry on.
 
 ## Tier 2: recognisably Auckland
 
@@ -70,9 +70,11 @@ and verified.
   OSM; trees from DSM minus DEM. Use instancing.
 - [ ] **T13 Chunk streaming and a low-poly skyline for distant views.**
 - [ ] **T14 Minimap from road data.**
-- [ ] **Milestone: tier 2 live.**
+- [ ] **Milestone: tier 2 live.** Add a phone test list to Questions, then carry on.
 
 ## Tier 3: stretch
+
+After tier 3, add the next most valuable tasks here and keep going.
 
 - [ ] More areas: Ponsonby, Parnell, Grafton, Newmarket, Mt Eden.
 - [ ] Drivable Harbour Bridge to Devonport; motorways and Spaghetti Junction.

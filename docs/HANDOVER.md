@@ -137,6 +137,10 @@ assets/landmarks/*.ts     hand-made landmark models built in code like
 
 ## How to run this (orchestration)
 
+All work happens on `main` (CI deploys it to Pages). The owner wants this to
+run unattended and **never stop**: there is no finish line. When tier 3 is
+done, add the next most valuable tasks to TASKS.md and keep going.
+
 The owner wants this to run with minimal hand-holding. The orchestrator
 keeps its own context small and delegates the building to subagents.
 
@@ -159,12 +163,12 @@ keeps its own context small and delegates the building to subagents.
 5. **Then:** tick the task in TASKS.md (with a one-line note), commit, push,
    and confirm the Pages deploy went green.
 6. **Questions for the owner** go in the "Questions" section of TASKS.md.
-   Keep going on the defaults above instead of blocking. Tell the owner
-   once a milestone (end of tier 1 or tier 2) is live, with the link and
-   what to test on their phone.
+   Keep going on the defaults above instead of blocking. When a milestone
+   (end of tier 1 or tier 2) is live, add a short "what to test on your
+   phone" list to the Questions section, then carry straight on.
 7. **If the orchestrator's own context gets tight:** update TASKS.md with
-   state and notes, push, and say so. A fresh session can pick up from the
-   file.
+   state and notes and push, so a fresh session can pick up from the file.
+   Then carry on.
 
 **What only the owner can judge:** real-phone frame rate, whether the sounds
 and touch controls feel right, and whether it feels like Auckland. Ask for
