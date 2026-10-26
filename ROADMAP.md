@@ -1,5 +1,7 @@
 # Roadmap
 
+Active work: see `docs/HANDOVER.md` (the Auckland plan) and `docs/TASKS.md` (the checklist).
+
 ## What "feels like GTA III" means
 
 Not the scale. These five things:
