@@ -59,10 +59,10 @@ and verified.
   (Queens Wharf), splash + reset. Left: jagged pontoon slopes, saw-tooth distant coast.
   - Harbour plane, coastline and wharf edges. The car should splash and
     reset, not fall forever.
-- [ ] **T7b Performance pass.** Roads alone are 452k triangles and headless fps fell to
-  about 11. Simplify road strips (fewer samples on straight flat runs, merge footpath
-  and kerb), check triangle counts per view, add a `?debug` tris counter, and keep a
-  phone-class budget (aim < 300k triangles in view, < 100 draw calls). Smoke check it.
+- [x] **T7b Performance pass.** Done: street views ~117–120k tris, 28–30 calls; aerial ~116k,
+  35–41 calls (was 141). Roads 452k→148k, one draw call per chunk (`ChunkMesh`), 2 m ground
+  only near the player, colliders within 300 m, `?debug` perf overlay, `__game.view(...)` and
+  smoke budgets. Budgets and conventions for new geometry are in CLAUDE.md.
 - [x] **T8 Attribution.** Done: title screen (tap to play) with linked credits; README section.
 - [ ] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
   isn't recognisable, looks PS1 not PS2/3").** Overturns the flat-vertex-colour
