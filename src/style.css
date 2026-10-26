@@ -1,0 +1,191 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1410;
+  color: #fff;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
+
+#app,
+canvas {
+  position: fixed;
+  inset: 0;
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+#splash {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(40, 20, 50, 0.55), rgba(20, 10, 10, 0.85));
+  cursor: pointer;
+}
+
+#splash h1 {
+  margin: 0;
+  font-size: clamp(36px, 9vw, 84px);
+  line-height: 0.95;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  text-shadow: 0 4px 0 #000;
+}
+
+#splash h1 span {
+  color: #c79bff;
+}
+
+#splash .sub {
+  opacity: 0.75;
+  margin: 16px 0 28px;
+}
+
+#status {
+  font-weight: 700;
+  padding: 10px 22px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+}
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.speedo {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  font-weight: 900;
+  font-size: 40px;
+  text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.speedo small {
+  font-size: 14px;
+  margin-left: 4px;
+}
+
+#fps {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  left: max(16px, env(safe-area-inset-left));
+  font: 12px ui-monospace, monospace;
+  text-shadow: 0 1px 0 #000;
+}
+
+.keys {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  opacity: 0.8;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 #000;
+}
+
+/* Touch controls */
+.touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#app:has(.touch) .keys {
+  display: none;
+}
+
+#app:has(#splash:not(.hidden)) .touch {
+  display: none;
+}
+
+.stick {
+  position: absolute;
+  left: max(20px, env(safe-area-inset-left));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 180px;
+  height: 110px;
+  border-radius: 55px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stick-knob {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.btn {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-weight: 900;
+  font-size: 22px;
+  border-radius: 50%;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn.down {
+  background: rgba(199, 155, 255, 0.55);
+}
+
+.btn-gas {
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(40px, env(safe-area-inset-bottom));
+  width: 92px;
+  height: 92px;
+}
+
+.btn-brake {
+  right: calc(max(20px, env(safe-area-inset-right)) + 104px);
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 76px;
+  height: 76px;
+}
+
+.btn-handbrake {
+  right: calc(max(20px, env(safe-area-inset-right)) + 14px);
+  bottom: calc(max(40px, env(safe-area-inset-bottom)) + 108px);
+  width: 64px;
+  height: 64px;
+  font-size: 16px;
+}
+
+.btn-reset {
+  right: calc(max(20px, env(safe-area-inset-right)) + 6px);
+  top: calc(max(12px, env(safe-area-inset-top)) + 56px);
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
+}
