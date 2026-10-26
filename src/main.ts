@@ -31,6 +31,10 @@ const SOAK_CAR = 1.8;
 const SOAK_PLAYER = 1.2;
 /** How far to look for dry land to put them back on, m. */
 const SHORE_SEARCH = 300;
+/** Cars beyond this from the camera are drawn as just their body; their blob shadows go too, m. */
+const CAR_DETAIL = 120;
+/** Cars beyond this are not drawn at all (a few pixels in the haze), m. */
+const CAR_DRAW = 600;
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -93,6 +97,7 @@ async function main() {
     const car = new Car(world, spot.pos, spot.heading, spot.paint, spot.pitch, spot.roll);
     scene.add(car.object);
     const shadow = new THREE.Mesh(carShadow, shadowMat);
+    shadow.name = 'shadow';
     scene.add(shadow);
     /** Game time it went into the water, or null if it's dry. */
     return { car, shadow, frozen: false, soaked: null as number | null };
@@ -102,7 +107,9 @@ async function main() {
   const player = new Player(world, map.spawn.feet, map.spawn.heading);
   scene.add(player.object);
   const playerShadow = new THREE.Mesh(new THREE.CircleGeometry(0.4, 12).rotateX(-Math.PI / 2), shadowMat);
+  playerShadow.name = 'shadow';
   scene.add(playerShadow);
+  player.object.traverse((o) => (o.name = 'player'));
 
   const skids = new SkidMarks();
   scene.add(skids.mesh);
@@ -441,8 +448,12 @@ async function main() {
     const alpha = accumulator / FIXED_DT;
     for (const [n, { car, shadow }] of cars.entries()) {
       car.render(alpha);
-      const yaw = _euler.setFromQuaternion(car.object.quaternion, 'YXZ').y;
-      placeShadow(shadow, car.object.position, yaw, car.collider, 2.6);
+      const seen = car.object.position.distanceTo(camera.position);
+      car.setDetail(seen, CAR_DETAIL, CAR_DRAW);
+      if (seen < CAR_DETAIL) {
+        const yaw = _euler.setFromQuaternion(car.object.quaternion, 'YXZ').y;
+        placeShadow(shadow, car.object.position, yaw, car.collider, 2.6);
+      } else shadow.visible = false;
 
       // Skid marks from any sliding car, not just the one we're in.
       for (let i = 0; i < 4; i++) {
@@ -482,7 +493,9 @@ async function main() {
       if (player.stepped) audio.footstep();
     }
     player.stepped = false;
-    playerShadow.visible = !driving;
+    // On foot the camera is always close; this only hides them from far debug views.
+    player.object.visible = !driving && player.position.distanceTo(camera.position) < CAR_DETAIL;
+    playerShadow.visible = player.object.visible;
     speedoBox.classList.toggle('hidden', !driving);
     input.setCanEnter(!!nearby);
     prompt.textContent = nearby ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in') : '';
@@ -568,6 +581,27 @@ async function main() {
       groundHeight: (x: number, z: number) => map.heightAt(x, z),
       /** Fix the camera at `from` looking at `at` ([x, y, z]); pass null to go back to the chase camera. */
       lookFrom: (from: number[] | null, at: number[]) => (debugView = from ? { from, at } : null),
+      /**
+       * Triangles and meshes in the camera's view by kind (the first word of
+       * each mesh's name: terrain, buildings, roads...), for finding what
+       * eats the budget.
+       */
+      breakdown: () => {
+        const frustum = new THREE.Frustum().setFromProjectionMatrix(
+          new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+        );
+        const out: Record<string, { meshes: number; tris: number }> = {};
+        scene.traverseVisible((o) => {
+          if (!(o instanceof THREE.Mesh) || (o.frustumCulled && !frustum.intersectsObject(o))) return;
+          const g = o.geometry as THREE.BufferGeometry;
+          const count = Math.min(g.index ? g.index.count : g.attributes.position.count, g.drawRange.count);
+          const kind = (o.name || 'unnamed').split(' ')[0];
+          const e = (out[kind] ??= { meshes: 0, tris: 0 });
+          e.meshes++;
+          e.tris += Math.floor(count / 3);
+        });
+        return out;
+      },
       /** Names of the map's fixed views (performance budgets are measured from them). */
       views: () => Object.keys(map.views ?? {}),
       /** Fix the camera on one of the map's named views, its heights above the ground there. */

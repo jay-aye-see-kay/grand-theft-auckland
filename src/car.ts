@@ -60,6 +60,8 @@ export class Car {
   readonly object = new THREE.Group();
 
   private readonly wheelPivots: THREE.Group[] = [];
+  /** Wheels and lamp meshes: hidden at a distance, where only the body is worth a draw call. */
+  private readonly details: THREE.Object3D[] = [];
   private readonly wheelSpinners: THREE.Group[] = [];
   private readonly brakeLights: THREE.MeshStandardMaterial;
   private steerAngle = 0;
@@ -140,6 +142,13 @@ export class Car {
     model.root.position.y = MESH_OFFSET_Y;
     this.object.add(model.root);
     this.brakeLights = model.brakeLights;
+    const parts = model.root.children as THREE.Mesh[];
+    const size = (m: THREE.Mesh) => m.geometry.attributes.position.count;
+    const body = parts.reduce((a, b) => (size(b) > size(a) ? b : a));
+    for (const m of parts) {
+      m.name = 'car';
+      if (m !== body) this.details.push(m);
+    }
 
     for (const p of wheelPositions) {
       const pivot = new THREE.Group();
@@ -147,13 +156,25 @@ export class Car {
       const spinner = buildWheel();
       pivot.add(spinner);
       this.object.add(pivot);
+      spinner.traverse((o) => (o.name = 'car'));
       this.wheelPivots.push(pivot);
+      this.details.push(pivot);
       this.wheelSpinners.push(spinner);
     }
 
     this.syncPose();
     this.prevPos.copy(this.currPos);
     this.prevQuat.copy(this.currQuat);
+  }
+
+  /**
+   * Level of detail by distance from the camera: the whole car (1 + 7 draw
+   * calls) up close, just the body further out, nothing past `far`.
+   */
+  setDetail(distance: number, near: number, far: number): void {
+    this.object.visible = distance < far;
+    const detailed = distance < near;
+    if (this.details[0].visible !== detailed) for (const d of this.details) d.visible = detailed;
   }
 
   /** Signed speed along the car's nose, m/s. */
