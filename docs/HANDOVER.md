@@ -38,9 +38,10 @@ heavy for phones.
   Viaduct in the west, Grafton Gully in the east. Roughly bbox
   `174.752,-36.861,174.776,-36.839` (lon/lat), about 5 km² at **1:1
   scale**. The harbour bounds three sides, so the map edges are natural.
-- **Look:** stylised. Flat and vertex colours plus procedural facades, with
-  aerial photos used only to sample roof and ground colours. Revisit a
-  photo-textured ground later.
+- **Look:** target PS2/PS3-era GTA (San Andreas / IV), not PS1. The owner
+  dropped the "flat vertex colours only" rule: textures, procedural facade
+  atlases, baked lighting and aerial-photo ground are all fair game, within
+  the phone budget. Street level must read as Auckland (see T8b).
 - **Landmarks, in priority order:**
   1. Sky Tower
   2. Ferry Building
