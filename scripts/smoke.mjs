@@ -187,8 +187,17 @@ try {
       return { start: start.cars[0], end: last.cars[0], minClear, maxClear, maxStep, kmh: last.speedKmh };
     };
 
-    await page.keyboard.press('KeyF');
-    await page.waitForTimeout(300);
+    // Stand right by the purple Corolla's driver's door (right side, +z at
+    // heading 0) and press F until we're in: slow CI frames can eat a press.
+    {
+      const car = (await state(page)).cars[0];
+      await game('placePlayer', car[0], car[2] + 1.8, 0);
+      for (let tries = 0; tries < 5 && (await state(page)).mode !== 'car'; tries++) {
+        await page.waitForTimeout(300);
+        await page.keyboard.press('KeyF');
+        await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 1500 }).catch(() => {});
+      }
+    }
     check((await state(page)).mode === 'car', 'gets in for the hill climb');
 
     // Upper Queen St towards K Road: ~10% grade, crossing the z = 1376 seam.
@@ -207,16 +216,22 @@ try {
     check(r.minClear > 0.2 && r.maxClear < 1.4 && r.maxStep < 0.5, `no seam bump on the flat (clearance ${r.minClear.toFixed(2)}..${r.maxClear.toFixed(2)} m, worst jump ${r.maxStep.toFixed(2)})`);
 
     // Buildings: loaded with the terrain, seated on it, and solid. The Chief
-    // Post Office (Britomart station, tagged 20 m) has its east wall at
-    // x = -24.6 where z = -38, with open ground east of it.
+    // Post Office (Britomart station, tagged 20 m) has a slanted east wall
+    // from (-23.4, -43.4) to (-41.2, 8.8), crossing z = -38 at x = -25.2,
+    // with open ground east of it. Anything sliding along it moves in x and
+    // z, so penetration is measured as distance from the wall's line.
     s = await state(page);
     check(s.buildingChunks >= 9, `building chunks loaded near spawn (${s.buildingChunks})`);
     const cpo = await game('probe', -50.3, -20.3);
     const cpoRoof = cpo.top === null ? NaN : cpo.top - cpo.ground;
     check(cpoRoof > 15 && cpoRoof < 25, `Chief Post Office roof ${cpoRoof.toFixed(1)} m above the ground (tagged 20 m)`);
-    const WALL_X = -24.6;
-    const ram = async (start, keys, ms) => {
-      let minX = start[0];
+    const WALL = [[-23.4, -43.4], [-41.2, 8.8]];
+    const wallLen = Math.hypot(WALL[1][0] - WALL[0][0], WALL[1][1] - WALL[0][1]);
+    /** Signed distance from the wall line, positive on the open (east) side. */
+    const wallDist = (p) =>
+      ((WALL[1][1] - WALL[0][1]) * (p[0] - WALL[0][0]) - (WALL[1][0] - WALL[0][0]) * (p[2] - WALL[0][1])) / wallLen;
+    const ram = async (keys, ms) => {
+      let minD = Infinity;
       let peak = 0;
       for (const k of keys) await page.keyboard.down(k);
       const t0 = Date.now();
@@ -225,16 +240,17 @@ try {
         await page.waitForTimeout(80);
         last = await state(page);
         const p = last.mode === 'car' ? last.cars[0] : last.player;
-        minX = Math.min(minX, p[0]);
+        minD = Math.min(minD, wallDist(p));
         peak = Math.max(peak, last.mode === 'car' ? last.speedKmh : 0);
       }
       for (const k of keys) await page.keyboard.up(k);
-      return { minX, peak, last };
+      return { minD, peak, last };
     };
     await game('teleportCar', 0, -2, -38, Math.PI);
     await page.waitForTimeout(600);
-    r = await ram([-2], ['KeyW'], 6000);
-    check(r.peak > 15 && r.minX > WALL_X, `car can't drive through a building (hit at ${r.peak.toFixed(0)} km/h, got to x=${r.minX.toFixed(1)}, wall at ${WALL_X})`);
+    r = await ram(['KeyW'], 6000);
+    // Chassis half-length is 2.1 m: its centre should stop about that far out.
+    check(r.peak > 15 && r.minD > 1, `car can't drive through a building (hit at ${r.peak.toFixed(0)} km/h, centre stopped ${r.minD.toFixed(2)} m from the wall)`);
     check(r.last.speedKmh < 5, `car stops at the wall (${r.last.speedKmh.toFixed(1)} km/h)`);
     await page.screenshot({ path: `${shots}/9-car-at-wall.png` });
 
@@ -244,8 +260,9 @@ try {
     await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 8000 }).catch(() => {});
     await game('placePlayer', -5, -38, Math.PI);
     await page.waitForTimeout(300);
-    r = await ram([-5], ['KeyW', 'ShiftLeft'], 5000);
-    check(r.last.mode === 'foot' && r.minX < WALL_X + 3 && r.minX > WALL_X, `player can't walk through a building (got to x=${r.minX.toFixed(1)}, wall at ${WALL_X})`);
+    r = await ram(['KeyW', 'ShiftLeft'], 5000);
+    // Capsule radius is 0.3 m; it should reach the wall and stay outside it.
+    check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2, `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall)`);
 
     // Draw calls: a street view up Queen St and an aerial view over the CBD.
     const budget = 150;
