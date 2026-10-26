@@ -35,8 +35,9 @@ export function landSurface(t: Tags): Surface | null {
   return null;
 }
 
-/** Pedestrian squares and paved areas mapped as highway areas. */
+/** Pedestrian squares and paved areas mapped as highway areas, and pier decks. */
 export function isPavedArea(t: Tags): boolean {
+  if (t.man_made === 'pier') return true; // decks: see piers.ts
   if (t.area !== 'yes') return t['area:highway'] === 'pedestrian' || t['area:highway'] === 'footway';
   return t.highway === 'pedestrian' || t.highway === 'footway';
 }

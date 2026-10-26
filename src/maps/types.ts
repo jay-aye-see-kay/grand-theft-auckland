@@ -48,6 +48,16 @@ export interface GameMap {
   sync(): void;
   /** Surface under a point ('road', 'footpath', 'grass', ...), null if unknown or not loaded. */
   surfaceAt?(x: number, z: number): string | null;
+  /**
+   * Open water: a sea-level plane wherever the ground is lower. Outside the
+   * map's bounds it's drawn only north of `seaSouth` (the harbour side).
+   */
+  readonly water?: { level: number; bounds: { minX: number; minZ: number; maxX: number; maxZ: number }; seaSouth: number };
+  /**
+   * The nearest loaded ground point within `maxDist` of (x, z) that `ok`
+   * accepts (given its surface and height), or null.
+   */
+  nearest?(x: number, z: number, maxDist: number, ok: (x: number, z: number, surface: string, height: number) => boolean): { x: number; z: number } | null;
   /** Extra numbers for ?debug and the smoke test. */
   debugInfo(): Record<string, number>;
 }

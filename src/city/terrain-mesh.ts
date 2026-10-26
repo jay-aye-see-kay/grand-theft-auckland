@@ -25,7 +25,9 @@ const GRASS_LOW = new THREE.Color(0x5d8a43);
 const GRASS_HIGH = new THREE.Color(0x7f9d4b);
 const EARTH = new THREE.Color(0x8c6a45);
 const SAND = new THREE.Color(0xb9a77a);
-const SEABED = new THREE.Color(0x2f5f72);
+const SEABED = new THREE.Color(0x24363a);
+/** Basalt and concrete of the sea walls and wharf edges. */
+const SEAWALL = new THREE.Color(0x5d5a54);
 // Land use (see SURFACES in format.ts). Roads, footpaths and paving match the
 // roads layer's colours, so coarse terrain far away still shows the streets.
 const PAVED = new THREE.Color(0x8e8b84);
@@ -238,11 +240,13 @@ function vertexColour(
  * Stylised ground colour by land use: paved grey in the city (going green
  * on steep banks, which are planted or overgrown), green in parks and
  * gardens (browner as it steepens, sandy at the waterline), dark green bush,
- * and the road surfaces. Teal for the harbour floor. Low-frequency noise
+ * and the road surfaces. Stone for sea walls, dark for the harbour floor. Low-frequency noise
  * anchored to world position breaks up large areas and matches across seams.
  */
 function groundColour(x: number, z: number, y: number, ny: number, seaShelf: number, surface: number, out: THREE.Color): THREE.Color {
   if (y <= seaShelf + 0.01) return out.copy(SEABED).multiplyScalar(0.94 + 0.12 * valueNoise(x / 60, z / 60));
+  // The drop from a wharf or sea wall to the harbour floor: stone, not a grassy bank.
+  if (y < 5 && ny < 0.85) return out.copy(SEAWALL).multiplyScalar(0.85 + 0.25 * valueNoise(x / 7, z / 7));
   const steep = THREE.MathUtils.smoothstep(1 - ny, 0.04, 0.3); // ~16 deg starts browning, ~45 deg is bare
   const patch = valueNoise(x / 45, z / 45) * 0.6 + valueNoise(x / 11, z / 11) * 0.4;
   // Nothing is paved up a wall: a street's edge that spills over a cutting

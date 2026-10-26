@@ -31,7 +31,7 @@ export interface CityManifest {
     apron: number;
     /** Samples per side including both edges and the apron. */
     samples: number;
-    /** Height the harbour floor is flattened to (until water exists). */
+    /** Height the harbour floor is flattened to, well under the water. */
     seaShelf: number;
     encoding: 'gtat1+deflate';
   };
@@ -43,6 +43,8 @@ export interface CityManifest {
     samples: number;
     encoding: 'gtag1+deflate';
   };
+  /** The harbour: a water plane at this height (metres above sea level) wherever the ground is lower. */
+  water?: { level: number };
   /** Buildings marked as landmarks in overrides/<area>.json, for hand-made models. */
   landmarks?: LandmarkInfo[];
   chunks: ChunkInfo[];

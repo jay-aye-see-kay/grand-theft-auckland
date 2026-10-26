@@ -12,9 +12,15 @@ interface CityParking {
 
 // The real Auckland CBD, generated offline by tools/citygen into
 // public/city/<area>/ and streamed in by chunk: LiDAR terrain tinted by
-// land use, OSM buildings, and OSM roads draped on the terrain.
+// land use, OSM buildings, OSM roads draped on the terrain, and the harbour.
 
 const AREA = 'cbd';
+/**
+ * Outside the map, the harbour is drawn only north of this z (local metres):
+ * Westhaven to the west and the port to the east, but not the suburbs
+ * beyond the southern edges.
+ */
+const SEA_SOUTH = 250;
 /** Ground within this radius of the spawn is loaded before play starts. */
 const PRELOAD_RADIUS = 300;
 
@@ -73,6 +79,9 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World): Pro
     update: (focus) => terrain.update(focus.x, focus.z),
     sync: () => {},
     surfaceAt: (x, z) => terrain.surfaceAt(x, z),
+    // The harbour bounds the map to the north; beyond its other edges is land.
+    water: manifest.water && { level: manifest.water.level, bounds: b, seaSouth: SEA_SOUTH },
+    nearest: (x, z, maxDist, ok) => terrain.nearest(x, z, maxDist, ok),
     debugInfo: () => terrain.stats(),
   };
 }

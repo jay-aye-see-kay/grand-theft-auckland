@@ -6,7 +6,7 @@
 // parking all see the same corrected data. The rest are directives the
 // generator acts on itself: `delete` drops the element, `landmark` records
 // it in the manifest (and `hide` leaves it out of the mesh), `block` adds an
-// invisible collider in its shape, and `deck` pins bridge deck heights.
+// invisible collider in its shape, and `deck` pins bridge or pier heights.
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { OsmData, Tags } from './osm.ts';
@@ -36,8 +36,12 @@ export type Override = {
    * building's height (areas) or 2 m; a number is the height in metres.
    */
   block?: boolean | number;
-  /** Bridge deck heights in metres above sea level, one per node (null leaves that node to the generator). */
-  deck?: (number | null)[];
+  /**
+   * Heights in metres above sea level. On a bridge way: one per node (null
+   * leaves that node to the generator). On a pier area: its deck height, or
+   * false to leave the pier out.
+   */
+  deck?: number | false | (number | null)[];
 };
 
 /** "way/123" or "relation/456". */

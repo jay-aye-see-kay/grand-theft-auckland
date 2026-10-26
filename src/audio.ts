@@ -2,6 +2,7 @@
 // Engine: two detuned oscillators through a throttle-driven low-pass filter,
 // pitch following a fake 5-speed gearbox. Tyres: band-passed noise.
 // Crashes: a noise burst plus a low thump. Footsteps: tiny filtered clicks.
+// Splashes: a falling wash of noise and a gloop.
 //
 // Browsers only allow audio after a user gesture, so nothing is created
 // until unlock() is called from the start tap/click.
@@ -155,6 +156,40 @@ export class GameAudio {
     thump.connect(tg).connect(this.master);
     thump.start(t);
     thump.stop(t + 0.32);
+  }
+
+  /** Something hits the water: a wash of low noise, a sharp slap and a gloop. strength ~0..1. */
+  splash(strength: number): void {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const s = Math.min(1, Math.max(0.2, strength));
+
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.playbackRate.value = 0.5;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(2500 + s * 2500, t);
+    filter.frequency.exponentialRampToValueAtTime(300, t + 1.2);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.35 + s * 0.45, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.3);
+    src.connect(filter).connect(g).connect(this.master);
+    src.start(t, Math.random() * 0.5, 1.4);
+
+    const gloop = ctx.createOscillator();
+    gloop.type = 'sine';
+    gloop.frequency.setValueAtTime(320, t + 0.05);
+    gloop.frequency.exponentialRampToValueAtTime(90, t + 0.35);
+    const gg = ctx.createGain();
+    gg.gain.setValueAtTime(0.0001, t);
+    gg.gain.exponentialRampToValueAtTime(0.25 * s, t + 0.07);
+    gg.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    gloop.connect(gg).connect(this.master);
+    gloop.start(t);
+    gloop.stop(t + 0.42);
   }
 
   footstep(): void {

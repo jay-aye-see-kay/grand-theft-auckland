@@ -75,9 +75,17 @@ try {
 
     // Walk away from the car and back.
     const p0 = s.player;
+    // Hold until it has moved (slow CI frames run the sim behind real time),
+    // then walk back for as long.
     await page.keyboard.down('KeyD');
+    const walkStart = Date.now();
     await page.waitForTimeout(1500);
+    await page.waitForFunction(([x, z]) => {
+      const p = window.__game.state().player;
+      return Math.hypot(p[0] - x, p[2] - z) > 2;
+    }, [p0[0], p0[2]], { timeout: 3000 }).catch(() => {});
     await page.keyboard.up('KeyD');
+    const walkMs = Date.now() - walkStart;
     s = await state(page);
     check(dist(p0, s.player) > 1.5, `walks (moved ${dist(p0, s.player).toFixed(1)} m)${tag}`);
     const above = s.player[1] - s.ground;
@@ -96,7 +104,9 @@ try {
     await page.waitForTimeout(600);
 
     await page.keyboard.down('KeyA');
-    await page.waitForTimeout(1500);
+    // Back until it's in reach of the car again (or as long as it walked away, and a bit).
+    await page.waitForTimeout(walkMs / 2);
+    await page.waitForFunction(() => window.__game.state().nearCar, null, { timeout: walkMs }).catch(() => {});
     await page.keyboard.up('KeyA');
     s = await state(page);
     check(s.nearCar, `walks back to the car${tag}`);
@@ -418,6 +428,72 @@ try {
     // Capsule radius is 0.3 m; it should reach the wall and stay outside it.
     check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2, `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall)`);
 
+    // Harbour: water at sea level over a deep harbour floor, Queens Wharf's
+    // deck (dropped by the LiDAR, laid back from OSM), and the car and the
+    // player go off the end of it, splash, and are put back on dry land.
+    {
+      s = await state(page);
+      const sea = await game('probe', -101.3, -401.7);
+      check(s.water === 0 && sea.ground < -4 && sea.top < 0, `harbour water at sea level (${s.water} m) over the harbour floor (${sea.ground.toFixed(1)} m)`);
+      const deck = await game('probe', 20.3, -250.3);
+      check(deck.ground > 2 && deck.ground < 4.5, `Queens Wharf deck at ${deck.ground.toFixed(1)} m`);
+
+      const dryLand = async (pos) => {
+        const p = await game('probe', pos[0], pos[2]);
+        return p.ground > 0.4 && Math.abs(pos[1] - p.ground) < 1.5 ? p : null;
+      };
+      // Into the car (parked by the Chief Post Office after the wall test).
+      const car = (await state(page)).cars[0];
+      await game('placePlayer', car[0], car[2] + 1.8, 0);
+      for (let tries = 0; tries < 5 && (await state(page)).mode !== 'car'; tries++) {
+        await page.waitForTimeout(300);
+        await page.keyboard.press('KeyF');
+        await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 1500 }).catch(() => {});
+      }
+      // On Queens Wharf, north of Shed 10, facing east: 32 m of open deck to the edge.
+      await game('teleportCar', 0, 5, -250, 0);
+      await page.waitForTimeout(600);
+      const before = (await state(page)).splashes;
+      await page.keyboard.down('KeyW');
+      await page.waitForFunction((n) => window.__game.state().splashes > n, before, { timeout: 25000 }).catch(() => {});
+      await page.keyboard.up('KeyW');
+      s = await state(page);
+      const splashed = s.splashes > before;
+      await page.screenshot({ path: `${shots}/13-car-splash.png` });
+      const t0 = Date.now();
+      let back = null;
+      while (splashed && Date.now() - t0 < 15000 && !back) {
+        await page.waitForTimeout(250);
+        s = await state(page);
+        if (!s.soaked) back = await dryLand(s.cars[0]);
+      }
+      check(splashed && s.mode === 'car', `car driven off Queens Wharf splashes into the harbour (${s.splashes - before} splash, ${s.mode})`);
+      check(!!back && back.surface === 'road', `car is back on a road ${((Date.now() - t0) / 1000).toFixed(1)} s later (${s.cars[0].map((v) => v.toFixed(0)).join(', ')}, ${back?.surface})`);
+      await page.screenshot({ path: `${shots}/14-car-back-on-land.png` });
+
+      // On foot: walk off the same wharf.
+      for (let tries = 0; tries < 4 && (await state(page)).mode !== 'foot'; tries++) {
+        await page.keyboard.press('KeyF');
+        await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 4000 }).catch(() => {});
+      }
+      await game('placePlayer', 22, -250, 0);
+      await page.waitForTimeout(400);
+      const before2 = (await state(page)).splashes;
+      await page.keyboard.down('KeyW');
+      await page.keyboard.down('ShiftLeft');
+      await page.waitForFunction((n) => window.__game.state().splashes > n, before2, { timeout: 20000 }).catch(() => {});
+      await page.keyboard.up('ShiftLeft');
+      await page.keyboard.up('KeyW');
+      const t1 = Date.now();
+      let ashore = null;
+      while (Date.now() - t1 < 10000 && !ashore) {
+        await page.waitForTimeout(250);
+        s = await state(page);
+        if (!s.soaked && s.splashes > before2) ashore = await dryLand(s.player);
+      }
+      check(s.splashes > before2 && !!ashore, `player who walks off the wharf splashes and is back ashore (${s.player.map((v) => v.toFixed(0)).join(', ')}, ground ${ashore?.ground.toFixed(1)})`);
+    }
+
     // Draw calls: a street view up Queen St and an aerial view over the CBD.
     const budget = 150;
     for (const [name, from, at] of [['queen-st', [-120, 6, 40], [-240, 18, 455]], ['aerial', [0, 250, -250], [-300, 0, 500]]]) {
@@ -452,7 +528,13 @@ try {
     const before = (await state(page)).player;
     await touch('touchStart', cy);
     await touch('touchMove', cy - 50);
+    const touchStart = Date.now();
     await page.waitForTimeout(1000);
+    await page.waitForFunction(([x, z]) => {
+      const p = window.__game.state().player;
+      return Math.hypot(p[0] - x, p[2] - z) > 1.5;
+    }, [before[0], before[2]], { timeout: 3000 }).catch(() => {});
+    const touchMs = Date.now() - touchStart;
     await touch('touchEnd');
     const after = (await state(page)).player;
     check(dist(before, after) > 1, `touch stick walks (moved ${dist(before, after).toFixed(1)} m)`);
@@ -460,7 +542,7 @@ try {
     // Walk back and get in with the button.
     await touch('touchStart', cy);
     await touch('touchMove', cy + 50);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(touchMs);
     await touch('touchEnd');
     await page.locator('.btn-enter').tap({ force: true }); // it pulses, so never "stable"
     await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 3000 }).catch(() => {});

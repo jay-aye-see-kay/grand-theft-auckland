@@ -25,6 +25,7 @@ buildings wrong); use an override for one-offs.
 | `layer`, `bridge` | roads | Set those tags (a bridge is lifted onto a deck). |
 | `tags` | anything | Any other tag edits, e.g. `{ "building:min_level": null }` (null removes). |
 | `deck` | bridge way | Deck height per node, metres above sea level (`null` = let the generator decide). Pinned nodes act as anchors; the rest is graded between them. |
+| `deck` | `man_made=pier` area | Deck height of a pier the LiDAR missed, metres above sea level (default: the dry part of it, else 2.8 m; floating pontoons 0.5 m). `false` leaves it out. |
 | `landmark` | buildings | Id like `"sky-tower"`: listed in `manifest.json` (`landmarks`: footprint, base, top) for hand-made models (T9). The OSM shape is still drawn unless `hide` is set. Several elements may share an id. |
 | `hide` | buildings | Leave it (and its parts) out of the mesh. Its collider stays unless `block` is `false`. |
 | `block` | areas, lines | An invisible collider. An area (closed way or multipolygon) becomes a solid prism from the ground; a line becomes a 0.5 m wall along it (a road block, a bollard line). `true` = 2 m high, a number = that height. |

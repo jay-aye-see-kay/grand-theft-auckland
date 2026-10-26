@@ -14,14 +14,16 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeTerrain, GROUND_APRON, type ChunkInfo, type CityManifest } from '../../src/city/format.ts';
-import { buildBuildings } from './buildings.ts';
+import { buildBuildings, MeshBuilder } from './buildings.ts';
 import { buildParking, writeParking } from './parking.ts';
 import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
+import { layPiers } from './piers.ts';
+import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, roadNetwork } from './roads.ts';
-import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, SAMPLES, SEA_SHELF, TerrainSampler } from './terrain.ts';
+import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, SAMPLES, SEA_SHELF, TerrainSampler, WATER_LEVEL } from './terrain.ts';
 
 const AREA = 'cbd';
 const OUT = fileURLToPath(new URL(`../../public/city/${AREA}/`, import.meta.url));
@@ -32,6 +34,9 @@ const overrides = Overrides.load(AREA);
 const stale = overrides.apply(data.osm);
 for (const w of stale) console.warn(`overrides/${AREA}.json: ${w}`);
 console.log(`Overrides: ${overrides.size} entries, ${stale.length} stale`);
+// Piers the LiDAR sees through go back into the DEM before anything samples it.
+const piers = layPiers(data.osm, data.dem, overrides);
+console.log(`Piers: ${piers.piers} decks laid over the water (${piers.pixels} DEM pixels)`);
 const grid = chunkGrid(CBD_BBOX);
 console.log(`Grid ${grid.nx}x${grid.nz} chunks of ${CHUNK_SIZE} m from x0=${grid.x0} z0=${grid.z0}`);
 
@@ -52,6 +57,16 @@ console.log(
 );
 const tallest = blds.buildings.slice().sort((a, b) => b.top - b.base - (a.top - a.base)).slice(0, 8);
 console.log(`Tallest: ${tallest.map((b) => `${b.key} ${(b.top - b.base).toFixed(0)} m`).join(', ')}`);
+// Sea walls along the traced coastline, in the buildings layer (always drawn, solid).
+const walls = buildSeawalls(data.dem, grid, terrainSampler, (x, z) => {
+  const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+  const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+  if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+  let mb = blds.chunks.get(`${i},${j}`);
+  if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
+  return mb;
+});
+console.log(`Sea walls: ${walls.km.toFixed(1)} km along ${walls.lines} coastlines`);
 const ground = new GroundRaster(grid);
 const landUse = paintLandUse(data.osm, ground);
 console.log(`Land use: ${Object.entries(landUse).map(([k, n]) => `${n} ${k}`).join(', ')} polygons`);
@@ -127,6 +142,7 @@ const manifest: CityManifest = {
   },
   terrain: { cellSize: CELL_SIZE, apron: APRON, samples: SAMPLES, seaShelf: SEA_SHELF, encoding: 'gtat1+deflate' },
   ground: { apron: GROUND_APRON, samples: GROUND_SAMPLES, encoding: 'gtag1+deflate' },
+  water: { level: WATER_LEVEL },
   landmarks: blds.landmarks,
   chunks,
 };

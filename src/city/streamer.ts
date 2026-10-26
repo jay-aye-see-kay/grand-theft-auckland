@@ -118,6 +118,36 @@ export class ChunkStreamer {
     return SURFACES[g.classes[r * g.n + c]] ?? null;
   }
 
+  /**
+   * The nearest loaded lattice point to (x, z), within `maxDist`, that
+   * `ok(x, z, surface, height)` accepts, searching outwards in square rings
+   * of lattice points. Null if none (or nothing loaded nearby).
+   */
+  nearest(x: number, z: number, maxDist: number, ok: (x: number, z: number, surface: Surface, height: number) => boolean): { x: number; z: number } | null {
+    const cell = this.manifest.terrain.cellSize;
+    const c0 = Math.round(x / cell);
+    const r0 = Math.round(z / cell);
+    let best: { x: number; z: number; d: number } | null = null;
+    for (let ring = 0; ring * cell <= maxDist; ring++) {
+      // Once a hit is closer than anything this ring can hold, it's the answer.
+      if (best && best.d < (ring - 1) * cell) break;
+      for (let dr = -ring; dr <= ring; dr++) {
+        const edge = Math.abs(dr) === ring;
+        for (let dc = -ring; dc <= ring; dc += edge ? 1 : 2 * ring) {
+          const px = (c0 + dc) * cell;
+          const pz = (r0 + dr) * cell;
+          const d = Math.hypot(px - x, pz - z);
+          if (d > maxDist || (best && d >= best.d)) continue;
+          const surface = this.surfaceAt(px, pz);
+          if (surface === null) continue;
+          if (ok(px, pz, surface, this.heightAt(px, pz))) best = { x: px, z: pz, d };
+          if (ring === 0) break;
+        }
+      }
+    }
+    return best && { x: best.x, z: best.z };
+  }
+
   hasCollider(x: number, z: number): boolean {
     return !!this.slotAt(x, z)?.chunk?.hasCollider;
   }

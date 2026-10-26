@@ -67,3 +67,12 @@ export function sampleLocal(r: Raster, x: number, z: number): number {
   const p = localToNztm(x, z);
   return sampleNztm(r, p.e, p.n);
 }
+
+/** The value of the pixel containing a local (x, z) point (no interpolation). NaN outside. */
+export function pixelLocal(r: Raster, x: number, z: number): number {
+  const p = localToNztm(x, z);
+  const c = Math.floor((p.e - r.west) / r.res);
+  const row = Math.floor((r.north - p.n) / r.res);
+  if (c < 0 || row < 0 || c >= r.width || row >= r.height) return NaN;
+  return r.data[row * r.width + c];
+}

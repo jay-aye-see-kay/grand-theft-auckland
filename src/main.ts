@@ -8,6 +8,8 @@ import { Input } from './input.ts';
 import { Player } from './player.ts';
 import { SkidMarks } from './skids.ts';
 import { Sky } from './sky.ts';
+import { Splash } from './splash.ts';
+import { Water } from './city/water.ts';
 import { loadMap } from './maps/index.ts';
 import './style.css';
 
@@ -22,6 +24,13 @@ const FALL_LIMIT = -30;
 const UNDERGROUND = 2;
 /** Anything that wanders this far outside the map gets brought back in. */
 const OUT_OF_BOUNDS = 40;
+/** In the water once a car's centre (or the player's feet) is this far under the surface, m. */
+const SUBMERGED = 0.3;
+/** How long a car or the player stays in the water before being fished out onto dry land, s. */
+const SOAK_CAR = 1.8;
+const SOAK_PLAYER = 1.2;
+/** How far to look for dry land to put them back on, m. */
+const SHORE_SEARCH = 300;
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -67,6 +76,14 @@ async function main() {
   const skyDome = new Sky(sky, atmosphere.far * 0.9);
   scene.add(skyDome.mesh);
 
+  // The harbour (Auckland only), reflecting a sky a little bluer than the haze.
+  const water = map.water
+    ? new Water(map.water.level, sky.clone().lerp(new THREE.Color(0x8fb0cc), 0.35), sun.position, map.water.bounds, map.water.seaSouth)
+    : null;
+  if (water) scene.add(water.mesh);
+  const splashes = new Splash();
+  scene.add(splashes.points);
+
   // Cheap blob shadows instead of real-time shadow maps.
   const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false });
   const carShadow = new THREE.PlaneGeometry(4.6, 2.1).rotateX(-Math.PI / 2);
@@ -76,7 +93,8 @@ async function main() {
     scene.add(car.object);
     const shadow = new THREE.Mesh(carShadow, shadowMat);
     scene.add(shadow);
-    return { car, shadow, frozen: false };
+    /** Game time it went into the water, or null if it's dry. */
+    return { car, shadow, frozen: false, soaked: null as number | null };
   });
 
   // Start on foot by the driver's door (right-hand drive) of the purple Corolla.
@@ -161,6 +179,81 @@ async function main() {
     if (Math.hypot(c.x - p.x, c.z - p.z) > OUT_OF_BOUNDS) return true;
     const ground = map.heightAt(p.x, p.z);
     return !Number.isNaN(ground) && p.y < ground - UNDERGROUND;
+  };
+
+  // ---- In the harbour: splash, sink for a moment, then back on dry land.
+  let clock = 0;
+  let playerSoaked: number | null = null;
+
+  /** Under the water surface, over ground that's under it too (not a low spot inland). */
+  const inWater = (x: number, y: number, z: number) => {
+    if (!water || y > water.level - SUBMERGED) return false;
+    const ground = map.heightAt(x, z);
+    return !Number.isNaN(ground) && water.covers(ground);
+  };
+
+  const makeSplash = (x: number, z: number, strength: number, loud: boolean) => {
+    if (!water) return;
+    splashes.burst(_p.set(x, water.level, z), strength);
+    // Only the one you're driving (or yourself) is loud; others are heard faintly.
+    audio.splash(loud ? strength : strength * 0.3);
+  };
+
+  /** Dry, level, open ground (no building on it), above the water. */
+  const dryGround = (x: number, z: number, h: number, minAbove: number) => {
+    if (!water || Number.isNaN(h) || h < water.level + minAbove) return false;
+    for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2]]) {
+      const n = map.heightAt(x + dx, z + dz);
+      if (Number.isNaN(n) || Math.abs(n - h) > 0.6) return false;
+    }
+    const hit = world.castRay(new RAPIER.Ray({ x, y: h + 40, z }, down), 80, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
+    return !hit || Math.abs(h + 40 - hit.timeOfImpact - h) < 0.4;
+  };
+
+  /** Which way along the road at (x, z): the longest run of road, preferring to face away from `from`. */
+  const roadHeading = (x: number, z: number, from: { x: number; z: number }) => {
+    const ax = x - from.x;
+    const az = z - from.z;
+    const al = Math.hypot(ax, az) || 1;
+    let best = Math.atan2(-az, ax);
+    let bestScore = -Infinity;
+    for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2;
+      const dx = Math.cos(a);
+      const dz = Math.sin(a);
+      let run = 0;
+      while (run < 8 && map.surfaceAt?.(x + dx * 2 * (run + 1), z + dz * 2 * (run + 1)) === 'road') run++;
+      const score = run + 0.5 * ((dx * ax + dz * az) / al);
+      if (score > bestScore) {
+        bestScore = score;
+        best = Math.atan2(-dz, dx);
+      }
+    }
+    return best;
+  };
+
+  /** Out of the water onto the nearest road (or any dry ground), facing along it. */
+  const fishOutCar = (c: (typeof cars)[number]) => {
+    const t = c.car.body.translation();
+    const road = map.nearest?.(t.x, t.z, SHORE_SEARCH, (x, z, surface, h) => surface === 'road' && dryGround(x, z, h, 0.5));
+    const spot = road ?? map.nearest?.(t.x, t.z, SHORE_SEARCH, (x, z, _s, h) => dryGround(x, z, h, 0.5)) ?? map.spawn.feet;
+    const ground = map.heightAt(spot.x, spot.z);
+    c.car.place(new THREE.Vector3(spot.x, (Number.isNaN(ground) ? 0 : ground) + 1, spot.z), roadHeading(spot.x, spot.z, t));
+    c.car.body.setLinearDamping(0.05);
+    c.car.body.setAngularDamping(0.6);
+    c.soaked = null;
+    if (c.car === driving) chase.snap();
+  };
+
+  const fishOutPlayer = () => {
+    const p = player.position;
+    const spot = map.nearest?.(p.x, p.z, SHORE_SEARCH, (x, z, _s, h) => dryGround(x, z, h, 0.3)) ?? map.spawn.feet;
+    const ground = map.heightAt(spot.x, spot.z);
+    // Face inland: away from where they went in.
+    const heading = Math.atan2(-(spot.z - p.z), spot.x - p.x);
+    player.place(new THREE.Vector3(spot.x, (Number.isNaN(ground) ? 0 : ground) + 0.05, spot.z), heading);
+    playerSoaked = null;
+    chase.snap();
   };
 
   /** Fell out of the world: put it back on the ground, just inside the map. */
@@ -264,6 +357,28 @@ async function main() {
     const moveZ = Math.sin(cy) * input.moveY + Math.cos(cy) * input.moveX;
 
     map.update(debugView ? _p.fromArray(debugView.from) : driving ? driving.object.position : player.position);
+    clock += frameDt;
+    // Into the harbour: a splash, a moment sinking (heavily damped, like
+    // water), then back on the nearest road.
+    for (const c of cars) {
+      if (c.frozen) continue;
+      const p = c.car.body.translation();
+      if (c.soaked === null && inWater(p.x, p.y, p.z)) {
+        c.soaked = clock;
+        const v = c.car.body.linvel();
+        makeSplash(p.x, p.z, Math.hypot(v.x, v.y, v.z) / 12, c.car === driving);
+        c.car.body.setLinearDamping(2.5);
+        c.car.body.setAngularDamping(3);
+      } else if (c.soaked !== null && clock - c.soaked > SOAK_CAR) fishOutCar(c);
+    }
+    if (!driving) {
+      const p = player.position;
+      // Feet just under the surface is enough: they may be stuck on the drop by the sea wall.
+      if (playerSoaked === null && inWater(p.x, p.y + SUBMERGED - 0.15, p.z)) {
+        playerSoaked = clock;
+        makeSplash(p.x, p.z, 0.5, true);
+      } else if (playerSoaked !== null && clock - playerSoaked > SOAK_PLAYER) fishOutPlayer();
+    } else playerSoaked = null;
     // Freeze anything standing on ground that hasn't streamed in yet, rather
     // than let it fall through the world.
     for (const c of cars) {
@@ -333,6 +448,7 @@ async function main() {
       car.impact = 0;
     }
     skids.flush();
+    splashes.update(frameDt);
 
     if (driving) {
       input.consumeLook(frameDt); // camera stays behind the car
@@ -360,11 +476,17 @@ async function main() {
     input.setCanEnter(!!nearby);
     prompt.textContent = nearby ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in') : '';
 
+    // Don't follow a sinking car under the water: watch from just above it.
+    if (water && camera.position.y < water.level + 0.6) {
+      const ground = map.heightAt(camera.position.x, camera.position.z);
+      if (!Number.isNaN(ground) && water.covers(ground)) camera.position.y = water.level + 0.6;
+    }
     if (debugView) {
       camera.position.fromArray(debugView.from);
       camera.lookAt(new THREE.Vector3().fromArray(debugView.at));
     }
     skyDome.follow(camera);
+    water?.update(camera, clock);
     renderer.render(scene, camera);
 
     // Adaptive resolution: trade sharpness for frame rate on slower phones.
@@ -400,6 +522,11 @@ async function main() {
         /** Draw calls in the last rendered frame. */
         drawCalls: renderer.info.render.calls,
         map: map.name,
+        /** Sea level, or null if the map has no water. */
+        water: water ? water.level : null,
+        /** Splashes so far, and whether the player or any car is in the water right now. */
+        splashes: splashes.count,
+        soaked: playerSoaked !== null || cars.some((c) => c.soaked !== null),
         /** Ground height under the player, or under the car being driven. */
         ground: (() => {
           const p = driving ? driving.object.position : player.position;

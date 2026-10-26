@@ -7,7 +7,7 @@
 // are smooth across chunk boundaries without needing the neighbour loaded.
 import type { BBox } from './project.ts';
 import { lonLatToLocal } from './project.ts';
-import { sampleLocal, type Raster } from './raster.ts';
+import { pixelLocal, sampleLocal, type Raster } from './raster.ts';
 
 export const CHUNK_SIZE = 250;
 export const CELL_SIZE = 2;
@@ -17,12 +17,16 @@ export const SAMPLES = CHUNK_SIZE / CELL_SIZE + 1 + 2 * APRON;
 
 /**
  * The LiDAR DEM flattens open water to about -1.1 m (the water surface on
- * the survey day). Until T7 adds a water plane, anything below SEA_CUTOFF is
- * dropped to a flat harbour floor at SEA_SHELF, so the coastline reads as a
- * clean step and the car can't drive "on" the sea.
+ * the survey day). Anything below SEA_CUTOFF is dropped to a flat harbour
+ * floor at SEA_SHELF, well under the water plane at WATER_LEVEL: with 2 m
+ * between samples, the 10 m drop makes wharf edges and sea walls read as
+ * near-vertical walls rather than sloped smears, and a car that drives off
+ * one is clearly in the drink.
  */
 export const SEA_CUTOFF = -0.5;
-export const SEA_SHELF = -2;
+export const SEA_SHELF = -8;
+/** Mean sea level in NZVD2016 (the LiDAR's datum) is within a few cm of 0 m at Auckland. */
+export const WATER_LEVEL = 0;
 
 export type Grid = { x0: number; z0: number; nx: number; nz: number };
 
@@ -52,21 +56,23 @@ export function chunkGrid(bbox: BBox): Grid {
 /**
  * Ground height at a lattice point, in integer cm. A 2 m box filter (four
  * bilinear taps half a metre out) keeps LiDAR noise and kerb-edge aliasing
- * out of the 2 m grid. No-data counts as sea.
+ * out of the 2 m grid. A point is sea if the DEM pixel under any tap is
+ * open water (or no data), so the land's lattice points all sit inside the
+ * pixel coastline that seawalls.ts builds its walls on, and the terrain's
+ * drop to the sea floor stays behind those walls.
  */
 export function groundCm(dem: Raster, x: number, z: number): number {
   let sum = 0;
-  let count = 0;
   for (const [dx, dz] of [[-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5]]) {
-    const v = sampleLocal(dem, x + dx, z + dz);
-    if (!Number.isNaN(v)) {
-      sum += v;
-      count++;
-    }
+    if (isWet(pixelLocal(dem, x + dx, z + dz))) return SEA_SHELF * 100;
+    sum += sampleLocal(dem, x + dx, z + dz);
   }
-  const h = count ? sum / count : SEA_SHELF;
+  const h = sum / 4;
   return Math.round((h < SEA_CUTOFF ? SEA_SHELF : h) * 100);
 }
+
+/** Open water (or no data) in the DEM. */
+export const isWet = (v: number) => !(v >= SEA_CUTOFF);
 
 export type TerrainChunk = {
   i: number;
