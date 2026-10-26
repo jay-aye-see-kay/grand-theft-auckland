@@ -60,6 +60,19 @@ and verified.
   and kerb), check triangle counts per view, add a `?debug` tris counter, and keep a
   phone-class budget (aim < 300k triangles in view, < 100 draw calls). Smoke check it.
 - [ ] **T8 Attribution.** OSM and LINZ credits on the title screen.
+- [ ] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
+  isn't recognisable, looks PS1 not PS2/3").** Overturns the flat-vertex-colour
+  decision. Make one reference block of lower Queen St (Customs → Shortland) look
+  as good as phones allow, then generalise:
+  - textured facades from a procedural atlas (window grids, spandrels, curtain
+    glass, heritage brick/stucco), styled per building from OSM tags
+  - verandahs and shopfronts on retail frontages
+  - baked AO / base darkening in vertex colours, better sun/sky/haze, tone mapping
+  - asphalt/concrete textures, lane markings and crossings (or the LINZ 7.5 cm
+    aerials draped on the ground; evaluate)
+  - the Sky Tower visible over the rooftops from the street (distant low-LOD)
+  - Done when: a street-level screenshot on Queen St reads as Queen St, within
+    budget. Then roll the look out across the map before the rest of tier 2.
 - [ ] **Milestone: tier 1 live.** Add a phone test list to Questions, then carry on.
 
 ## Tier 2: recognisably Auckland
