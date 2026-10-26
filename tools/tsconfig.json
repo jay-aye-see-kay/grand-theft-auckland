@@ -1,0 +1,10 @@
+{
+  // Node-side generator code: same strictness as the game, but Node types
+  // instead of DOM/Vite. Typechecked by `npm run build` via `tsc -p tools`.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["."]
+}

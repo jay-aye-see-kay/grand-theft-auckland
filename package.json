@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && tsc --noEmit -p tools && vite build",
     "preview": "vite preview --host",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tools",
     "sim": "node --experimental-strip-types scripts/sim-car.ts",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "citygen:fetch": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types tools/citygen/fetch.ts",
+    "citygen:stats": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types tools/citygen/stats.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d": "^0.21.0",
@@ -17,8 +19,11 @@
   },
   "devDependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
+    "@types/node": "^26.6.5",
     "@types/three": "^0.186.0",
+    "geotiff": "^3.0.5",
     "playwright": "^1.63.0",
+    "proj4": "^2.22.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vite-plugin-wasm": "^3.6.0"
