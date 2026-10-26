@@ -43,7 +43,9 @@ and verified.
     terrain, with filtered highway classes.
   - Done when: Queen St, Customs St, Albert St and K Road are driveable
     and line up with the buildings.
-- [ ] **T5 Spawn, parked cars and play.** Depends on T3 and T4.
+- [x] **T5 Spawn, parked cars and play.** Done: spawn on the plaza east of the Chief Post
+  Office, purple car on Galway St; 9 cars from `parking.json` (build-time, kerbside, tilted
+  to slope); fall-out-of-world recovery. Aerial view now 137 draw calls (see T7b).
   - Spawn at Britomart with the purple Corolla.
   - Park the other Corollas on real streets.
   - Update the smoke test for the Auckland map.
@@ -59,7 +61,7 @@ and verified.
   about 11. Simplify road strips (fewer samples on straight flat runs, merge footpath
   and kerb), check triangle counts per view, add a `?debug` tris counter, and keep a
   phone-class budget (aim < 300k triangles in view, < 100 draw calls). Smoke check it.
-- [ ] **T8 Attribution.** OSM and LINZ credits on the title screen.
+- [x] **T8 Attribution.** Done: title screen (tap to play) with linked credits; README section.
 - [ ] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
   isn't recognisable, looks PS1 not PS2/3").** Overturns the flat-vertex-colour
   decision. Make one reference block of lower Queen St (Customs → Shortland) look
