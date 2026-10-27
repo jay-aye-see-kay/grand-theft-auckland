@@ -714,6 +714,27 @@ export const painters: Record<Layer, Painter> = {
       c.fillRect(b * bw + 22, 0, 4, S);
     }
   },
+  shed(c, m, rnd) {
+    // Industrial cladding: vertical ribs every 20 cm, translucent panels
+    // under the eaves of each storey, a darker kick strip at the foot.
+    wallBase(c, m, rnd, TINT_GREY);
+    for (let x = 0; x < S; x += S / 64) {
+      c.fillStyle = 'rgba(255,255,255,0.14)';
+      c.fillRect(x, 0, 2, S);
+      c.fillStyle = 'rgba(0,0,0,0.16)';
+      c.fillRect(x + 2, 0, 3, S);
+    }
+    for (let b = 0; b < 4; b++) {
+      const x = (b * S) / 4;
+      rect(c, m, x + 6, 26, S / 4 - 12, 70, '#d8dcd4', 0.25);
+      c.fillStyle = 'rgba(0,0,0,0.12)';
+      for (let k = 1; k < 4; k++) c.fillRect(x + 6 + ((S / 4 - 12) * k) / 4, 26, 2, 70);
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.fillRect(x + 6, 96, S / 4 - 12, 4);
+    }
+    blotches(c, rnd, 12, 30, 110, 0.12, 0.05);
+    rect(c, m, 0, S - 30, S, 30, grey(TINT_GREY - 40), 1);
+  },
   shop(c, m, rnd) {
     // One storey, two shops. Top: fascia and sign board (mostly under the verandah).
     const bw = S / 2;

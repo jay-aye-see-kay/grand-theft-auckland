@@ -112,13 +112,6 @@ export function roofFrame(ring: Local[], area: number): RoofFrame {
   return best!;
 }
 
-/** (s, t) of a point in the frame: along u, and across (towards v = (-uz, ux)). */
-export const frameST = (f: RoofFrame, x: number, z: number) => {
-  const dx = x - f.cx;
-  const dz = z - f.cz;
-  return { s: dx * f.ux + dz * f.uz, t: -dx * f.uz + dz * f.ux };
-};
-
 // ---------------------------------------------------------------- planes
 
 /** The plane eave + slope * (d0 + ds * s + dt * t), as a function of x, z. */
@@ -415,10 +408,6 @@ const MIN_RISE = 0.9;
 const SKILLION_MIN = 0.12;
 const SKILLION_DROP = 1.2;
 
-/** Set to log every fit's scores (tuning). */
-export let DEBUG_FIT = false;
-export const debugFit = (on: boolean) => (DEBUG_FIT = on);
-
 export type FitInput = { ring: Local[]; area: number; frame: RoofFrame };
 
 /**
@@ -472,7 +461,6 @@ export function fitRoof(dsm: Raster, input: FitInput): RoofFit | null {
   }
   cands.sort((p, q) => p.score - q.score);
   const best = cands[0];
-  if (DEBUG_FIT) console.log(`  n=${xs.length} L=${L.toFixed(1)} W=${W.toFixed(1)} flat=${flatScore.toFixed(2)} ` + cands.map((c) => `${c.fit.shape}${c.fit.alongU ? '' : '/v'} ${c.score.toFixed(2)} k=${c.fit.slope.toFixed(2)}`).join(', '));
   if (!best || best.score > GOOD_ENOUGH || best.score > BETTER * flatScore || flatScore < RELIEF) return flat;
   return best.fit;
 }

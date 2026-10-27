@@ -10,6 +10,7 @@
 // block reads as of a piece instead of a random shuffle.
 import type { Layer } from '../../src/city/facades.ts';
 import type { Tags } from './osm.ts';
+import type { WikidataFacts } from './wikidata.ts';
 
 export type Era = 'victorian' | 'edwardian' | 'interwar' | 'postwar' | 'late' | 'contemporary' | 'house' | 'industrial';
 
@@ -56,15 +57,15 @@ export function areaNoise(x: number, z: number, cell = 140, salt = 0): number {
 }
 
 // sRGB hex, stylised tones per family.
-export const GLASS = [0x6f8796, 0x7d93a3, 0x5d7484, 0x8aa0ad, 0x667a88, 0x7a8f8f];
+const GLASS = [0x6f8796, 0x7d93a3, 0x5d7484, 0x8aa0ad, 0x667a88, 0x7a8f8f];
 const GLASS_NEW = [0x6d8a94, 0x5f7f8c, 0x7a9aa2, 0x8fa6ae, 0x587680, 0x6f8f86];
 const GLASS_80S = [0x8a7660, 0x6e6a5e, 0x7d8a8f, 0x5e6c76, 0x947f62];
-export const CONCRETE = [0xb9b6ad, 0xa8a69f, 0xc9c4b8, 0x9c9a94, 0xd2cdc0, 0xb0aca2];
+const CONCRETE = [0xb9b6ad, 0xa8a69f, 0xc9c4b8, 0x9c9a94, 0xd2cdc0, 0xb0aca2];
 const CONCRETE_70S = [0xb0a998, 0x9d978a, 0xc1b8a4, 0x8f8b82, 0xa89a84];
-export const SANDSTONE = [0xcdb991, 0xd8c8a4, 0xc2a979, 0xe0d4b8, 0xbfa888];
-export const BRICK = [0x9a5a44, 0x8a4d3b, 0xa86a50, 0x7d4a3a, 0x94604a];
+const SANDSTONE = [0xcdb991, 0xd8c8a4, 0xc2a979, 0xe0d4b8, 0xbfa888];
+const BRICK = [0x9a5a44, 0x8a4d3b, 0xa86a50, 0x7d4a3a, 0x94604a];
 const BRICK_DARK = [0x7a4436, 0x6e3e32, 0x84503e, 0x5e3a30];
-export const PAINTED = [0xe6e0d4, 0xd9d3c7, 0xe8dcc4, 0xcfd3cf];
+const PAINTED = [0xe6e0d4, 0xd9d3c7, 0xe8dcc4, 0xcfd3cf];
 /** Victorian and Edwardian commercial paint: creams, buffs, stone greys and the odd heritage colour. */
 const VICTORIAN_PAINT = [0xe8dcc0, 0xd9c9a6, 0xcfc4b0, 0xe3d6c0, 0xc9b896, 0xd6cdbd, 0xb9a98e, 0xa8b4a6, 0xc7a99a];
 /** Interwar plaster: cream, pale pink, mint, buff, the occasional terracotta. */
@@ -73,7 +74,9 @@ const DECO = [0xeadfc8, 0xe6cfc2, 0xd6e0cf, 0xe2d4b0, 0xf0e8dc, 0xd9c3a8, 0xc8d4
 const SPANDREL = [0x5e7f8c, 0x7f8f6a, 0xb08a4e, 0x8c9496, 0x4f6e7a, 0xa66a48, 0xc9c3b0];
 /** Recent cladding: charcoal, white, warm greys, terracotta, timber-ish. */
 const CLADDING = [0x3e4246, 0xe8e6e0, 0xb8b0a4, 0xa8684c, 0x8c6a4c, 0x6e7478, 0xd2c8b6];
-export const PASTEL = [0xe8dcc0, 0xd9d6c4, 0xe6d6b8, 0xcfd6cc, 0xe3d2c6, 0xd6d0bc];
+const PASTEL = [0xe8dcc0, 0xd9d6c4, 0xe6d6b8, 0xcfd6cc, 0xe3d2c6, 0xd6d0bc];
+/** Industrial cladding: greys, off-white, the odd green or blue. */
+const SHED = [0xc4c6c2, 0xa9adab, 0xd8d8d0, 0x7d8a84, 0x8c9aa6, 0xb8b2a4];
 /** Villas and cottages: white, cream, greys and heritage colours on weatherboards. */
 const VILLA = [0xf2efe6, 0xe9e2cf, 0xd8d8d0, 0xc9d1cf, 0xe6dcc6, 0xb8c4b8, 0xd9c8b4, 0xa9b8c4];
 
@@ -131,7 +134,18 @@ export type EraInput = {
   streets: Set<string>;
   x: number;
   z: number;
+  /** Year and styles from Wikidata, for buildings with a `wikidata` tag (see wikidata.ts). */
+  wikidata?: WikidataFacts;
 };
+
+/** Wikidata architectural styles (English labels) by what they say about the era. */
+const STYLE_ERAS: [RegExp, Era][] = [
+  [/art deco|streamline|stripped classic/i, 'interwar'],
+  [/brutalis|postmodern|high-tech/i, 'late'],
+  [/international style|modern/i, 'postwar'],
+  [/edwardian|neoclassical|beaux-arts|baroque revival/i, 'edwardian'],
+  [/gothic|italianate|romanesque|renaissance revival|moorish|victorian|second empire/i, 'victorian'],
+];
 
 /** Picks from weighted options with r in 0..1. */
 function pick<T>(r: number, options: [T, number][]): T {
@@ -147,10 +161,14 @@ function pick<T>(r: number, options: [T, number][]): T {
 export function eraOf(e: EraInput): Era {
   const t = e.tags;
   const b = t.building ?? t['building:part'] ?? 'yes';
-  const year = startYear(t);
+  const year = startYear(t) || e.wikidata?.year || NaN;
   if (year > 0) return HOUSES.has(b) && year < 1946 ? 'house' : eraOfYear(year);
   const arch = ARCHITECTURE[(t['building:architecture'] ?? t.architecture ?? '').toLowerCase()];
   if (arch) return arch;
+  for (const style of e.wikidata?.styles ?? []) {
+    const hit = STYLE_ERAS.find(([re]) => re.test(style));
+    if (hit) return hit[1];
+  }
   if (HOUSES.has(b)) return 'house';
   const material = (t['building:material'] ?? '').toLowerCase();
   if (material.includes('glass')) return e.height > 40 || hash(e.key, 20) < 0.6 ? 'contemporary' : 'late';
@@ -218,7 +236,8 @@ const VARIANTS: Record<Era, Variant[]> = {
     { layer: 'stucco', palette: PASTEL, weight: 1 },
   ],
   industrial: [
-    { layer: 'plain', palette: CONCRETE, weight: 3 },
+    { layer: 'shed', palette: SHED, weight: 3 },
+    { layer: 'plain', palette: CONCRETE, weight: 1 },
     { layer: 'warehouse', palette: BRICK_DARK, weight: 1 },
   ],
 };

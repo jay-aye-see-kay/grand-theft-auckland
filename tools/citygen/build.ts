@@ -21,6 +21,7 @@ import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
+import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
@@ -59,7 +60,8 @@ console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points und
 const terrainSampler = new TerrainSampler(data.dem);
 const network = roadNetwork(data, terrainSampler, overrides);
 const frontages = new Frontages(data.osm);
-const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt, frontages });
+const wikidata = loadWikidata(AREA);
+const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt, frontages, wikidata });
 const c = blds.counts;
 console.log(
   `Buildings: ${c.outlines} outlines + ${c.parts} parts drawn (${c.hiddenOutlines} outlines replaced by their parts, ${c.outside} outside the grid). ` +

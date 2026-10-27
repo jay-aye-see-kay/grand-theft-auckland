@@ -14,6 +14,11 @@
 // height, LiDAR heights of tiny footprints are capped (the DSM there is
 // usually a tree or the tower next door), and buildings on a bridge deck
 // stand on the deck. Hand fixes go in overrides/<area>.json.
+//
+// The DSM also shapes the tops: pitched roofs fitted to it (roofs.ts), and
+// on flat roofs, towers standing on podiums and rooftop plant (rooftops.ts).
+// Each building's dress (facade layer, colours, cornices and parapets)
+// comes from its architectural era (eras.ts).
 import earcut from 'earcut';
 import type { BuildingMesh } from '../../src/city/format.ts';
 import type { OsmData, OsmWay, Tags } from './osm.ts';
@@ -25,6 +30,7 @@ import { SUN_DIRECTION } from '../../src/sun.ts';
 import { FACADE, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
 import { eraStyle, FLATS, hash, HOUSES, SHEDS, type FacadeStyle } from './eras.ts';
+import type { WikidataFacts } from './wikidata.ts';
 import { readRooftop, type PlantBox } from './rooftops.ts';
 import { fitRoof, outsetRing, planeAt, planeRegions, roofAt, roofBreaks, roofFrame, roofPlanes, type Plane, type RoofFit, type RoofShape } from './roofs.ts';
 
@@ -1270,6 +1276,8 @@ export type BuildOptions = {
   deckAt?: (x: number, z: number) => number | null;
   /** The street a wall faces, for shopfronts (see frontage.ts). */
   frontages?: Frontages;
+  /** Years and styles of buildings with a `wikidata` tag, by QID (see wikidata.ts). */
+  wikidata?: Map<string, WikidataFacts>;
 };
 
 /** Extrudes every visible building and part and merges them into the chunk containing each centroid. */
@@ -1453,6 +1461,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       streets: familyStreets.get(fam) ?? new Set(),
       x: famSolid.centroid.x,
       z: famSolid.centroid.z,
+      wikidata: opts.wikidata?.get(famTags.wikidata ?? ''),
     });
     if (!s.isPart || fam === s.key) counts.eras[style.era] = (counts.eras[style.era] ?? 0) + 1;
     const wall = wallColour(fam, famTags, style);
