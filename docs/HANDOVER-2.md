@@ -9,12 +9,12 @@ the first long unattended run, what's unfinished, and how to work next time.
 
 1. **Unfinished work is on the `backup/wip` branch, not `main`.** It is `main`
    plus three commits that have not been verified by anyone:
-   - `fb09b61` Fix camera-relative walking after a snap; ram the CPO wall
+   - `7553be0` Fix camera-relative walking after a snap; ram the CPO wall
      square-on in smoke (a fix for the wall-collision smoke checks that failed
      on GitHub's runner; see "Known issues").
-   - `e39ebb2` T9a: hand-made Sky Tower, Ferry Building, Chief Post Office and
+   - `7cbedd9` T9a: hand-made Sky Tower, Ferry Building, Chief Post Office and
      Civic Theatre.
-   - `1aeae4e` T9a: lift the Civic's rooftop sign clear of the parapet.
+   - `2bf66d4` T9a: lift the Civic's rooftop sign clear of the parapet.
 
    To pick them up: `git fetch origin && git checkout main && git merge --ff-only origin/backup/wip`
    (or cherry-pick the three). Then run `npm run build && npm run sim && npm run smoke`,
@@ -128,7 +128,7 @@ unfinished work to `backup/wip`.
 
 - **Possible wall tunnelling when the sim runs slowly.** On GitHub's runner a
   car rammed at the Chief Post Office wall ended up ~50 m past it, and the
-  player stopped 3 m short. `fb09b61` (on `backup/wip`) changes the test
+  player stopped 3 m short. `7553be0` (on `backup/wip`) changes the test
   setup; it is not yet known whether the game itself can tunnel on a slow
   phone. Colliders are built asynchronously within ~300 m, which is a
   suspect: check that colliders exist around teleport targets and fast cars.
