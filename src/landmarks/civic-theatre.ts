@@ -181,7 +181,7 @@ function build(b: Builder, far: boolean, records: LandmarkInfo[]): void {
   const signW = 19;
   const sf = new Frame(at(7.5, 11), dW, outW);
   const sb = y0 + ROOF_Y;
-  const s0 = y0 + PARAPET_Y + 1.2;
+  const s0 = y0 + PARAPET_Y + 2.4;
   const s1 = s0 + 6.4;
   const corners = (u: number, y: number, w0 = 0): V3 => sf.p(u, y, w0);
   if (!far) {
