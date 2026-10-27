@@ -4,6 +4,8 @@ import { CITY_FORMAT, type CityManifest } from '../city/format.ts';
 import { buildAtlas } from '../city/atlas.ts';
 import { ChunkStreamer } from '../city/streamer.ts';
 import { Skyline } from '../city/skyline.ts';
+import { LANDMARK_MODELS } from '../landmarks/index.ts';
+import { Landmarks } from '../landmarks/landmarks.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
 /** public/city/<area>/parking.json, written by tools/citygen/parking.ts. */
@@ -49,19 +51,22 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   const atlas = buildAtlas(maxAnisotropy);
   const terrain = new ChunkStreamer(base, manifest, scene, world, ground, atlas);
 
-  // Tall buildings for distant views (the Sky Tower from anywhere), always loaded.
+  // Its own haze, in three's fog space (output sRGB): the same colour as the fog, reaching much further.
+  const haze = { colour: new THREE.Color().setHex(ATMOSPHERE.sky, THREE.LinearSRGBColorSpace), near: 500, far: 4500 };
+  // Tall buildings for distant views, always loaded.
   let skyline: Skyline | null = null;
   if (manifest.skyline) {
     const sres = await fetch(new URL(manifest.skyline, base));
     if (!sres.ok || !sres.body) throw new Error(`city skyline: HTTP ${sres.status}`);
     const bytes = new Uint8Array(await new Response(sres.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
-    // Its own haze, in three's fog space (output sRGB): the same colour as the fog, reaching much further.
-    const haze = { colour: new THREE.Color().setHex(ATMOSPHERE.sky, THREE.LinearSRGBColorSpace), near: 500, far: 4500 };
     skyline = new Skyline(bytes, manifest, atlas, haze);
     scene.add(skyline.mesh);
   }
+  // Hand-made landmarks (the Sky Tower, Ferry Building, Chief Post Office, Civic), one mesh each.
+  const landmarks = new Landmarks(manifest, LANDMARK_MODELS, scene, world, ground, haze, maxAnisotropy);
   const update = (x: number, z: number) => {
     terrain.update(x, z);
+    landmarks.update(x, z);
     skyline?.update((key) => terrain.drawn(key));
   };
 
@@ -115,6 +120,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
       // Over the harbour, looking across the whole CBD towards K Road.
       aerial: { from: [0, 250, -250], at: [-300, -4, 500] },
     },
+    landmarks: () => landmarks.list(),
     debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth, skylineTris: skyline?.total ?? 0, skylineDrawn: skyline?.drawn ?? 0 }),
   };
 }

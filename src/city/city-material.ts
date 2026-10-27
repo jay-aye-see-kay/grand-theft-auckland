@@ -21,16 +21,47 @@ const ROAD_DEPTH_BIAS = 2e-6;
 
 const f = (v: number) => v.toFixed(5);
 
-/**
- * @param haze for the far skyline: its own, longer fog (colour in output
- * sRGB, like three's), so landmarks stand out of the haze well past where
- * the scene's fog swallows the ground. Without it the scene's fog applies.
- */
-export function cityMaterial(atlas: THREE.Texture, haze?: { colour: THREE.Color; near: number; far: number }): THREE.MeshLambertMaterial {
+export interface CityMaterialOptions {
+  /**
+   * For the far skyline and the Sky Tower: its own, longer fog (colour in
+   * output sRGB, like three's), so landmarks stand out of the haze well past
+   * where the scene's fog swallows the ground. Without it the scene's fog applies.
+   */
+  haze?: { colour: THREE.Color; near: number; far: number };
+  /**
+   * For the hand-made landmarks (src/landmarks), whose atlas has its own
+   * layers, all mapped by vertex UVs (no planar ground layers):
+   * - `cutout`: bit k set = layer k is a cut-out (its alpha is coverage,
+   *   not tint: below 0.5 is discarded), for lattices, balustrades, letters;
+   * - an `aGlow` vertex attribute: that much of the surface colour is added
+   *   as emitted light (neon, warning lights); 3 or more blinks;
+   * - `time`: the uniform (seconds) the blinking reads.
+   */
+  landmark?: { cutout: number; time: { value: number } };
+}
+
+export function cityMaterial(atlas: THREE.Texture, opts: CityMaterialOptions = {}): THREE.MeshLambertMaterial {
+  const { haze, landmark } = opts;
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, fog: !haze });
-  const planar = LAYERS.slice(FIRST_PLANAR).map((l) => 1 / (PLANAR_METRES[l] ?? 4));
+  const planar = landmark ? [] : LAYERS.slice(FIRST_PLANAR).map((l) => 1 / (PLANAR_METRES[l] ?? 4));
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uAtlas = { value: atlas };
+    if (landmark) {
+      shader.uniforms.uTime = landmark.time;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute float aGlow;
+uniform float uTime;
+varying float vGlow;`)
+        .replace('#include <project_vertex>', `#include <project_vertex>
+// Aircraft warning lights: a short flash every 1.5 s.
+vGlow = aGlow > 2.5 ? (aGlow - 2.0) * step(0.82, fract(uTime / 1.5)) : aGlow;`);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying float vGlow;`)
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+totalEmissiveRadiance += diffuseColor.rgb * vGlow;`);
+    }
     if (haze) {
       shader.uniforms.uHaze = { value: haze.colour };
       shader.uniforms.uHazeRange = { value: new THREE.Vector2(haze.near, haze.far) };
@@ -75,7 +106,7 @@ varying float vShade;
 varying vec2 vAtlasUv;
 varying float vTile;
 varying vec3 vCityPos;
-const float PLANAR[${planar.length}] = float[](${planar.map(f).join(', ')});`,
+${planar.length ? `const float PLANAR[${planar.length}] = float[](${planar.map(f).join(', ')});` : ''}`,
       )
       .replace(
         '#include <color_fragment>',
@@ -87,8 +118,12 @@ const float PLANAR[${planar.length}] = float[](${planar.map(f).join(', ')});`,
     float layer = mod(t, 16.0);
     float marking = floor(t / 16.0);
     vec2 uv = vAtlasUv;
-    if (layer >= ${f(FIRST_PLANAR)} - 0.5) uv = vCityPos.xz * PLANAR[int(layer) - ${FIRST_PLANAR}];
+    ${planar.length ? `if (layer >= ${f(FIRST_PLANAR)} - 0.5) uv = vCityPos.xz * PLANAR[int(layer) - ${FIRST_PLANAR}];` : ''}
     vec4 tex = texture(uAtlas, vec3(uv, layer));
+    ${landmark ? `if (((${landmark.cutout} >> int(layer)) & 1) == 1) {
+      if (tex.a < 0.5) discard;
+      tex.a = 0.0;
+    }` : ''}
     diffuseColor.rgb = tex.rgb * mix(vec3(1.0), diffuseColor.rgb * ${f(TINT_GAIN)}, tex.a);
     if (marking > 0.5) {
       // Lane lines: u is lanes across from the left edge, v is 9 m dash periods along.
@@ -110,6 +145,6 @@ const float PLANAR[${planar.length}] = float[](${planar.map(f).join(', ')});`,
 }`,
       );
   };
-  material.customProgramCacheKey = () => (haze ? 'city-haze' : 'city');
+  material.customProgramCacheKey = () => `city${haze ? '-haze' : ''}${landmark ? `-landmark${landmark.cutout}` : ''}`;
   return material;
 }

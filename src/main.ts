@@ -588,6 +588,8 @@ async function main() {
         ...map.debugInfo(),
       }),
       groundHeight: (x: number, z: number) => map.heightAt(x, z),
+      /** Hand-made landmarks loaded: id, position, base and height, detail level drawn. */
+      landmarks: () => map.landmarks?.() ?? [],
       /** Fix the camera at `from` looking at `at` ([x, y, z]); pass null to go back to the chase camera. */
       lookFrom: (from: number[] | null, at: number[]) => (debugView = from ? { from, at } : null),
       /**
@@ -619,12 +621,12 @@ async function main() {
       },
       /**
        * Distance along a ray to the first drawn city surface (chunk meshes:
-       * ground, roads, buildings and verandahs, which have no colliders, and
-       * the far skyline), or null.
+       * ground, roads, buildings and verandahs, which have no colliders, the
+       * landmarks and the far skyline), or null.
        */
       renderHit: (from: number[], dir: number[], far = 50) => {
         const ray = new THREE.Raycaster(new THREE.Vector3().fromArray(from), new THREE.Vector3().fromArray(dir).normalize(), 0, far);
-        const chunks = scene.children.filter((o) => o.name.startsWith('chunk') || o.name === 'skyline');
+        const chunks = scene.children.filter((o) => o.visible && (o.name.startsWith('chunk') || o.name.startsWith('landmark') || o.name === 'skyline'));
         return ray.intersectObjects(chunks, false)[0]?.distance ?? null;
       },
       /** Whether a point is inside the camera's view frustum (not whether something hides it). */

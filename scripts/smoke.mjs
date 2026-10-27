@@ -10,6 +10,8 @@ import { chromium, devices } from 'playwright';
 const PORT = 4179;
 const URL = `http://localhost:${PORT}/?debug`;
 const TEST_TOWN = '&map=test';
+/** Landmarks with hand-made models (src/landmarks/index.ts). */
+const LANDMARK_MODELS = ['sky-tower', 'ferry-building', 'britomart', 'civic-theatre'];
 const shots = process.argv[2] ?? 'smoke-shots';
 mkdirSync(shots, { recursive: true });
 
@@ -425,6 +427,20 @@ try {
       const ids = new Set((manifest.landmarks ?? []).map((l) => l.id));
       check(['sky-tower', 'ferry-building', 'britomart', 'civic-theatre', 'town-hall', 'wynyard-silos'].every((id) => ids.has(id)),
         `landmarks recorded in the manifest (${[...ids].join(', ')})`);
+
+      // Hand-made landmark models (src/landmarks): each at its manifest
+      // record, replacing the OSM shape, one mesh with a near and a far LOD.
+      const loaded = await game('landmarks');
+      for (const id of LANDMARK_MODELS) {
+        const l = loaded.find((m) => m.id === id);
+        const rec = manifest.landmarks.find((m) => m.id === id);
+        const off = l ? Math.hypot(l.x - rec.x, l.z - rec.z) : NaN;
+        check(!!l && off < 5 && l.replaces && l.triangles.near > l.triangles.far && l.triangles.far > 0 && l.colliders > 0,
+          `landmark model ${id} at its manifest position (${l ? `${off.toFixed(1)} m off, ${l.triangles.near}/${l.triangles.far} tris near/far, ${l.colliders} colliders, replaces OSM: ${l.replaces}` : 'missing'})`);
+      }
+      const tower = loaded.find((m) => m.id === 'sky-tower');
+      const towerHeight = tower ? tower.top - tower.base : NaN;
+      check(towerHeight > 322 && towerHeight < 334, `Sky Tower model stands ${towerHeight.toFixed(1)} m (328 m to the tip)`);
     }
     const WALL = [[-23.4, -43.4], [-41.2, 8.8]];
     const wallLen = Math.hypot(WALL[1][0] - WALL[0][0], WALL[1][1] - WALL[0][1]);
@@ -571,7 +587,8 @@ try {
     }
     // The Sky Tower over the rooftops: in frame from the spawn view, seen
     // unobstructed from Customs St outside Britomart, and from far out over
-    // the harbour, where its own chunk isn't loaded, drawn by the far skyline.
+    // the harbour, where its own chunk isn't loaded: its far model (always
+    // drawn) with the far skyline round it.
     {
       const manifest = await page.evaluate(() => fetch('city/cbd/manifest.json').then((r) => r.json()));
       const tower = manifest.landmarks.find((l) => l.id === 'sky-tower');
@@ -594,8 +611,9 @@ try {
       await page.waitForFunction(() => window.__game.state().inFlight === 0, null, { timeout: 30000 }).catch(() => {});
       s = await state(page);
       const fromFar = await sightline(far);
-      check(s.skylineTris > 1000 && s.skylineDrawn > 0 && fromFar.seen && (await game('inView', pod)),
-        `far skyline draws the Sky Tower from 1.5 km out (${s.skylineDrawn} of ${s.skylineTris} skyline triangles drawn, hit at ${fromFar.hit?.toFixed(0)} of ${fromFar.len.toFixed(0)} m)`);
+      const towerLod = (await game('landmarks')).find((l) => l.id === 'sky-tower')?.lod;
+      check(s.skylineTris > 1000 && s.skylineDrawn > 0 && towerLod === 'far' && fromFar.seen && (await game('inView', pod)),
+        `far skyline and the Sky Tower's far model seen from 1.5 km out (${s.skylineDrawn} of ${s.skylineTris} skyline triangles drawn, tower ${towerLod}, hit at ${fromFar.hit?.toFixed(0)} of ${fromFar.len.toFixed(0)} m)`);
       await page.screenshot({ path: `${shots}/15-skyline-far.png` });
     }
     await game('lookFrom', null, [0, 0, 0]);

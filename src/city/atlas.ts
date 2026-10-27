@@ -15,16 +15,16 @@ import { ATLAS_SIZE, FACADE, LAYERS, type Layer } from './facades.ts';
 // flipped on the way into the texture, where v runs up.
 
 /** Tinted areas are painted about this grey; the shader divides it back out (TINT_GAIN). */
-const TINT_GREY = 224;
+export const TINT_GREY = 224;
 /** 1 / (TINT_GREY as linear light): a tinted texel of TINT_GREY comes out as the vertex colour. */
 export const TINT_GAIN = 1 / Math.pow(TINT_GREY / 255, 2.2);
 
-type Ctx = CanvasRenderingContext2D;
-type Painter = (c: Ctx, m: Ctx, rnd: () => number) => void;
+export type Ctx = CanvasRenderingContext2D;
+export type Painter = (c: Ctx, m: Ctx, rnd: () => number) => void;
 
 const S = ATLAS_SIZE;
 
-function mulberry(seed: number) {
+export function mulberry(seed: number) {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0;
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
@@ -33,11 +33,11 @@ function mulberry(seed: number) {
   };
 }
 
-const grey = (v: number, a = 1) => `rgba(${v | 0},${v | 0},${v | 0},${a})`;
-const rgb = (r: number, g: number, b: number, a = 1) => `rgba(${r | 0},${g | 0},${b | 0},${a})`;
+export const grey = (v: number, a = 1) => `rgba(${v | 0},${v | 0},${v | 0},${a})`;
+export const rgb = (r: number, g: number, b: number, a = 1) => `rgba(${r | 0},${g | 0},${b | 0},${a})`;
 
 /** Fills a rect on both paintings: colour, and tint mask 0..1. */
-function rect(c: Ctx, m: Ctx, x: number, y: number, w: number, h: number, colour: string, mask: number) {
+export function rect(c: Ctx, m: Ctx, x: number, y: number, w: number, h: number, colour: string, mask: number) {
   c.fillStyle = colour;
   c.fillRect(x, y, w, h);
   m.fillStyle = grey(mask * 255);
@@ -45,7 +45,7 @@ function rect(c: Ctx, m: Ctx, x: number, y: number, w: number, h: number, colour
 }
 
 /** Speckle noise over an area (colour only), wrapping round the layer's edges. */
-function speckle(c: Ctx, rnd: () => number, n: number, size: number, spread: number, x0 = 0, y0 = 0, w = S, h = S) {
+export function speckle(c: Ctx, rnd: () => number, n: number, size: number, spread: number, x0 = 0, y0 = 0, w = S, h = S) {
   for (let k = 0; k < n; k++) {
     const v = 128 + (rnd() - 0.5) * 255;
     c.fillStyle = grey(v, spread * rnd());
@@ -55,7 +55,7 @@ function speckle(c: Ctx, rnd: () => number, n: number, size: number, spread: num
 }
 
 /** Soft blotches (stains, wear), wrapping so the layer still tiles. */
-function blotches(c: Ctx, rnd: () => number, n: number, r0: number, r1: number, dark: number, light: number) {
+export function blotches(c: Ctx, rnd: () => number, n: number, r0: number, r1: number, dark: number, light: number) {
   for (let k = 0; k < n; k++) {
     const x = rnd() * S;
     const y = rnd() * S;
@@ -74,7 +74,7 @@ function blotches(c: Ctx, rnd: () => number, n: number, r0: number, r1: number, 
 }
 
 /** A tinted base wall with a little grain. */
-function wallBase(c: Ctx, m: Ctx, rnd: () => number, v = TINT_GREY) {
+export function wallBase(c: Ctx, m: Ctx, rnd: () => number, v = TINT_GREY) {
   rect(c, m, 0, 0, S, S, grey(v), 1);
   speckle(c, rnd, 2500, 2, 0.12);
   blotches(c, rnd, 14, 30, 90, 0.08, 0.06);
@@ -85,7 +85,7 @@ function wallBase(c: Ctx, m: Ctx, rnd: () => number, v = TINT_GREY) {
  * darker blue below, each pane a little different. `mask` lets some of the
  * building's tint through (bronze, green, silver glass).
  */
-function glass(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, mask: number, dark = 0) {
+export function glass(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, mask: number, dark = 0) {
   const k = 0.85 + rnd() * 0.3 - dark;
   const g = c.createLinearGradient(x, y, x + w * 0.3, y + h);
   g.addColorStop(0, rgb(150 * k, 178 * k, 198 * k));
@@ -108,7 +108,7 @@ function glass(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: numbe
 }
 
 /** A dark window with a reveal (shadow along its top and one side) and a sill. */
-function punched(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, frame: string | null, bars: boolean) {
+export function punched(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, frame: string | null, bars: boolean) {
   glass(c, m, rnd, x, y, w, h, 0.05, 0.25);
   // Interior: some windows have blinds down.
   if (rnd() < 0.35) {
@@ -142,7 +142,7 @@ function punched(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: num
 /** Bay and floor size in px for a facade layer. */
 const cell = (layer: Layer) => ({ bw: S / FACADE[layer]!.bays, fh: S / FACADE[layer]!.floors });
 
-const painters: Record<Layer, Painter> = {
+export const painters: Record<Layer, Painter> = {
   glass(c, m, rnd) {
     const { bw, fh } = cell('glass');
     rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
@@ -521,6 +521,16 @@ const painters: Record<Layer, Painter> = {
 
 /** Paints every layer and uploads them as one mip-mapped texture array. */
 export function buildAtlas(maxAnisotropy = 1): THREE.DataArrayTexture {
+  return bakeLayers('city-atlas', LAYERS.map((layer) => painters[layer]), maxAnisotropy, 1000);
+}
+
+/**
+ * Paints layers (colour and tint mask, see the top of this file) with canvas
+ * 2D and uploads them as one mip-mapped, repeating texture array of `size`
+ * px squares. Also used for the landmarks' own atlas (src/landmarks/atlas.ts).
+ */
+export function bakeLayers(name: string, paint: Painter[], maxAnisotropy = 1, seed = 1000, size = S): THREE.DataArrayTexture {
+  const S = size;
   const make = () => {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = S;
@@ -528,12 +538,13 @@ export function buildAtlas(maxAnisotropy = 1): THREE.DataArrayTexture {
   };
   const colour = make();
   const mask = make();
-  const data = new Uint8Array(S * S * 4 * LAYERS.length);
-  LAYERS.forEach((layer, k) => {
+  const data = new Uint8Array(S * S * 4 * paint.length);
+  paint.forEach((painter, k) => {
     colour.setTransform(1, 0, 0, 1, 0, 0);
+    mask.setTransform(1, 0, 0, 1, 0, 0);
     colour.clearRect(0, 0, S, S);
     mask.clearRect(0, 0, S, S);
-    painters[layer](colour, mask, mulberry(1000 + k * 7919));
+    painter(colour, mask, mulberry(seed + k * 7919));
     const c = colour.getImageData(0, 0, S, S).data;
     const a = mask.getImageData(0, 0, S, S).data;
     const base = k * S * S * 4;
@@ -549,8 +560,8 @@ export function buildAtlas(maxAnisotropy = 1): THREE.DataArrayTexture {
       }
     }
   });
-  const tex = new THREE.DataArrayTexture(data, S, S, LAYERS.length);
-  tex.name = 'city-atlas';
+  const tex = new THREE.DataArrayTexture(data, S, S, paint.length);
+  tex.name = name;
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.magFilter = THREE.LinearFilter;

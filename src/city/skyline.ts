@@ -70,7 +70,7 @@ export class Skyline {
     geo.setAttribute('aTile', new THREE.BufferAttribute(tile, 1));
     geo.setIndex(this.index);
     geo.computeBoundingSphere();
-    this.mesh = new THREE.Mesh(geo, cityMaterial(atlas, haze));
+    this.mesh = new THREE.Mesh(geo, cityMaterial(atlas, { haze }));
     this.mesh.name = 'skyline';
     this.mesh.matrixAutoUpdate = false;
     this.mesh.updateMatrix();

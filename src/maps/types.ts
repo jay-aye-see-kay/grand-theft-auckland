@@ -72,6 +72,8 @@ export interface GameMap {
   nearest?(x: number, z: number, maxDist: number, ok: (x: number, z: number, surface: string, height: number) => boolean): { x: number; z: number } | null;
   /** Named reproducible camera views (?debug): budgets are measured from these. */
   readonly views?: Record<string, DebugView>;
+  /** Hand-made landmarks: where they are, how tall, which detail is drawn (?debug and the smoke test). */
+  landmarks?(): { id: string; name: string; x: number; z: number; base: number; height: number; top: number; lod: string; triangles: { near: number; far: number }; colliders: number; replaces: boolean }[];
   /** Extra numbers for ?debug and the smoke test. */
   debugInfo(): Record<string, number>;
 }
