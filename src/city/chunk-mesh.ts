@@ -115,21 +115,22 @@ export class ChunkMesh {
   }
 
   /**
-   * Picks what to draw: roads or not, and per tile 0 (2 m) or 1 (coarse);
-   * `tiles` null draws the far parts. Cheap when nothing changed.
+   * Picks what to draw: roads or not, buildings' detail (0 none, 1 near-only,
+   * 2 fine as well), and per tile 0 (2 m) or 1 (coarse); `tiles` null draws
+   * the far parts. Cheap when nothing changed.
    */
-  update(roads: boolean, tiles: Uint8Array | null, detail = true): void {
+  update(roads: boolean, tiles: Uint8Array | null, detail: 0 | 1 | 2 = 2): void {
     const parts = this.parts;
     const index = this.index;
     if (!parts || !index) return;
     const near = tiles && parts.tiles ? tiles : null;
-    // Bit 0: roads, bit 1: building detail; then one bit per tile (set =
-    // coarse), or negative for far (-1 - the same two bits).
-    const flags = (roads ? 1 : 0) + (detail ? 2 : 0);
+    // Bit 0: roads, bits 1-2: building detail; then one bit per tile (set =
+    // coarse), or negative for far (-1 - the same three bits).
+    const flags = (roads ? 1 : 0) + detail * 2;
     let selection = -1 - flags;
     if (near) {
       selection = flags;
-      for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 2);
+      for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 3);
     }
     if (selection === this.selection) return;
     const hadRoads = ((this.selection >= 0 ? this.selection : -1 - this.selection) & 1) === 1;
@@ -148,7 +149,10 @@ export class ChunkMesh {
     // Roads come first in the vertex buffers, then buildings.
     if (roads && this.roads) put(this.roads.indices, 0);
     const nRoads = n;
-    if (this.buildings) put(detail ? this.buildings.indices : this.buildings.indices.subarray(0, this.buildings.nearOnly), this.roads?.count ?? 0);
+    if (this.buildings) {
+      const b = this.buildings;
+      put(b.indices.subarray(0, detail === 2 ? b.indices.length : detail === 1 ? b.fineFrom : b.nearOnly), this.roads?.count ?? 0);
+    }
     const nBuildings = n - nRoads;
     if (!near) put(parts.far, this.terrainBase);
     else {

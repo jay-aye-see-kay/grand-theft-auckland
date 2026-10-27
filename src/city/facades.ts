@@ -27,6 +27,16 @@ export const LAYERS = [
   'stone', // heritage sandstone/plaster: Edwardian commercial
   'balcony', // apartments with balcony slabs
   'plain', // blank side and party walls
+  'italianate', // Victorian painted plaster: arched windows under hood moulds, quoins
+  'warehouse', // Victorian/Edwardian brick warehouse: segmental arches, small panes
+  'deco', // interwar: fluted pilasters, recessed windows over chevron spandrels
+  'stripped', // interwar stripped classical: steel multi-pane windows, speed lines
+  'modern60', // 1960s curtain wall: aluminium grid over coloured spandrel panels
+  'brutal', // 1970s precast: deep-set windows in chunky concrete frames
+  'glass-b', // recent unitised curtain wall with vertical fins
+  'cladding', // recent apartments and offices: panel cladding, tall windows
+  'weatherboard', // villas and cottages: weatherboards, double-hung sashes
+  'carpark', // parking buildings: open decks between concrete bands
   'shop', // modern glazed shopfronts (ground floor)
   'shop-heritage', // timber shopfronts with stallrisers and recessed doors
   'lobby', // tower lobby: tall glazing between stone columns
@@ -61,6 +71,16 @@ export const FACADE: Partial<Record<Layer, { bays: number; floors: number; bay: 
   stone: { bays: 3, floors: 3, bay: 3.4 },
   balcony: { bays: 3, floors: 4, bay: 3.6 },
   plain: { bays: 2, floors: 4, bay: 4 },
+  italianate: { bays: 3, floors: 3, bay: 3.3 },
+  warehouse: { bays: 4, floors: 3, bay: 3 },
+  deco: { bays: 3, floors: 4, bay: 3.2 },
+  stripped: { bays: 3, floors: 4, bay: 3 },
+  modern60: { bays: 4, floors: 4, bay: 1.6 },
+  brutal: { bays: 3, floors: 4, bay: 2.6 },
+  'glass-b': { bays: 4, floors: 4, bay: 1.5 },
+  cladding: { bays: 4, floors: 4, bay: 2.2 },
+  weatherboard: { bays: 2, floors: 2, bay: 3 },
+  carpark: { bays: 2, floors: 4, bay: 5.5 },
   shop: { bays: 2, floors: 1, bay: 4.5 },
   'shop-heritage': { bays: 2, floors: 1, bay: 4.5 },
   lobby: { bays: 2, floors: 1, bay: 4.5 },

@@ -178,6 +178,7 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 //      u16[2n] u, v in 1/UV_SCALE repeats (i16, zigzagged deltas, u plane then v)
 //      u8[n]   atlas tile (see facades.ts)
 //      u32     (flag bit 3) render indices before the near-only detail
+//      u32     (flag bit 4) render indices before the fine detail (nearer still)
 //      u16|u32 render indices, then collider indices (zigzagged deltas)
 // Delta coding keeps neighbouring vertices of a building tiny for deflate.
 const BUILDINGS_MAGIC = 0x42415447; // 'GTAB'
@@ -204,6 +205,8 @@ export interface BuildingMesh {
    * rooftop plant) drawn only near the player; undefined if there is none.
    */
   nearOnly?: number;
+  /** Render indices from here on are fine detail (cornices, rooftop plant, eaves) drawn only very near. */
+  fineFrom?: number;
 }
 
 const zig = (d: number) => ((d << 1) ^ (d >> 31)) >>> 0;
@@ -216,12 +219,13 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
   const layered = !!m.layers;
   const detailed = !!m.detail;
   const split = m.nearOnly !== undefined;
-  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (m.indices.length + m.colliderIndices.length) * isz + (split ? 4 : 0);
+  const fine = m.fineFrom !== undefined;
+  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (m.indices.length + m.colliderIndices.length) * isz + (split ? 4 : 0) + (fine ? 4 : 0);
   const out = new Uint8Array(size);
   const view = new DataView(out.buffer);
   view.setUint32(0, BUILDINGS_MAGIC, true);
   view.setUint16(4, BUILDINGS_VERSION, true);
-  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0) | (detailed ? 4 : 0) | (split ? 8 : 0), true);
+  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0) | (detailed ? 4 : 0) | (split ? 8 : 0) | (fine ? 16 : 0), true);
   view.setInt32(8, m.baseCm, true);
   view.setUint32(12, n, true);
   view.setUint32(16, m.indices.length, true);
@@ -274,6 +278,7 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
     }
   }
   if (split) view.setUint32(o, m.nearOnly!, true);
+  if (fine) view.setUint32(o + (split ? 4 : 0), m.fineFrom!, true);
   return out;
 }
 
@@ -286,6 +291,7 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
   const layered = (flags & 2) === 2;
   const detailed = (flags & 4) === 4;
   const split = (flags & 8) === 8;
+  const fine = (flags & 16) === 16;
   const baseCm = view.getInt32(8, true);
   const n = view.getUint32(12, true);
   const ni = view.getUint32(16, true);
@@ -340,7 +346,8 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
     }
   }
   const nearOnly = split ? view.getUint32(o, true) : undefined;
-  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers, detail, nearOnly };
+  const fineFrom = fine ? view.getUint32(o + (split ? 4 : 0), true) : undefined;
+  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers, detail, nearOnly, fineFrom };
 }
 
 // Ground chunk file (land use under the terrain), before deflate:

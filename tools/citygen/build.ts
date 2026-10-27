@@ -66,6 +66,7 @@ console.log(
     `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
     `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks. ` +
     `${c.verandahs} verandahs (${(c.verandahMetres / 1000).toFixed(1)} km). ` +
+    `Eras: ${Object.entries(c.eras).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ')}. ` +
     `${c.towers} towers split from podiums, ${c.plant} rooftop plant boxes. ` +
     `Pitched roofs: ${Object.entries(c.roofs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}.`,
 );
@@ -98,6 +99,8 @@ let groundBytes = 0;
 let buildingBytes = 0;
 let maxBuildingBytes = 0;
 let buildingTris = 0;
+let nearTris = 0;
+let fineTris = 0;
 
 const chunks: ChunkInfo[] = [];
 let minY = Infinity;
@@ -117,6 +120,8 @@ for (let j = 0; j < grid.nz; j++) {
       buildingBytes += bytes.length;
       maxBuildingBytes = Math.max(maxBuildingBytes, bytes.length);
       buildingTris += mb.idx.length / 3;
+      nearTris += mb.extras.length / 3;
+      fineTris += mb.fineIdx.length / 3;
     }
     const rb = roads.chunks.get(`${i},${j}`);
     if (rb && rb.idx.length) {
@@ -189,7 +194,7 @@ const size = (dir: string): number =>
 console.log(`Wrote ${chunks.length} terrain chunks, heights ${minY.toFixed(1)}..${maxY.toFixed(1)} m`);
 console.log(
   `Wrote ${blds.chunks.size} building chunks: ${(buildingBytes / 1024).toFixed(0)} KB deflated, ` +
-    `largest ${(maxBuildingBytes / 1024).toFixed(0)} KB, ${buildingTris} triangles`,
+    `largest ${(maxBuildingBytes / 1024).toFixed(0)} KB, ${buildingTris} triangles + ${nearTris} near-only + ${fineTris} fine`,
 );
 console.log(
   `Wrote ${roads.chunks.size} road chunks: ${(roadBytes / 1024).toFixed(0)} KB deflated, ` +
