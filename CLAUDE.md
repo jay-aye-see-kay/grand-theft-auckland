@@ -2,8 +2,13 @@
 
 GTA III-flavoured driving game set in the real Auckland CBD, in the browser on
 phones and desktop. Three.js + Rapier (WASM physics) + TypeScript + Vite,
-deployed to GitHub Pages. Goal and data sources: `docs/BRIEF.md`. Backlog:
-`docs/TASKS.md`.
+deployed to GitHub Pages. Goal and data sources: `docs/BRIEF.md`.
+
+**Backlog is GitHub issues** on `jay-aye-see-kay/grand-theft-auckland`
+(labels: `next`, `later`, `parked`, `needs-owner`, `blocked`, plus areas). Read
+the issue you're working on, leave short progress notes there as comments if
+you stop partway, and close it with `closes #N` in the commit or PR. Live:
+https://jay-aye-see-kay.github.io/grand-theft-auckland/ (`?debug` for perf overlay and test hooks).
 
 ## Commands
 

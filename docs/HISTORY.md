@@ -20,4 +20,5 @@ What's been built, for reference. Not needed to start work.
   always-loaded skyline LOD.
 - **Workflow:** the first run used one long-lived orchestrator spawning a
   subagent per task. Dropped for cost: cold-start subagents, a growing
-  orchestrator transcript, and slow smoke runs repeated per task.
+  orchestrator transcript, and slow smoke runs repeated per task. Backlog moved
+  to GitHub issues.
