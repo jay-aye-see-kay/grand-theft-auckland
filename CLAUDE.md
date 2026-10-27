@@ -71,7 +71,8 @@ Measured at `__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`
 Street view is ~140k / ~45 today. Each chunk is one draw call: put new static
 geometry into `ChunkMesh` (vertex colours, shared materials/atlas), not new
 meshes. Small building detail goes in `MeshBuilder.detail()`: near-only
-(within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves). Bake multi-part models, instance repeated props, LOD by distance, blob
+(within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves).
+Bake multi-part models, instance repeated props, LOD by distance, blob
 shadows only. 2 m ground within 90 m, 10 m beyond; colliders within ~300 m.
 
 ## Gotchas
