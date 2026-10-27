@@ -45,6 +45,8 @@ export interface CityManifest {
   };
   /** The harbour: a water plane at this height (metres above sea level) wherever the ground is lower. */
   water?: { level: number };
+  /** Tall buildings as one always-loaded far LOD (see encodeSkyline). */
+  skyline?: string;
   /** Buildings marked as landmarks in overrides/<area>.json, for hand-made models. */
   landmarks?: LandmarkInfo[];
   chunks: ChunkInfo[];
@@ -395,4 +397,42 @@ export function decodeGround(bytes: Uint8Array): GroundSamples {
   const n = view.getUint16(6, true);
   if (bytes.byteLength < GROUND_HEADER + n * n) throw new Error('ground chunk: truncated');
   return { n, classes: bytes.slice(GROUND_HEADER, GROUND_HEADER + n * n) };
+}
+
+// Skyline file (the far LOD of tall buildings, always loaded), before
+// deflate: 'GTAS', u16 version (1), u16 chunk count, then per chunk u8 i,
+// u8 j, u32 byte length and a buildings mesh (encodeBuildings, relative to
+// that chunk's centre).
+const SKYLINE_MAGIC = 0x53415447; // 'GTAS'
+
+export function encodeSkyline(parts: { i: number; j: number; mesh: Uint8Array }[]): Uint8Array {
+  const size = 8 + parts.reduce((n, p) => n + 6 + p.mesh.length, 0);
+  const out = new Uint8Array(size);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, SKYLINE_MAGIC, true);
+  view.setUint16(4, 1, true);
+  view.setUint16(6, parts.length, true);
+  let o = 8;
+  for (const p of parts) {
+    view.setUint8(o, p.i);
+    view.setUint8(o + 1, p.j);
+    view.setUint32(o + 2, p.mesh.length, true);
+    out.set(p.mesh, o + 6);
+    o += 6 + p.mesh.length;
+  }
+  return out;
+}
+
+export function decodeSkyline(bytes: Uint8Array): { i: number; j: number; mesh: BuildingMesh }[] {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint32(0, true) !== SKYLINE_MAGIC) throw new Error('skyline: bad magic');
+  const n = view.getUint16(6, true);
+  const out: { i: number; j: number; mesh: BuildingMesh }[] = [];
+  let o = 8;
+  for (let k = 0; k < n; k++) {
+    const len = view.getUint32(o + 2, true);
+    out.push({ i: view.getUint8(o), j: view.getUint8(o + 1), mesh: decodeBuildings(bytes.subarray(o + 6, o + 6 + len)) });
+    o += 6 + len;
+  }
+  return out;
 }

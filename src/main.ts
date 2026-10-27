@@ -619,13 +619,22 @@ async function main() {
       },
       /**
        * Distance along a ray to the first drawn city surface (chunk meshes:
-       * ground, roads, buildings and verandahs, which have no colliders), or null.
+       * ground, roads, buildings and verandahs, which have no colliders, and
+       * the far skyline), or null.
        */
       renderHit: (from: number[], dir: number[], far = 50) => {
         const ray = new THREE.Raycaster(new THREE.Vector3().fromArray(from), new THREE.Vector3().fromArray(dir).normalize(), 0, far);
-        const chunks = scene.children.filter((o) => o.name.startsWith('chunk'));
+        const chunks = scene.children.filter((o) => o.name.startsWith('chunk') || o.name === 'skyline');
         return ray.intersectObjects(chunks, false)[0]?.distance ?? null;
       },
+      /** Whether a point is inside the camera's view frustum (not whether something hides it). */
+      inView: (p: number[]) => {
+        camera.updateMatrixWorld();
+        const m = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+        return new THREE.Frustum().setFromProjectionMatrix(m).containsPoint(new THREE.Vector3().fromArray(p));
+      },
+      /** Camera position. */
+      camera: () => camera.position.toArray(),
       /** Names of the map's fixed views (performance budgets are measured from them). */
       views: () => Object.keys(map.views ?? {}),
       /** Fix the camera on one of the map's named views, its heights above the ground there. */

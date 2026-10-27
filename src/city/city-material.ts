@@ -21,11 +21,27 @@ const ROAD_DEPTH_BIAS = 2e-6;
 
 const f = (v: number) => v.toFixed(5);
 
-export function cityMaterial(atlas: THREE.Texture): THREE.MeshLambertMaterial {
-  const material = new THREE.MeshLambertMaterial({ vertexColors: true });
+/**
+ * @param haze for the far skyline: its own, longer fog (colour in output
+ * sRGB, like three's), so landmarks stand out of the haze well past where
+ * the scene's fog swallows the ground. Without it the scene's fog applies.
+ */
+export function cityMaterial(atlas: THREE.Texture, haze?: { colour: THREE.Color; near: number; far: number }): THREE.MeshLambertMaterial {
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true, fog: !haze });
   const planar = LAYERS.slice(FIRST_PLANAR).map((l) => 1 / (PLANAR_METRES[l] ?? 4));
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uAtlas = { value: atlas };
+    if (haze) {
+      shader.uniforms.uHaze = { value: haze.colour };
+      shader.uniforms.uHazeRange = { value: new THREE.Vector2(haze.near, haze.far) };
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <fog_fragment>',
+        `{
+  float hd = length(vCityPos - cameraPosition);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, uHaze, smoothstep(uHazeRange.x, uHazeRange.y, hd));
+}`,
+      );
+    }
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -53,6 +69,8 @@ vCityPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
         '#include <common>',
         `#include <common>
 uniform highp sampler2DArray uAtlas;
+uniform vec3 uHaze;
+uniform vec2 uHazeRange;
 varying float vShade;
 varying vec2 vAtlasUv;
 varying float vTile;
@@ -92,6 +110,6 @@ const float PLANAR[${planar.length}] = float[](${planar.map(f).join(', ')});`,
 }`,
       );
   };
-  material.customProgramCacheKey = () => 'city';
+  material.customProgramCacheKey = () => (haze ? 'city-haze' : 'city');
   return material;
 }

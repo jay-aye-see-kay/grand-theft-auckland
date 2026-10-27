@@ -165,6 +165,11 @@ export class ChunkStreamer {
     return best && { x: best.x, z: best.z };
   }
 
+  /** Whether chunk "i,j" has its own mesh in the scene now. */
+  drawn(key: string): boolean {
+    return !!this.slots.get(key)?.mesh;
+  }
+
   hasCollider(x: number, z: number): boolean {
     return !!this.slotAt(x, z)?.chunk?.hasCollider;
   }

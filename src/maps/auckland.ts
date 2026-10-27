@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { CITY_FORMAT, type CityManifest } from '../city/format.ts';
 import { buildAtlas } from '../city/atlas.ts';
 import { ChunkStreamer } from '../city/streamer.ts';
+import { Skyline } from '../city/skyline.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
 /** public/city/<area>/parking.json, written by tools/citygen/parking.ts. */
@@ -16,6 +17,11 @@ interface CityParking {
 // land use, OSM buildings, OSM roads draped on the terrain, and the harbour.
 
 const AREA = 'cbd';
+/**
+ * A clear afternoon: pale sea haze at the horizon under a deep blue sky,
+ * far enough to see across the CBD from the ridge.
+ */
+const ATMOSPHERE = { sky: 0xc9d7e3, zenith: 0x3d74b8, fogNear: 250, fogFar: 1800, far: 2600 };
 /**
  * Outside the map, the harbour is drawn only north of this z (local metres):
  * Westhaven to the west and the port to the east, but not the suburbs
@@ -43,16 +49,32 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   const atlas = buildAtlas(maxAnisotropy);
   const terrain = new ChunkStreamer(base, manifest, scene, world, ground, atlas);
 
+  // Tall buildings for distant views (the Sky Tower from anywhere), always loaded.
+  let skyline: Skyline | null = null;
+  if (manifest.skyline) {
+    const sres = await fetch(new URL(manifest.skyline, base));
+    if (!sres.ok || !sres.body) throw new Error(`city skyline: HTTP ${sres.status}`);
+    const bytes = new Uint8Array(await new Response(sres.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+    // Its own haze, in three's fog space (output sRGB): the same colour as the fog, reaching much further.
+    const haze = { colour: new THREE.Color().setHex(ATMOSPHERE.sky, THREE.LinearSRGBColorSpace), near: 500, far: 4500 };
+    skyline = new Skyline(bytes, manifest, atlas, haze);
+    scene.add(skyline.mesh);
+  }
+  const update = (x: number, z: number) => {
+    terrain.update(x, z);
+    skyline?.update((key) => terrain.drawn(key));
+  };
+
   // On foot outside Britomart, next to the purple Corolla. Cars elsewhere
   // stay frozen (see main.ts) until the ground under them streams in.
   const s0 = parked.spawn;
   await terrain.ensureAround(s0.x, s0.z, PRELOAD_RADIUS);
-  terrain.update(s0.x, s0.z);
+  update(s0.x, s0.z);
 
   const heightAt = (x: number, z: number) => terrain.heightAt(x, z);
   const ensureLoaded = async (x: number, z: number) => {
     await terrain.ensureLoaded(x, z);
-    terrain.update(x, z);
+    update(x, z);
   };
   const spawn = new THREE.Vector3(s0.x, heightAt(s0.x, s0.z), s0.z);
 
@@ -68,9 +90,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   return {
     name: 'auckland',
     blurb: "Auckland CBD · purple '95 sedan · real hills and buildings",
-    // A clear afternoon: pale sea haze at the horizon under a deep blue sky,
-    // far enough to see across the CBD from the ridge.
-    atmosphere: { sky: 0xc9d7e3, zenith: 0x3d74b8, fogNear: 250, fogFar: 1800, far: 2600 },
+    atmosphere: ATMOSPHERE,
     parking,
     spawn: { feet: spawn, heading: s0.heading },
     heightAt,
@@ -80,7 +100,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
       z: THREE.MathUtils.clamp(z, b.minZ + 5, b.maxZ - 5),
     }),
     ensureLoaded,
-    update: (focus) => terrain.update(focus.x, focus.z),
+    update: (focus) => update(focus.x, focus.z),
     sync: () => {},
     surfaceAt: (x, z) => terrain.surfaceAt(x, z),
     // The harbour bounds the map to the north; beyond its other edges is land.
@@ -95,6 +115,6 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
       // Over the harbour, looking across the whole CBD towards K Road.
       aerial: { from: [0, 250, -250], at: [-300, -4, 500] },
     },
-    debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth }),
+    debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth, skylineTris: skyline?.total ?? 0, skylineDrawn: skyline?.drawn ?? 0 }),
   };
 }

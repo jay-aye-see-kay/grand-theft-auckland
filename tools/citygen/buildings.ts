@@ -59,6 +59,8 @@ const VERANDAH_KERB = 0.4;
 /** Segment length (it steps with the street) and the spacing of kerb posts, m. */
 const VERANDAH_STEP = 10;
 const VERANDAH_POSTS = 6;
+/** Buildings (by their tallest part) at least this tall also go in the far skyline, m. */
+const SKYLINE_MIN = 40;
 /** Parapet faces only along roof edges at least this long, m. */
 const PARAPET_MIN_EDGE = 4;
 const FASCIAS = [0xe8e2d4, 0xf0eee8, 0x2f3a34, 0x1e1f22, 0x6b2a2a, 0xd8cdb0, 0x3a4a5e];
@@ -1020,6 +1022,8 @@ export class MeshBuilder {
 export type BuildingsResult = {
   /** Per chunk "i,j" -> merged mesh builder. */
   chunks: Map<string, MeshBuilder>;
+  /** The far skyline (see SKYLINE_MIN): tall buildings again, plainer, per chunk "i,j". */
+  skyline: Map<string, MeshBuilder>;
   buildings: ExtrudedBuilding[];
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
@@ -1061,6 +1065,8 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const byKey = new Map(solids.map((s) => [s.key, s]));
   const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0 };
   const chunks = new Map<string, MeshBuilder>();
+  const skyline = new Map<string, MeshBuilder>();
+  const chunkKey = (x: number, z: number) => `${Math.floor((x - grid.x0) / CHUNK_SIZE)},${Math.floor((z - grid.z0) / CHUNK_SIZE)}`;
   const chunkAt = (x: number, z: number) => {
     const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
     const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
@@ -1202,6 +1208,12 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       },
     };
     mb.prism(s, bottom, top, wall, roof, grounded, !hide, look);
+    // Tall buildings again for the always-loaded far skyline: no shopfronts or parapets.
+    if (!hide && familyTop.get(fam)! >= SKYLINE_MIN) {
+      const key = chunkKey(s.centroid.x, s.centroid.z);
+      if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
+      skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) });
+    }
     // Verandahs over the footpath along shopfronts on retail streets.
     if (!hide && !canopy && grounded && style.ground === 'shop' && top - bottom > 5 && opts.frontages) {
       const fascia = rgb(FASCIAS[Math.floor(hash(fam, 9) * FASCIAS.length)]);
@@ -1266,7 +1278,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   landmarks.sort((a, b) => a.id.localeCompare(b.id) || a.osm.localeCompare(b.osm));
 
   counts.blocks = addBlocks(data, overrides, new Set(solids.map((s) => s.key)), chunkAt);
-  return { chunks, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z) };
+  return { chunks, skyline, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z) };
 }
 
 /** Default height of an invisible block (a road block, a fence line), m. */

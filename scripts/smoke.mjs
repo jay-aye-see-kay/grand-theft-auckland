@@ -554,6 +554,35 @@ try {
       }
       await page.screenshot({ path: `${shots}/10-view-${name}.png` });
     }
+    // The Sky Tower over the rooftops: in frame from the spawn view, seen
+    // unobstructed from Customs St outside Britomart, and from far out over
+    // the harbour, where its own chunk isn't loaded, drawn by the far skyline.
+    {
+      const manifest = await page.evaluate(() => fetch('city/cbd/manifest.json').then((r) => r.json()));
+      const tower = manifest.landmarks.find((l) => l.id === 'sky-tower');
+      const pod = [tower.x, tower.base + 190, tower.z];
+      const sightline = async (from) => {
+        const d = pod.map((v, k) => v - from[k]);
+        const len = Math.hypot(...d);
+        const hit = await game('renderHit', from, d, len + 60);
+        return { len, hit, seen: hit !== null && hit > len - 45 };
+      };
+      await game('view', 'spawn');
+      await page.waitForTimeout(500);
+      const framed = await game('inView', pod);
+      const street = await game('probe', -100, 40);
+      const fromStreet = await sightline([-100, street.ground + 1.7, 40]);
+      check(framed && fromStreet.seen, `Sky Tower in the spawn view's frame (${framed}) and seen over the rooftops from Customs St (hit at ${fromStreet.hit?.toFixed(0)} of ${fromStreet.len.toFixed(0)} m)`);
+      const far = [tower.x, 400, tower.z - 1550];
+      await game('lookFrom', far, pod);
+      await page.waitForTimeout(1500);
+      await page.waitForFunction(() => window.__game.state().inFlight === 0, null, { timeout: 30000 }).catch(() => {});
+      s = await state(page);
+      const fromFar = await sightline(far);
+      check(s.skylineTris > 1000 && s.skylineDrawn > 0 && fromFar.seen && (await game('inView', pod)),
+        `far skyline draws the Sky Tower from 1.5 km out (${s.skylineDrawn} of ${s.skylineTris} skyline triangles drawn, hit at ${fromFar.hit?.toFixed(0)} of ${fromFar.len.toFixed(0)} m)`);
+      await page.screenshot({ path: `${shots}/15-skyline-far.png` });
+    }
     await game('lookFrom', null, [0, 0, 0]);
     check(errors.length === 0, `no console errors on terrain${errors.length ? ': ' + errors.join(' | ') : ''}`);
     await page.context().close();

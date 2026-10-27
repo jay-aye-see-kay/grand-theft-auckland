@@ -13,7 +13,7 @@ import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
-import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeTerrain, GROUND_APRON, type ChunkInfo, type CityManifest } from '../../src/city/format.ts';
+import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeSkyline, encodeTerrain, GROUND_APRON, type ChunkInfo, type CityManifest } from '../../src/city/format.ts';
 import { buildBuildings, MeshBuilder } from './buildings.ts';
 import { Frontages } from './frontage.ts';
 import { buildParking, writeParking } from './parking.ts';
@@ -138,6 +138,15 @@ for (let j = 0; j < grid.nz; j++) {
   }
 }
 
+// The far skyline: tall buildings from every chunk in one small file.
+const skyParts = [...blds.skyline].map(([key, mb]) => {
+  const [i, j] = key.split(',').map(Number);
+  return { i, j, mesh: encodeBuildings(mb.encode(grid.x0 + (i + 0.5) * CHUNK_SIZE, grid.z0 + (j + 0.5) * CHUNK_SIZE)), tris: mb.idx.length / 3 };
+}).sort((a, b) => a.j - b.j || a.i - b.i);
+const skyBytes = deflateSync(encodeSkyline(skyParts), { level: 9 });
+writeFileSync(join(OUT, 'skyline.bin'), skyBytes);
+console.log(`Skyline: ${skyParts.length} chunks, ${skyParts.reduce((n, p) => n + p.tris, 0)} triangles, ${(skyBytes.length / 1024).toFixed(0)} KB`);
+
 const manifest: CityManifest = {
   format: CITY_FORMAT,
   area: AREA,
@@ -156,6 +165,7 @@ const manifest: CityManifest = {
   terrain: { cellSize: CELL_SIZE, apron: APRON, samples: SAMPLES, seaShelf: SEA_SHELF, encoding: 'gtat1+deflate' },
   ground: { apron: GROUND_APRON, samples: GROUND_SAMPLES, encoding: 'gtag1+deflate' },
   water: { level: WATER_LEVEL },
+  skyline: 'skyline.bin',
   landmarks: blds.landmarks,
   chunks,
 };
