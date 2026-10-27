@@ -109,9 +109,15 @@ export class ChaseCamera {
     this.shakeAmount = Math.min(1, Math.max(this.shakeAmount, strength));
   }
 
-  /** Snap straight behind the target on the next update (after a reset). */
-  snap(): void {
-    this.yawAngle = null;
+  /**
+   * Snap straight behind the target on the next update (after a reset).
+   * Given the target's new heading, the yaw is set now: on-foot movement
+   * reads it before the next update, and with the old yaw (or none, which
+   * reads as east) the first frame's steps go the wrong way and the camera
+   * then follows them.
+   */
+  snap(heading?: number): void {
+    this.yawAngle = heading === undefined ? null : Math.atan2(-Math.sin(heading), Math.cos(heading));
     this.smoothedPos.set(0, 0, 0);
   }
 }

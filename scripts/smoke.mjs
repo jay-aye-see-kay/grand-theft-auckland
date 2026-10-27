@@ -453,7 +453,10 @@ try {
       for (const k of keys) await page.keyboard.up(k);
       return { minD, peak, last };
     };
-    await game('teleportCar', 0, -2, -38, Math.PI);
+    // Square on to the wall (heading along its inward normal), so the car
+    // stops against it rather than scraping along it and round the corner.
+    const AT_WALL = Math.atan2(-(WALL[1][0] - WALL[0][0]), -(WALL[1][1] - WALL[0][1]));
+    await game('teleportCar', 0, -3, -32, AT_WALL);
     await page.waitForTimeout(600);
     r = await ram(['KeyW'], 30000, ({ last, peak }) => peak > 15 && last.speedKmh < 3);
     // Chassis half-length is 2.1 m: its centre should stop about that far out.
@@ -463,15 +466,21 @@ try {
 
     // Park the car out of the way, get out and walk (sprinting) at the same wall.
     await game('teleportCar', 0, 10, -20, 0);
-    for (let tries = 0; tries < 4 && (await state(page)).mode !== 'foot'; tries++) {
+    for (let tries = 0; tries < 8 && (await state(page)).mode !== 'foot'; tries++) {
       await page.keyboard.press('KeyF');
       await page.waitForFunction(() => window.__game.state().mode === 'foot', null, { timeout: 4000 }).catch(() => {});
     }
-    await game('placePlayer', -5, -38, Math.PI);
-    await page.waitForTimeout(300);
-    r = await ram(['KeyW', 'ShiftLeft'], 30000, ({ minD }) => minD < 1.5);
+    // A slow sim can still be finishing the exit: place until the player stays put.
+    for (let tries = 0; tries < 4; tries++) {
+      await game('placePlayer', -4, -33, AT_WALL);
+      await page.waitForTimeout(800);
+      const p = (await state(page)).player;
+      if (Math.hypot(p[0] + 4, p[2] + 33) < 1) break;
+    }
+    r = await ram(['KeyW', 'ShiftLeft'], 40000, ({ minD }) => minD < 1.5);
     // Capsule radius is 0.3 m; it should reach the wall and stay outside it.
-    check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2, `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall)`);
+    check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2,
+      `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall; ${r.last.mode} at ${r.last.player.map((v) => v.toFixed(1)).join(', ')})`);
 
     // Harbour: water at sea level over a deep harbour floor, Queens Wharf's
     // deck (dropped by the LiDAR, laid back from OSM), and the car and the

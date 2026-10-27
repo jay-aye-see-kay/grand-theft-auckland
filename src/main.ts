@@ -268,7 +268,7 @@ async function main() {
     const heading = Math.atan2(-(spot.z - p.z), spot.x - p.x);
     player.place(new THREE.Vector3(spot.x, (Number.isNaN(ground) ? 0 : ground) + 0.05, spot.z), heading);
     playerSoaked = null;
-    chase.snap();
+    chase.snap(heading);
   };
 
   /** Fell out of the world: put it back on the ground, just inside the map. */
@@ -417,7 +417,7 @@ async function main() {
       const { x, z } = map.clamp(feet.x, feet.z);
       const ground = map.heightAt(x, z);
       player.place(new THREE.Vector3(x, (Number.isNaN(ground) ? 0 : ground) + 0.5, z), player.heading);
-      chase.snap();
+      chase.snap(player.heading);
     }
     const playerFrozen = !driving && !map.hasGround(player.position.x, player.position.z);
 
@@ -673,7 +673,7 @@ async function main() {
       placePlayer: async (x: number, z: number, heading: number) => {
         await map.ensureLoaded(x, z);
         player.place(new THREE.Vector3(x, map.heightAt(x, z) + 0.05, z), heading);
-        chase.snap();
+        chase.snap(heading);
       },
       /** Drop the player (index -1) or a car this far below the terrain, to test the fall-out-of-world rescue. */
       sink: async (index: number, depth: number) => {
