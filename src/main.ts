@@ -17,6 +17,8 @@ import './style.css';
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS = 5;
+/** ?debug step(): ticks run between waits for streaming (1 s of game time). */
+const STEP_BATCH = 60;
 const ENTER_RANGE = 3.6; // m from the car's centre
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
@@ -370,14 +372,26 @@ async function main() {
   const _p = new THREE.Vector3();
   const _a = new THREE.Vector3();
 
-  renderer.setAnimationLoop((now) => {
-    const t0 = performance.now();
-    const frameDt = Math.min((now - last) / 1000, 0.1);
-    last = now;
+  /**
+   * ?debug manual clock (scripts/smoke): the simulation only advances
+   * through __game.step(), a fixed tick at a time, so tests don't depend on
+   * how fast this machine renders. The animation loop then just draws.
+   */
+  let manual = false;
+  /** Manual mode: draw on the next animation frame (for a screenshot). */
+  let drawRequested = false;
 
+  /**
+   * One frame of game logic: input, physics steps for `frameDt` of game
+   * time, then interpolation, camera, audio and HUD (everything but the
+   * draw). `alpha` overrides the interpolation between physics poses.
+   */
+  const frame = (frameDt: number, alpha?: number) => {
+    clock += frameDt;
     input.update();
     if (!started) input.clearPresses();
-    if (started && !driving && flyCode.feed(input.moveX, input.moveY, now / 1000)) setFlying(!player.flying);
+    // Game time, not wall time: a stalled frame shouldn't spoil a code.
+    if (started && !driving && flyCode.feed(input.moveX, input.moveY, clock)) setFlying(!player.flying);
     if (input.consume('mute')) {
       audio.toggleMute();
       setMuteIcon();
@@ -399,7 +413,6 @@ async function main() {
     const moveZ = Math.sin(cy) * input.moveY + Math.cos(cy) * input.moveX;
 
     map.update(debugView ? _p.fromArray(debugView.from) : driving ? driving.object.position : player.position);
-    clock += frameDt;
     // Into the harbour: a splash, a moment sinking (heavily damped, like
     // water), then back on the nearest road.
     for (const c of cars) {
@@ -474,7 +487,7 @@ async function main() {
     }
 
     map.sync();
-    const alpha = accumulator / FIXED_DT;
+    alpha ??= accumulator / FIXED_DT;
     for (const [n, { car, shadow }] of cars.entries()) {
       car.render(alpha);
       const seen = car.object.position.distanceTo(camera.position);
@@ -538,12 +551,34 @@ async function main() {
       const ground = map.heightAt(camera.position.x, camera.position.z);
       if (!Number.isNaN(ground) && water.covers(ground)) camera.position.y = water.level + 0.6;
     }
-    if (debugView) {
-      camera.position.fromArray(debugView.from);
-      camera.lookAt(_look.fromArray(debugView.at));
-    }
+    applyDebugView();
     skyDome.follow(camera);
     water?.update(camera, clock);
+  };
+
+  const applyDebugView = () => {
+    if (!debugView) return;
+    camera.position.fromArray(debugView.from);
+    camera.lookAt(_look.fromArray(debugView.at));
+  };
+
+  renderer.setAnimationLoop((now) => {
+    const t0 = performance.now();
+    const frameDt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    if (!manual) frame(frameDt);
+    else {
+      // Paused: fixed viewpoints still stream the city round them, but
+      // nothing is drawn until a test asks (software rendering is slow).
+      if (debugView) {
+        map.update(_p.fromArray(debugView.from));
+        map.sync();
+        applyDebugView();
+        skyDome.follow(camera);
+      }
+      if (!drawRequested) return;
+      drawRequested = false;
+    }
     const tRender = performance.now();
     renderer.render(scene, camera);
     const tEnd = performance.now();
@@ -570,7 +605,30 @@ async function main() {
     }
   });
 
-  // Read-only state for automated tests (scripts/smoke.mjs). Only with ?debug.
+  /**
+   * ?debug: pauses real time (see `manual`) and advances the game `n` fixed
+   * ticks of 1/60 s, without drawing. Between batches it waits for the
+   * ground round the player (or car, or debug view) to finish streaming,
+   * so chunks arrive at the same game time on any machine.
+   */
+  const step = async (n = 1) => {
+    if (!manual) accumulator = 0; // each frame below is then exactly one physics step
+    manual = true;
+    for (let done = 0; done < n; ) {
+      const p = debugView ? _p.fromArray(debugView.from) : driving ? driving.object.position : player.position;
+      await map.ensureLoaded(p.x, p.z);
+      // Everything the streamer wants from here, not just what a frame happened to start.
+      for (map.update(p); map.debugInfo().inFlight; map.update(p)) {
+        while (map.debugInfo().inFlight) await new Promise((r) => setTimeout(r, 10));
+      }
+      const batch = Math.min(STEP_BATCH, n - done);
+      // alpha 1: show the latest physics pose, the one the test just stepped to.
+      for (let i = 0; i < batch; i++) frame(FIXED_DT, 1);
+      done += batch;
+    }
+  };
+
+  // State and test hooks for automated tests (scripts/smoke). Only with ?debug.
   if (debug) {
     (window as unknown as { __game: unknown }).__game = {
       state: () => ({
@@ -652,6 +710,7 @@ async function main() {
        * landmarks and the far skyline), or null.
        */
       renderHit: (from: number[], dir: number[], far = 50) => {
+        scene.updateMatrixWorld(); // paused (manual mode), nothing may have been drawn since chunks arrived
         const ray = new THREE.Raycaster(new THREE.Vector3().fromArray(from), new THREE.Vector3().fromArray(dir).normalize(), 0, far);
         const chunks = scene.children.filter((o) => o.visible && (o.name.startsWith('chunk') || o.name.startsWith('landmark') || o.name === 'skyline'));
         return ray.intersectObjects(chunks, false)[0]?.distance ?? null;
@@ -687,7 +746,8 @@ async function main() {
       probe: async (x: number, z: number) => {
         await map.ensureLoaded(x, z);
         // New colliders only join scene queries on the next physics step.
-        for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+        if (manual) await step(2);
+        else for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
         const ray = new RAPIER.Ray({ x, y: 1000, z }, down);
         const hit = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED, TERRAIN_ONLY_QUERY);
         const top = world.castRay(ray, 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
@@ -718,6 +778,40 @@ async function main() {
         up: new THREE.Vector3(0, 1, 0).applyQuaternion(car.object.quaternion).y,
         frozen,
       })),
+      step,
+      /** Manual mode: draw a frame (for a screenshot); resolves once it's on screen. */
+      draw: async () => {
+        drawRequested = true;
+        for (let i = 0; i < 2; i++) await new Promise(requestAnimationFrame);
+      },
+      /** Back to real time after step(). */
+      realtime: () => {
+        manual = false;
+      },
+      /**
+       * Back to the start: on foot at the spawn, not flying, every car on its
+       * parking spot and out of the water, the chase camera behind, the
+       * clock paused (manual). For smoke areas that run on their own (--only).
+       */
+      reset: async () => {
+        debugView = null;
+        if (driving) exit(driving);
+        setFlying(false);
+        for (const [i, c] of cars.entries()) {
+          const spot = map.parking[i];
+          c.car.place(spot.pos.clone(), spot.heading, spot.pitch, spot.roll);
+          c.car.body.setLinearDamping(0.05);
+          c.car.body.setAngularDamping(0.6);
+          c.soaked = null;
+        }
+        await map.ensureLoaded(map.spawn.feet.x, map.spawn.feet.z);
+        player.place(map.spawn.feet.clone(), map.spawn.heading);
+        playerSoaked = null;
+        upsideDownTime = 0;
+        input.clearPresses();
+        chase.snap(map.spawn.heading);
+        await step(2); // and stays paused: what follows is stepped from here
+      },
       /** Move a car (default: the purple one) to (x, z) on the ground, facing `heading`. */
       teleportCar: async (index: number, x: number, z: number, heading: number) => {
         await map.ensureLoaded(x, z);

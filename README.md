@@ -35,16 +35,21 @@ npm install
 npm run dev     # http://localhost:5173, also on your LAN for phone testing
 npm run build   # typecheck + production build into dist/
 npm run sim     # headless handling report (0-100, braking, cornering)
-npm run smoke   # plays the built game in headless Chromium and checks it
+npm run smoke   # plays the built game in headless Chromium: quick core checks
+npm run smoke:full   # every check: city data, driving, harbour, budgets, phone
 ```
 
 `npm run sim` drives the car through standard manoeuvres without a browser.
 Run it before and after touching the numbers in `TUNING` in `src/car.ts`.
 
-`npm run smoke` (after `npm run build`) starts on foot, walks, jumps, gets
-in, drives, handbrakes, gets out, then repeats the basics with touch
-controls on a phone-sized screen. It fails on any console error or a blown
-triangle/draw-call budget. CI only builds and deploys, so run it locally.
+`npm run smoke` (after `npm run build`, about 30 s) starts on foot, walks,
+jumps, gets in, drives, handbrakes, gets out and rams a building.
+`npm run smoke:full` (a few minutes) adds the city data, driving the hills,
+the harbour, the fly cheat, the test town, touch controls on a phone-sized
+screen and the triangle/draw-call budgets. Both fail on any console error.
+Pick areas with `npm run smoke -- --only=harbour,fly`. The game is stepped a
+fixed tick at a time, so results repeat exactly: `--repeat=3` checks that.
+CI only builds and deploys, so run it locally.
 
 Project structure and conventions: [CLAUDE.md](CLAUDE.md).
 
