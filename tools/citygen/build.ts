@@ -21,6 +21,7 @@ import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
+import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
@@ -59,13 +60,17 @@ console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points und
 const terrainSampler = new TerrainSampler(data.dem);
 const network = roadNetwork(data, terrainSampler, overrides);
 const frontages = new Frontages(data.osm);
-const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt, frontages });
+const wikidata = loadWikidata(AREA);
+const blds = buildBuildings(data, grid, { overrides, deckAt: network.deckAt, frontages, wikidata });
 const c = blds.counts;
 console.log(
   `Buildings: ${c.outlines} outlines + ${c.parts} parts drawn (${c.hiddenOutlines} outlines replaced by their parts, ${c.outside} outside the grid). ` +
     `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
     `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks. ` +
-    `${c.verandahs} verandahs (${(c.verandahMetres / 1000).toFixed(1)} km).`,
+    `${c.verandahs} verandahs (${(c.verandahMetres / 1000).toFixed(1)} km). ` +
+    `Eras: ${Object.entries(c.eras).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ')}. ` +
+    `${c.towers} towers split from podiums, ${c.plant} rooftop plant boxes. ` +
+    `Pitched roofs: ${Object.entries(c.roofs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}.`,
 );
 const tallest = blds.buildings.slice().sort((a, b) => b.top - b.base - (a.top - a.base)).slice(0, 8);
 console.log(`Tallest: ${tallest.map((b) => `${b.key} ${(b.top - b.base).toFixed(0)} m`).join(', ')}`);
@@ -96,6 +101,8 @@ let groundBytes = 0;
 let buildingBytes = 0;
 let maxBuildingBytes = 0;
 let buildingTris = 0;
+let nearTris = 0;
+let fineTris = 0;
 
 const chunks: ChunkInfo[] = [];
 let minY = Infinity;
@@ -115,6 +122,8 @@ for (let j = 0; j < grid.nz; j++) {
       buildingBytes += bytes.length;
       maxBuildingBytes = Math.max(maxBuildingBytes, bytes.length);
       buildingTris += mb.idx.length / 3;
+      nearTris += mb.extras.length / 3;
+      fineTris += mb.fineIdx.length / 3;
     }
     const rb = roads.chunks.get(`${i},${j}`);
     if (rb && rb.idx.length) {
@@ -187,7 +196,7 @@ const size = (dir: string): number =>
 console.log(`Wrote ${chunks.length} terrain chunks, heights ${minY.toFixed(1)}..${maxY.toFixed(1)} m`);
 console.log(
   `Wrote ${blds.chunks.size} building chunks: ${(buildingBytes / 1024).toFixed(0)} KB deflated, ` +
-    `largest ${(maxBuildingBytes / 1024).toFixed(0)} KB, ${buildingTris} triangles`,
+    `largest ${(maxBuildingBytes / 1024).toFixed(0)} KB, ${buildingTris} triangles + ${nearTris} near-only + ${fineTris} fine`,
 );
 console.log(
   `Wrote ${roads.chunks.size} road chunks: ${(roadBytes / 1024).toFixed(0)} KB deflated, ` +

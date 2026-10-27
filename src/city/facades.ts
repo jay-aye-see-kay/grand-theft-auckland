@@ -6,8 +6,8 @@
 // The atlas is a texture array: one 512 px square layer per material, each
 // repeating on its own, so walls tile cleanly and mip-map without bleeding
 // into their neighbours. A vertex's `tile` byte picks the layer (0 = plain
-// vertex colour, else layer + 1) and, for roads, the lane markings painted
-// by the shader (tile = 1 + layer + 16 * marking).
+// vertex colour, else layer + 1); from MARKED up it's asphalt with lane
+// markings painted by the shader (tile = MARKED - 1 + marking).
 //
 // Facade layers are drawn for a whole number of bays across and floors up,
 // and the generator scales each wall's UVs so a bay and a floor land on the
@@ -27,9 +27,22 @@ export const LAYERS = [
   'stone', // heritage sandstone/plaster: Edwardian commercial
   'balcony', // apartments with balcony slabs
   'plain', // blank side and party walls
+  'italianate', // Victorian painted plaster: arched windows under hood moulds, quoins
+  'warehouse', // Victorian/Edwardian brick warehouse: segmental arches, small panes
+  'deco', // interwar: fluted pilasters, recessed windows over chevron spandrels
+  'stripped', // interwar stripped classical: steel multi-pane windows, speed lines
+  'modern60', // 1960s curtain wall: aluminium grid over coloured spandrel panels
+  'brutal', // 1970s precast: deep-set windows in chunky concrete frames
+  'glass-b', // recent unitised curtain wall with vertical fins
+  'cladding', // recent apartments and offices: panel cladding, tall windows
+  'weatherboard', // villas and cottages: weatherboards, double-hung sashes
+  'carpark', // parking buildings: open decks between concrete bands
+  'shed', // industrial: ribbed metal cladding, a band of translucent panels
   'shop', // modern glazed shopfronts (ground floor)
   'shop-heritage', // timber shopfronts with stallrisers and recessed doors
   'lobby', // tower lobby: tall glazing between stone columns
+  'roof-tin', // corrugated iron on pitched roofs (u across the fall, v down it)
+  'roof-tile', // concrete or clay tiles on pitched roofs
   'roof', // membrane and gravel (planar)
   'asphalt', // road surface (planar)
   'paving', // footpath pavers (planar)
@@ -59,13 +72,33 @@ export const FACADE: Partial<Record<Layer, { bays: number; floors: number; bay: 
   stone: { bays: 3, floors: 3, bay: 3.4 },
   balcony: { bays: 3, floors: 4, bay: 3.6 },
   plain: { bays: 2, floors: 4, bay: 4 },
+  italianate: { bays: 3, floors: 3, bay: 3.3 },
+  warehouse: { bays: 4, floors: 3, bay: 3 },
+  deco: { bays: 3, floors: 4, bay: 3.2 },
+  stripped: { bays: 3, floors: 4, bay: 3 },
+  modern60: { bays: 4, floors: 4, bay: 1.6 },
+  brutal: { bays: 3, floors: 4, bay: 2.6 },
+  'glass-b': { bays: 4, floors: 4, bay: 1.5 },
+  cladding: { bays: 4, floors: 4, bay: 2.2 },
+  weatherboard: { bays: 2, floors: 2, bay: 3 },
+  carpark: { bays: 2, floors: 4, bay: 5.5 },
+  shed: { bays: 4, floors: 1, bay: 3 },
   shop: { bays: 2, floors: 1, bay: 4.5 },
   'shop-heritage': { bays: 2, floors: 1, bay: 4.5 },
   lobby: { bays: 2, floors: 1, bay: 4.5 },
 };
 
-/** A vertex's tile byte for an atlas layer (and, on roads, a marking pattern 0-14). */
-export const tileOf = (layer: Layer, marking = 0) => 1 + LAYER[layer] + 16 * marking;
+/** Tile bytes from here up are asphalt with lane markings (see roadMarking). */
+export const MARKED = 128;
+
+/** Metres of pitched roof one repeat of a roof layer covers (its UVs run across and down the slope). */
+export const ROOF_METRES: Partial<Record<Layer, number>> = { 'roof-tin': 2.4, 'roof-tile': 2.4 };
+
+/** A vertex's tile byte for an atlas layer (and, on asphalt, a marking pattern 1-14). */
+export const tileOf = (layer: Layer, marking = 0) => {
+  if (marking && layer !== 'asphalt') throw new Error(`lane markings on ${layer}`);
+  return marking ? MARKED - 1 + marking : 1 + LAYER[layer];
+};
 
 /**
  * Road markings packed into the tile byte's high bits: 0 none; else the

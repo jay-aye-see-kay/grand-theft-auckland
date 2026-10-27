@@ -26,6 +26,8 @@ export class BuildingChunk {
   readonly indices: Uint32Array;
   /** Indices from here on are near-only detail (verandahs, parapets, rooftop plant). */
   readonly nearOnly: number;
+  /** Indices from here on are fine detail, drawn nearer still (cornices, rooftop plant, eaves). */
+  readonly fineFrom: number;
   private collider: RAPIER.Collider | null = null;
   private readonly vertices: Float32Array;
   private readonly colliderIndices: Uint32Array;
@@ -47,6 +49,7 @@ export class BuildingChunk {
     this.detail = data.detail;
     this.indices = data.indices;
     this.nearOnly = data.nearOnly ?? data.indices.length;
+    this.fineFrom = data.fineFrom ?? data.indices.length;
 
     // The collider lives on the shared fixed body, so it needs world positions.
     this.vertices = new Float32Array(pos);

@@ -320,6 +320,421 @@ export const painters: Record<Layer, Painter> = {
       c.fillRect(x, y, 4 + rnd() * 10, 120);
     }
   },
+  italianate(c, m, rnd) {
+    // Victorian commercial in painted plaster: a moulded string course at each
+    // floor, pilasters between bays, round-arched windows under hood moulds.
+    const { bw, fh } = cell('italianate');
+    wallBase(c, m, rnd, TINT_GREY + 2);
+    for (let f = 0; f < 3; f++) {
+      const y0 = f * fh;
+      // String course with dentils: light top, shadow under.
+      rect(c, m, 0, y0 + fh - 18, S, 10, grey(246), 1);
+      for (let x = 0; x < S; x += 12) rect(c, m, x, y0 + fh - 8, 7, 5, grey(236), 1);
+      c.fillStyle = 'rgba(0,0,0,0.28)';
+      c.fillRect(0, y0 + fh - 3, S, 3);
+      for (let b = 0; b < 3; b++) {
+        const x0 = b * bw;
+        // Pilaster with a shadowed side.
+        rect(c, m, x0, y0, 14, fh - 18, grey(240), 1);
+        c.fillStyle = 'rgba(0,0,0,0.16)';
+        c.fillRect(x0 + 14, y0, 4, fh - 18);
+        const w = bw * 0.36;
+        const x = x0 + (bw - w) / 2 + 7;
+        const top = y0 + fh * 0.2;
+        const h = fh * 0.56;
+        c.save();
+        c.beginPath();
+        c.arc(x + w / 2, top + w / 2, w / 2, Math.PI, 0);
+        c.lineTo(x + w, top + h);
+        c.lineTo(x, top + h);
+        c.closePath();
+        c.clip();
+        punched(c, m, rnd, x, top, w, h, '#f4f0e6', true);
+        c.restore();
+        // Hood mould over the arch, ending in little corbels.
+        c.strokeStyle = grey(250);
+        c.lineWidth = 7;
+        c.beginPath();
+        c.arc(x + w / 2, top + w / 2, w / 2 + 7, Math.PI, 0);
+        c.stroke();
+        c.strokeStyle = 'rgba(0,0,0,0.25)';
+        c.lineWidth = 2;
+        c.beginPath();
+        c.arc(x + w / 2, top + w / 2 + 4, w / 2 + 10, Math.PI * 1.05, -Math.PI * 0.05);
+        c.stroke();
+        rect(c, m, x - 13, top + w / 2 - 2, 9, 12, grey(244), 1);
+        rect(c, m, x + w + 4, top + w / 2 - 2, 9, 12, grey(244), 1);
+        rect(c, m, x + w / 2 - 6, top - 12, 12, 16, grey(250), 1);
+        rect(c, m, x - 6, top + h, w + 12, 7, grey(246), 1);
+      }
+    }
+  },
+  warehouse(c, m, rnd) {
+    // Brick warehouse: piers between bays, segmental-arched windows of small panes.
+    const { bw, fh } = cell('warehouse');
+    rect(c, m, 0, 0, S, S, '#b8b2a8', 0.3);
+    m.fillStyle = grey(255);
+    const course = 8;
+    for (let y = 0; y < S; y += course) {
+      const off = (y / course) % 2 ? 10 : 0;
+      for (let x = -off; x < S; x += 20) {
+        c.fillStyle = grey(TINT_GREY - 20 + (rnd() - 0.5) * 40);
+        c.fillRect(x + 1, y + 1, 18, course - 2);
+        m.fillRect(x + 1, y + 1, 18, course - 2);
+      }
+    }
+    blotches(c, rnd, 14, 40, 110, 0.16, 0.04);
+    for (let b = 0; b < 4; b++) {
+      // Piers catch the light on one side.
+      c.fillStyle = 'rgba(255,255,255,0.1)';
+      c.fillRect(b * bw, 0, 6, S);
+      c.fillStyle = 'rgba(0,0,0,0.18)';
+      c.fillRect(b * bw + 18, 0, 4, S);
+    }
+    for (let f = 0; f < 3; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 4; b++) {
+        const w = bw * 0.56;
+        const x = b * bw + (bw - w) / 2 + 6;
+        const top = y0 + fh * 0.2;
+        const h = fh * 0.58;
+        const rise = 12;
+        // Segmental head: a shallow curve over the opening.
+        c.save();
+        c.beginPath();
+        c.moveTo(x, top + rise);
+        c.quadraticCurveTo(x + w / 2, top - rise, x + w, top + rise);
+        c.lineTo(x + w, top + h);
+        c.lineTo(x, top + h);
+        c.closePath();
+        c.clip();
+        glass(c, m, rnd, x, top, w, h, 0.05, 0.3);
+        // Small panes in painted timber.
+        c.strokeStyle = '#e8e2d2';
+        c.lineWidth = 3;
+        c.beginPath();
+        for (let k = 1; k < 3; k++) {
+          c.moveTo(x + (w * k) / 3, top);
+          c.lineTo(x + (w * k) / 3, top + h);
+        }
+        for (let k = 1; k < 4; k++) {
+          c.moveTo(x, top + (h * k) / 4);
+          c.lineTo(x + w, top + (h * k) / 4);
+        }
+        c.stroke();
+        c.restore();
+        // Arch of headers (paler brick) and a stone sill.
+        c.strokeStyle = grey(TINT_GREY + 10);
+        c.lineWidth = 9;
+        c.beginPath();
+        c.moveTo(x - 4, top + rise + 2);
+        c.quadraticCurveTo(x + w / 2, top - rise - 4, x + w + 4, top + rise + 2);
+        c.stroke();
+        rect(c, m, x - 6, top + h, w + 12, 8, '#d8d2c4', 0.15);
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(x, top + 3, 5, h - 3);
+      }
+    }
+  },
+  deco(c, m, rnd) {
+    // Interwar: fluted pilasters running the full height, windows recessed
+    // between them over spandrel panels with chevrons.
+    const { bw, fh } = cell('deco');
+    wallBase(c, m, rnd, TINT_GREY + 4);
+    for (let b = 0; b < 3; b++) {
+      const x0 = b * bw;
+      const pw = 34;
+      for (let f = 0; f < 4; f++) {
+        const y0 = f * fh;
+        const wx = x0 + pw + 10;
+        const ww = bw - pw - 20;
+        const top = y0 + 10;
+        const h = fh * 0.6;
+        punched(c, m, rnd, wx, top, ww, h, '#3a3e40', false);
+        // Steel glazing bars: three panes up, two across.
+        c.fillStyle = '#2e3234';
+        for (let k = 1; k < 3; k++) c.fillRect(wx, top + (h * k) / 3, ww, 3);
+        c.fillRect(wx + ww / 2 - 1, top, 3, h);
+        // Spandrel: a recessed panel with a chevron frieze.
+        const sy = top + h + 8;
+        const sh = fh - h - 26;
+        rect(c, m, wx, sy, ww, sh, grey(TINT_GREY - 18), 1);
+        c.strokeStyle = grey(250);
+        c.lineWidth = 3;
+        c.beginPath();
+        for (let x = wx + 6; x < wx + ww - 12; x += 18) {
+          c.moveTo(x, sy + sh - 6);
+          c.lineTo(x + 9, sy + 6);
+          c.lineTo(x + 18, sy + sh - 6);
+        }
+        c.stroke();
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(wx, sy, ww, 3);
+      }
+      // The pilaster: lit face, three flutes, shadowed return.
+      rect(c, m, x0, 0, pw, S, grey(244), 1);
+      c.fillStyle = 'rgba(0,0,0,0.14)';
+      for (let k = 1; k < 4; k++) c.fillRect(x0 + (pw * k) / 4 - 1, 0, 2, S);
+      c.fillStyle = 'rgba(0,0,0,0.28)';
+      c.fillRect(x0 + pw, 0, 6, S);
+    }
+  },
+  stripped(c, m, rnd) {
+    // Stripped classical: wide steel multi-pane windows, speed lines at the sills.
+    const { bw, fh } = cell('stripped');
+    wallBase(c, m, rnd, TINT_GREY + 6);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 3; b++) {
+        const w = bw * 0.72;
+        const x = b * bw + (bw - w) / 2;
+        const top = y0 + fh * 0.18;
+        const h = fh * 0.5;
+        glass(c, m, rnd, x, top, w, h, 0.05, 0.28);
+        c.fillStyle = '#2b2f31';
+        for (let k = 1; k < 4; k++) c.fillRect(x + (w * k) / 4 - 1, top, 3, h);
+        for (let k = 1; k < 3; k++) c.fillRect(x, top + (h * k) / 3 - 1, w, 2);
+        c.strokeStyle = '#2b2f31';
+        c.lineWidth = 4;
+        c.strokeRect(x + 2, top + 2, w - 4, h - 4);
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(x, top, w, 6);
+      }
+      // Three speed lines under the windows, right across.
+      for (let k = 0; k < 3; k++) {
+        const y = y0 + fh * 0.18 + fh * 0.5 + 10 + k * 8;
+        c.fillStyle = 'rgba(0,0,0,0.22)';
+        c.fillRect(0, y, S, 2);
+        c.fillStyle = 'rgba(255,255,255,0.25)';
+        c.fillRect(0, y + 2, S, 2);
+      }
+    }
+  },
+  modern60(c, m, rnd) {
+    // 1960s curtain wall: vision glass above, coloured spandrel panels below
+    // (the building's tint), behind a light aluminium grid.
+    const { bw, fh } = cell('modern60');
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      const vision = fh * 0.56;
+      for (let b = 0; b < 4; b++) {
+        glass(c, m, rnd, b * bw, y0, bw, vision, 0.05, 0.15);
+        // Spandrel panel: tinted, a little mottled like enamel or mosaic.
+        const v = TINT_GREY - 10 + (rnd() - 0.5) * 16;
+        rect(c, m, b * bw, y0 + vision, bw, fh - vision, grey(v), 1);
+        speckle(c, rnd, 120, 3, 0.2, b * bw, y0 + vision, bw, fh - vision);
+      }
+      // Transom between glass and panel.
+      rect(c, m, 0, y0 + vision - 3, S, 6, '#c8ccce', 0);
+    }
+    for (let b = 0; b <= 4; b++) {
+      rect(c, m, b * bw - 4, 0, 8, S, '#d4d8da', 0);
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(b * bw + 4, 0, 3, S);
+    }
+    for (let f = 0; f <= 4; f++) rect(c, m, 0, f * fh - 3, S, 6, '#c4c8ca', 0);
+  },
+  brutal(c, m, rnd) {
+    // 1970s precast: chunky frames, windows set deep in them, board marks.
+    const { bw, fh } = cell('brutal');
+    wallBase(c, m, rnd, TINT_GREY - 4);
+    c.fillStyle = 'rgba(0,0,0,0.05)';
+    for (let y = 0; y < S; y += 9) c.fillRect(0, y, S, 1);
+    blotches(c, rnd, 18, 30, 90, 0.14, 0.04);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 3; b++) {
+        const w = bw * 0.56;
+        const h = fh * 0.5;
+        const x = b * bw + (bw - w) / 2;
+        const top = y0 + fh * 0.2;
+        // Chamfered surround: a lit lower bevel, a dark upper one.
+        c.fillStyle = 'rgba(255,255,255,0.22)';
+        c.fillRect(x - 12, top + h, w + 24, 10);
+        c.fillStyle = 'rgba(0,0,0,0.25)';
+        c.fillRect(x - 12, top - 10, w + 24, 10);
+        glass(c, m, rnd, x, top, w, h, 0.02, 0.4);
+        // Deep reveal: heavy shadow on the top and one side.
+        const g = c.createLinearGradient(0, top, 0, top + 22);
+        g.addColorStop(0, 'rgba(0,0,0,0.6)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = g;
+        c.fillRect(x, top, w, 22);
+        c.fillStyle = 'rgba(0,0,0,0.4)';
+        c.fillRect(x, top, 14, h);
+        c.fillStyle = 'rgba(30,30,30,0.9)';
+        c.fillRect(x + w / 2 - 2, top, 4, h);
+      }
+      // Grooves between panels.
+      c.fillStyle = 'rgba(0,0,0,0.2)';
+      c.fillRect(0, y0 + fh - 4, S, 4);
+    }
+    for (let b = 0; b < 3; b++) {
+      c.fillStyle = 'rgba(0,0,0,0.18)';
+      c.fillRect(b * bw, 0, 4, S);
+    }
+  },
+  'glass-b'(c, m, rnd) {
+    // Recent unitised curtain wall: floor-to-ceiling glass, a fritted band at
+    // each slab, and vertical fins that catch the light.
+    const { bw, fh } = cell('glass-b');
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 4; b++) {
+        glass(c, m, rnd, b * bw, y0, bw, fh - 16, 0.4, 0.05);
+        glass(c, m, rnd, b * bw, y0 + fh - 16, bw, 16, 0.55, 0.4);
+        // Frit dots on the slab band.
+        c.fillStyle = 'rgba(230,235,235,0.35)';
+        for (let x = b * bw + 3; x < (b + 1) * bw; x += 6) for (let y = y0 + fh - 14; y < y0 + fh - 2; y += 6) c.fillRect(x, y, 2, 2);
+      }
+      rect(c, m, 0, y0 + fh - 18, S, 3, '#9aa4a8', 0.3);
+    }
+    for (let b = 0; b < 4; b++) {
+      // A fin: lit face and the shadow it throws.
+      rect(c, m, b * bw - 5, 0, 10, S, grey(232), 0.6);
+      c.fillStyle = 'rgba(0,0,0,0.22)';
+      c.fillRect(b * bw + 5, 0, 7, S);
+    }
+  },
+  cladding(c, m, rnd) {
+    // Recent apartments and offices: a grid of cladding panels in a few tones
+    // and tall windows in a rhythm that shifts floor to floor.
+    const { bw, fh } = cell('cladding');
+    for (let f = 0; f < 4; f++) {
+      for (let b = 0; b < 4; b++) {
+        const v = TINT_GREY + (rnd() < 0.3 ? -26 : rnd() < 0.5 ? 12 : 0) + (rnd() - 0.5) * 8;
+        rect(c, m, b * bw, f * fh, bw, fh, grey(v), 1);
+      }
+    }
+    speckle(c, rnd, 2000, 2, 0.08);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 4; b++) {
+        const kind = rnd();
+        const w = kind < 0.5 ? bw * 0.62 : kind < 0.8 ? bw * 0.34 : bw * 0.82;
+        const x = b * bw + (kind < 0.5 ? bw * 0.19 : kind < 0.8 ? (rnd() < 0.5 ? bw * 0.12 : bw * 0.54) : bw * 0.09);
+        const top = y0 + fh * 0.1;
+        const h = fh * 0.76;
+        // A deep charcoal frame round the glass.
+        rect(c, m, x - 6, top - 6, w + 12, h + 12, '#2e3134', 0);
+        glass(c, m, rnd, x, top, w, h, 0.02, 0.15);
+        c.fillStyle = 'rgba(0,0,0,0.3)';
+        c.fillRect(x, top, w, 8);
+        if (rnd() < 0.4) {
+          c.fillStyle = 'rgba(40,44,46,0.85)';
+          c.fillRect(x, top + h * 0.62, w, 3);
+        }
+      }
+      // Panel joints.
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(0, y0, S, 2);
+    }
+    c.fillStyle = 'rgba(0,0,0,0.2)';
+    for (let b = 0; b < 4; b++) c.fillRect(b * bw, 0, 2, S);
+  },
+  weatherboard(c, m, rnd) {
+    // Villas and cottages: weatherboards and pairs of double-hung sashes.
+    const { bw, fh } = cell('weatherboard');
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY + 6), 1);
+    for (let y = 0; y < S; y += 12) {
+      const g = c.createLinearGradient(0, y, 0, y + 12);
+      g.addColorStop(0, 'rgba(255,255,255,0.08)');
+      g.addColorStop(0.8, 'rgba(0,0,0,0.04)');
+      g.addColorStop(1, 'rgba(0,0,0,0.3)');
+      c.fillStyle = g;
+      c.fillRect(0, y, S, 12);
+    }
+    speckle(c, rnd, 800, 2, 0.06);
+    for (let f = 0; f < 2; f++) {
+      const y0 = f * fh;
+      for (let b = 0; b < 2; b++) {
+        const pw = 62;
+        const gap = 10;
+        const x = b * bw + (bw - 2 * pw - gap) / 2;
+        const top = y0 + fh * 0.22;
+        const h = fh * 0.56;
+        // Facings round the pair.
+        rect(c, m, x - 14, top - 18, 2 * pw + gap + 28, h + 30, '#f2f0ea', 0);
+        c.fillStyle = 'rgba(0,0,0,0.2)';
+        c.fillRect(x - 14, top + h + 12, 2 * pw + gap + 28, 4);
+        for (const wx of [x, x + pw + gap]) {
+          glass(c, m, rnd, wx, top, pw, h, 0, 0.2);
+          if (rnd() < 0.5) {
+            c.fillStyle = `rgba(235,228,210,${0.5 + rnd() * 0.3})`;
+            c.fillRect(wx, top, pw, h * (0.15 + rnd() * 0.3));
+          }
+          // Sash frames and the meeting rail.
+          c.strokeStyle = '#f6f4ee';
+          c.lineWidth = 6;
+          c.strokeRect(wx + 3, top + 3, pw - 6, h - 6);
+          c.fillStyle = '#f6f4ee';
+          c.fillRect(wx, top + h / 2 - 3, pw, 6);
+        }
+      }
+    }
+  },
+  carpark(c, m, rnd) {
+    // Parking building: open decks (dark, a lit ceiling, cars) between concrete bands.
+    const { bw, fh } = cell('carpark');
+    wallBase(c, m, rnd, TINT_GREY - 2);
+    for (let f = 0; f < 4; f++) {
+      const y0 = f * fh;
+      const open = fh * 0.55;
+      const g = c.createLinearGradient(0, y0, 0, y0 + open);
+      g.addColorStop(0, '#5a5c5c');
+      g.addColorStop(0.25, '#2a2c2e');
+      g.addColorStop(1, '#1a1c1e');
+      c.fillStyle = g;
+      c.fillRect(0, y0, S, open);
+      m.fillStyle = grey(0);
+      m.fillRect(0, y0, S, open);
+      // Strip lights on the soffit.
+      c.fillStyle = 'rgba(240,240,220,0.6)';
+      for (let x = 20; x < S; x += 64) c.fillRect(x, y0 + 6, 30, 3);
+      // Cars nose-on, glimpsed over the parapet.
+      for (let x = 8; x < S - 50; x += 56 + rnd() * 30) {
+        if (rnd() < 0.3) continue;
+        const col = [[180, 30, 30], [30, 60, 120], [200, 200, 205], [40, 40, 44], [120, 125, 130], [90, 110, 70]][Math.floor(rnd() * 6)];
+        c.fillStyle = rgb(col[0], col[1], col[2]);
+        c.fillRect(x, y0 + open - 26, 44, 26);
+        c.fillStyle = 'rgba(20,30,40,0.8)';
+        c.fillRect(x + 6, y0 + open - 34, 32, 10);
+      }
+      // The concrete band, lit along its top edge.
+      rect(c, m, 0, y0 + open, S, 5, grey(246), 1);
+      c.fillStyle = 'rgba(0,0,0,0.12)';
+      c.fillRect(0, y0 + fh - 3, S, 3);
+    }
+    // Columns.
+    for (let b = 0; b < 2; b++) {
+      for (let f = 0; f < 4; f++) rect(c, m, b * bw, f * fh, 22, fh * 0.55, grey(TINT_GREY - 14), 1);
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(b * bw + 22, 0, 4, S);
+    }
+  },
+  shed(c, m, rnd) {
+    // Industrial cladding: vertical ribs every 20 cm, translucent panels
+    // under the eaves of each storey, a darker kick strip at the foot.
+    wallBase(c, m, rnd, TINT_GREY);
+    for (let x = 0; x < S; x += S / 64) {
+      c.fillStyle = 'rgba(255,255,255,0.14)';
+      c.fillRect(x, 0, 2, S);
+      c.fillStyle = 'rgba(0,0,0,0.16)';
+      c.fillRect(x + 2, 0, 3, S);
+    }
+    for (let b = 0; b < 4; b++) {
+      const x = (b * S) / 4;
+      rect(c, m, x + 6, 26, S / 4 - 12, 70, '#d8dcd4', 0.25);
+      c.fillStyle = 'rgba(0,0,0,0.12)';
+      for (let k = 1; k < 4; k++) c.fillRect(x + 6 + ((S / 4 - 12) * k) / 4, 26, 2, 70);
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.fillRect(x + 6, 96, S / 4 - 12, 4);
+    }
+    blotches(c, rnd, 12, 30, 110, 0.12, 0.05);
+    rect(c, m, 0, S - 30, S, 30, grey(TINT_GREY - 40), 1);
+  },
   shop(c, m, rnd) {
     // One storey, two shops. Top: fascia and sign board (mostly under the verandah).
     const bw = S / 2;
@@ -463,6 +878,53 @@ export const painters: Record<Layer, Painter> = {
       speckle(c, rnd, 300, 2, 0.2, x, 0, 36, S);
     }
     rect(c, m, 0, 0, S, 30, grey(TINT_GREY - 30), 1);
+  },
+  'roof-tin'(c, m, rnd) {
+    // Corrugated iron: ridges run down the slope (canvas y), 2.4 m across in
+    // 32 corrugations, sheet laps every 1.2 m down, a little rust and fading.
+    wallBase(c, m, rnd, TINT_GREY);
+    for (let x = 0; x < S; x += S / 32) {
+      const g = c.createLinearGradient(x, 0, x + S / 32, 0);
+      g.addColorStop(0, 'rgba(0,0,0,0.16)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.12)');
+      g.addColorStop(1, 'rgba(0,0,0,0.16)');
+      c.fillStyle = g;
+      c.fillRect(x, 0, S / 32, S);
+    }
+    for (let y = 0; y < S; y += S / 2) {
+      c.fillStyle = 'rgba(0,0,0,0.22)';
+      c.fillRect(0, y, S, 3);
+      c.fillStyle = 'rgba(255,255,255,0.1)';
+      c.fillRect(0, y + 3, S, 2);
+    }
+    // Rows of screws along the purlins.
+    c.fillStyle = 'rgba(0,0,0,0.25)';
+    for (let y = S / 8; y < S; y += S / 4) for (let x = S / 64; x < S; x += S / 8) c.fillRect(x, y, 3, 3);
+    blotches(c, rnd, 10, 30, 90, 0.12, 0.05);
+  },
+  'roof-tile'(c, m, rnd) {
+    // Concrete or clay tiles: courses across the slope, 16 per 2.4 m, staggered.
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY - 40), 1);
+    const course = S / 16;
+    const tw = S / 8;
+    for (let y = 0; y < S; y += course) {
+      const off = (y / course) % 2 ? tw / 2 : 0;
+      for (let x = -off; x < S; x += tw) {
+        const v = TINT_GREY - 6 + (rnd() - 0.5) * 30;
+        const g = c.createLinearGradient(0, y, 0, y + course);
+        g.addColorStop(0, grey(v + 14));
+        g.addColorStop(1, grey(v - 26));
+        c.fillStyle = g;
+        c.fillRect(x + 1, y + 1, tw - 2, course - 2);
+        // The roll of the tile.
+        c.fillStyle = 'rgba(255,255,255,0.1)';
+        c.fillRect(x + tw * 0.3, y + 1, tw * 0.2, course - 3);
+      }
+      // Shadow under each course's lower edge.
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.fillRect(0, y + course - 3, S, 3);
+    }
+    blotches(c, rnd, 12, 30, 100, 0.14, 0.05);
   },
   roof(c, m, rnd) {
     wallBase(c, m, rnd, TINT_GREY - 8);

@@ -39,6 +39,8 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
 - `tools/citygen/`: offline generator. OSM + LINZ LiDAR → projected (origin Britomart) →
   terrain, buildings, roads, ground, piers, sea walls, parking → `public/city/cbd/` (committed,
   deterministic). Hand fixes in `overrides/cbd.json` keyed by OSM id (see `overrides/README.md`).
+  Buildings: `roofs.ts` (pitched roofs fitted to the DSM), `rooftops.ts` (towers on podiums,
+  rooftop plant), `eras.ts` (facade family, colours and cornices per architectural era).
 - `scripts/smoke/` (Playwright: `run.mjs`, one file per area), `scripts/sim-car.ts`
 
 ## Conventions
@@ -66,9 +68,11 @@ Measured at `__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`
 | Street (`spawn`, `queen-st`) | < 150k | < 60 |
 | Aerial | < 300k | < 100 |
 
-Street view is ~130k / ~30 today. Each chunk is one draw call: put new static
+Street view is ~140k / ~45 today. Each chunk is one draw call: put new static
 geometry into `ChunkMesh` (vertex colours, shared materials/atlas), not new
-meshes. Bake multi-part models, instance repeated props, LOD by distance, blob
+meshes. Small building detail goes in `MeshBuilder.detail()`: near-only
+(within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves).
+Bake multi-part models, instance repeated props, LOD by distance, blob
 shadows only. 2 m ground within 90 m, 10 m beyond; colliders within ~300 m.
 
 ## Gotchas

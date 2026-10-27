@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TINT_GAIN } from './atlas.ts';
-import { FIRST_PLANAR, LAYERS, PLANAR_METRES, SHADE_ONE, UV_SCALE } from './facades.ts';
+import { FIRST_PLANAR, LAYER, LAYERS, MARKED, PLANAR_METRES, SHADE_ONE, UV_SCALE } from './facades.ts';
 
 // The one material every city chunk is drawn with (so each chunk stays one
 // draw call): Lambert lighting with vertex colours as the tint, plus
@@ -114,9 +114,12 @@ ${planar.length ? `const float PLANAR[${planar.length}] = float[](${planar.map(f
 {
   float tile = floor(vTile + 0.5);
   if (tile > 0.5) {
-    float t = tile - 1.0;
-    float layer = mod(t, 16.0);
-    float marking = floor(t / 16.0);
+    float layer = tile - 1.0;
+    float marking = 0.0;
+    ${landmark ? '' : `if (tile > ${f(MARKED)} - 0.5) {
+      layer = ${f(LAYER.asphalt)};
+      marking = tile - ${f(MARKED - 1)};
+    }`}
     vec2 uv = vAtlasUv;
     ${planar.length ? `if (layer >= ${f(FIRST_PLANAR)} - 0.5) uv = vCityPos.xz * PLANAR[int(layer) - ${FIRST_PLANAR}];` : ''}
     vec4 tex = texture(uAtlas, vec3(uv, layer));

@@ -29,6 +29,18 @@ export default {
     const canopy = await roofAt(-21, 28);
     check(glass > 14 && glass < 18 && pwc > 170 && pwc < 180 && kiosk < 6 && canopy > 3.5 && canopy < 6,
       `overridden heights: Glasshouse ${glass.toFixed(1)} m, PwC crown top ${pwc?.toFixed(0)} m asl, kiosk ${kiosk.toFixed(1)} m, Galway St canopy ${canopy.toFixed(1)} m`);
+
+    // Shapes read from the LiDAR (tools/citygen/roofs.ts, rooftops.ts): a
+    // Freemans Bay house's gabled roof rises from eave to ridge, and West
+    // Plaza (one OSM outline, LiDAR median 28 m) is a tall tower on a podium.
+    // (Heights above sea level: the house is on a slope.)
+    const top = async (x, z) => (await game('probe', x, z)).top ?? NaN;
+    const ridge = await top(-1433, 823.9);
+    const eave = await top(-1436.8, 822.6);
+    const plaza = await top(-289, 8.5);
+    const podium = await top(-316, 5);
+    check(ridge - eave > 1 && plaza - podium > 40,
+      `LiDAR roof shapes: house ridge ${(ridge - eave).toFixed(1)} m over its eave side, West Plaza tower ${plaza.toFixed(0)} m asl on a ${podium.toFixed(0)} m podium`);
     const manifest = await page.evaluate(() => fetch('city/cbd/manifest.json').then((r) => r.json()));
     const ids = new Set((manifest.landmarks ?? []).map((l) => l.id));
     check(['sky-tower', 'ferry-building', 'britomart', 'civic-theatre', 'town-hall', 'wynyard-silos'].every((id) => ids.has(id)),
