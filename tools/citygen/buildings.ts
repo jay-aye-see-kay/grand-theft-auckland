@@ -22,8 +22,9 @@ import { sampleLocal, type Raster } from './raster.ts';
 import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 import { SUN_DIRECTION } from '../../src/sun.ts';
-import { FACADE, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
+import { FACADE, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
+import { fitRoof, outsetRing, planeAt, planeRegions, roofAt, roofBreaks, roofFrame, roofPlanes, type Plane, type RoofFit, type RoofShape } from './roofs.ts';
 
 export const LEVEL_HEIGHT = 3.2;
 export const DEFAULT_HEIGHT = 9;
@@ -591,6 +592,80 @@ function roofColour(key: string, tags: Tags, wall: [number, number, number]): [n
   return tagged !== null ? mix(base, rgb(tagged), 0.5) : base.map((v) => v * (0.95 + 0.1 * hash(key, 3))) as [number, number, number];
 }
 
+/** `roof:shape` values drawn as one of ours (domes and onions stay flat: too round for planes). */
+const TAGGED_ROOFS: Record<string, RoofShape> = {
+  flat: 'flat', gabled: 'gabled', hipped: 'hipped', pyramidal: 'pyramidal', skillion: 'skillion', mansard: 'mansard',
+  'half-hipped': 'hipped', side_hipped: 'hipped', crosspitched: 'hipped', gambrel: 'gabled', saltbox: 'gabled', double_saltbox: 'gabled',
+};
+/** Buildings taller than this keep flat roofs unless one is mapped, m. */
+const PITCHED_MAX = 30;
+/** Footprints must fill this much of their bounding rectangle for a fitted gable or hip (skillions SKILLION_FILL). */
+const PITCHED_FILL = 0.75;
+const SKILLION_FILL = 0.8;
+/** The highest ridge drawn, m above the eave. */
+const RISE_MAX = 9;
+/** Walls under a pitched roof are at least this tall, m. */
+const EAVE_MIN = 2.4;
+
+// Pitched roof cladding (sRGB): painted corrugated iron is the Auckland roof; tiles on some houses.
+const TIN = [0x8a3b32, 0x4f6150, 0x3c3f42, 0x8c8f8f, 0xa6aaa8, 0x6b2f2a, 0x5a6b73];
+const TIN_INDUSTRIAL = [0x8c8f8f, 0xa6aaa8, 0x7d8285, 0x3c3f42];
+const TILE = [0xa45a3f, 0x8e4c36, 0x6e4b3a, 0x4a4a4c, 0x7a3e30];
+
+export type RoofChoice = { pitched: PitchedRoof; eave: number; ridge: number; shape: RoofShape; colour: [number, number, number] };
+
+/**
+ * A pitched roof for a building, or null for a flat one: the mapped
+ * `roof:shape` if any, else what the DSM shows (see roofs.ts) on footprints
+ * that are near enough rectangular. Heights: a tagged `height` is the
+ * ridge; levels give the eave; a LiDAR height is replaced by the fitted eave.
+ */
+export function chooseRoof(s: Solid, h: SolidHeight, dsm: Raster, bottom: number, top: number, familyTop: number): RoofChoice | null {
+  const t = s.tags;
+  if (s.polygons.length !== 1 || s.polygons[0].holes.length || isCanopy(t)) return null;
+  const tagged = TAGGED_ROOFS[(t['roof:shape'] ?? '').toLowerCase()];
+  if (tagged === 'flat' || (t['roof:shape'] && !tagged)) return null;
+  if (!tagged && (familyTop > PITCHED_MAX + 10 || h.height > PITCHED_MAX)) return null;
+  const ring = s.polygons[0].outer;
+  const frame = roofFrame(ring, s.area);
+  const fit: RoofFit | null = fitRoof(dsm, { ring, area: s.area, frame });
+  let shape: RoofShape;
+  let alongU = true;
+  let rise: number;
+  const fitted = !!fit && fit.shape !== 'flat' && (!tagged || fit.shape === tagged);
+  if (tagged) {
+    shape = tagged;
+    alongU = fit?.shape === 'gabled' ? fit.alongU : t['roof:orientation'] !== 'across';
+    const half = shape === 'gabled' && !alongU ? frame.L : frame.W;
+    const defaults: Record<RoofShape, number> = { flat: 0, gabled: half * 0.55, hipped: frame.W * 0.5, pyramidal: frame.W * 0.75, skillion: frame.W * 0.4, mansard: 3 };
+    rise = parseLength(t['roof:height']) || (fitted ? fit!.rise : Math.min(defaults[shape], 5));
+  } else {
+    if (!fitted) return null;
+    if (frame.fill < (fit!.shape === 'skillion' ? SKILLION_FILL : PITCHED_FILL)) return null;
+    shape = fit!.shape;
+    alongU = fit!.alongU;
+    rise = fit!.rise;
+  }
+  rise = Math.min(rise, RISE_MAX);
+  let eave = top;
+  if (h.source === 'height') eave = top - rise;
+  else if ((h.source === 'dsm' || h.source === 'default') && fitted) eave = Math.min(fit!.eave, bottom + 60);
+  eave = Math.max(eave, bottom + EAVE_MIN);
+  if (h.source === 'height') rise = Math.max(0.5, top - eave);
+  const planes = roofPlanes(frame, { shape, alongU, rise, plane: fitted ? fit!.plane : undefined }, eave);
+  // Cladding: mapped material, else tiles on some houses, iron everywhere else.
+  const material = (t['roof:material'] ?? '').toLowerCase();
+  const house = HOUSES.has(t.building ?? '');
+  const tiles = /tile|slate|clay/.test(material) || (!/metal|tin|iron/.test(material) && house && hash(s.key, 11) < 0.3);
+  const palette = tiles ? TILE : SHEDS.has(t.building ?? '') ? TIN_INDUSTRIAL : TIN;
+  let colour = rgb(palette[Math.floor(hash(s.key, 12) * palette.length)]);
+  const tc = tagColour(t['roof:colour']);
+  if (tc !== null) colour = mix(colour, rgb(tc), 0.7);
+  // Houses' eaves overhang more than commercial buildings' (often behind a parapet in reality).
+  const overhang = house || FLATS.has(t.building ?? '') ? 0.5 : 0.3;
+  return { pitched: { planes, layer: tiles ? 'roof-tile' : 'roof-tin', overhang }, eave, ridge: eave + rise, shape, colour };
+}
+
 // ---------------------------------------------------------------- meshing
 
 /** Baked light for one wall: colour multipliers at its foot, at the band row (BASE_BAND up) and at its top. */
@@ -612,6 +687,9 @@ export type Look = {
   /** Height of the parapet round a flat roof, m (0 for none). */
   parapet: number;
 };
+
+/** A pitched roof's planes (absolute heights; the roof is their minimum) and its cladding. */
+export type PitchedRoof = { planes: Plane[]; layer: Layer; overhang: number };
 
 /** How far out from a wall to look for the building across the street, m. */
 const CANYON_REACH = 40;
@@ -708,9 +786,10 @@ export class MeshBuilder {
    * level where it faces a street, and a parapet above a flat roof. Baked
    * light goes in the shade channel; the vertex colour is the wall's tint.
    */
-  prism(s: Pick<Solid, 'polygons'>, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean, visible = true, look?: Look) {
+  prism(s: Pick<Solid, 'polygons'>, bottom: number, top: number, wall: [number, number, number], roof: [number, number, number], grounded: boolean, visible = true, look?: Look, pitched?: PitchedRoof) {
+    const planes = pitched?.planes;
     if (!visible) {
-      this.colliderPrism(s.polygons, bottom, top);
+      this.colliderPrism(s.polygons, bottom, top, planes);
       return;
     }
     const gf = look?.groundFloor ?? BASE_BAND;
@@ -718,10 +797,13 @@ export class MeshBuilder {
     // walls tall enough for the foot darkening to matter get one.
     const shops = !!look && look.groundFloor !== BASE_BAND;
     const banded = grounded && top - bottom > (shops ? gf + 1.5 : BASE_BAND * 2);
-    const parapet = look?.parapet ?? 0;
+    // Pitched roofs have no parapet; their walls run up to the roof (gable ends).
+    const parapet = planes ? 0 : look?.parapet ?? 0;
     const lid = top + parapet;
+    const roofY = (p: Local) => (planes ? Math.max(top, roofAt(planes, p.x, p.z)) : lid);
     for (const poly of s.polygons) {
-      for (const ring of [poly.outer, ...poly.holes]) {
+      for (const ring0 of [poly.outer, ...poly.holes]) {
+        const ring = planes ? roofBreaks(ring0, planes) : ring0;
         for (let k = 0; k < ring.length; k++) {
           const a = ring[k];
           const b = ring[(k + 1) % ring.length];
@@ -745,8 +827,24 @@ export class MeshBuilder {
           const a1 = put(a, lid, l.top, upTile, 0, floorV(face.upper, lid));
           const b1 = put(b, lid, l.top, upTile, uUp, floorV(face.upper, lid));
           // The collider stops at the roof; the parapet above it is only drawn.
-          const ac = parapet ? this.vertex(a.x, top, a.z, n, wall) : a1;
-          const bc = parapet ? this.vertex(b.x, top, b.z, n, wall) : b1;
+          let ac = parapet ? this.vertex(a.x, top, a.z, n, wall) : a1;
+          let bc = parapet ? this.vertex(b.x, top, b.z, n, wall) : b1;
+          if (planes) {
+            // Under a pitched roof: plain wall from the eave up to the roof line (a gable end).
+            const ya = roofY(a);
+            const yb = roofY(b);
+            if (ya > top + 0.02 || yb > top + 0.02) {
+              const pt = tileOf('plain');
+              const pu = len / 8;
+              const ga = put(a, top, l.top, pt, 0, 0);
+              const gb = put(b, top, l.top, pt, pu, 0);
+              const gc = put(b, yb, l.top, pt, pu, (yb - top) / 8);
+              const gd = put(a, ya, l.top, pt, 0, (ya - top) / 8);
+              this.idx.push(ga, gc, gb, ga, gd, gc);
+              ac = gd;
+              bc = gc;
+            }
+          }
           // Outward-facing (counter-clockwise seen from outside) for rings wound as cleanRing() leaves them.
           if (banded) {
             // The ground floor follows the street: a storey above the ground at each corner.
@@ -787,6 +885,10 @@ export class MeshBuilder {
           }
         }
       }
+      if (planes && pitched) {
+        this.pitchedRoof(poly.outer, pitched, roof, !!look);
+        continue;
+      }
       // Flat roof (and an underside for parts that float, like a tower's pod).
       const rings = [poly.outer, ...poly.holes];
       const flat: number[] = [];
@@ -808,6 +910,62 @@ export class MeshBuilder {
           if (cy > 0 !== up) [q, r] = [r, q];
           this.idx.push(first + p, first + q, first + r);
           this.colliderIdx.push(first + p, first + q, first + r);
+        }
+      }
+    }
+  }
+
+  /**
+   * A pitched roof over a ring (no holes): each plane over its share of the
+   * footprint, drawn and in the collider. Sloping planes are textured along
+   * their fall (corrugations and tile courses run downhill); a flat plane
+   * (a mansard's top) gets the flat-roof layer.
+   */
+  pitchedRoof(ring: Ring, pitched: PitchedRoof, colour: readonly number[], textured: boolean) {
+    // Eaves overhang the walls (and read as a roof from the street); the underside is near-only detail.
+    const eaves = (pitched.overhang && outsetRing(ring, pitched.overhang)) || ring;
+    for (const { plane, ring: region } of planeRegions(eaves, pitched.planes)) {
+      const flat: number[] = [];
+      for (const p of region) flat.push(p.x, p.z);
+      const tris = earcut(flat);
+      if (!tris.length) continue;
+      const g = Math.hypot(plane.bx, plane.bz);
+      const n = [-plane.bx, 1, -plane.bz].map((v) => v / Math.hypot(plane.bx, 1, plane.bz));
+      // Downhill unit vector, and across it.
+      const dx = g > 1e-6 ? -plane.bx / g : 0;
+      const dz = g > 1e-6 ? -plane.bz / g : 1;
+      const stretch = Math.sqrt(1 + g * g);
+      const sloped = g > 0.05;
+      const tile = !textured ? 0 : sloped ? tileOf(pitched.layer) : tileOf('roof');
+      const metres = sloped ? ROOF_METRES[pitched.layer] ?? 4 : 1;
+      // Light falls off a little on slopes facing away from the sun.
+      const facing = sloped ? (dx * SUN_DIRECTION[0] + dz * SUN_DIRECTION[2]) / SUN_H : 0;
+      const light = sloped ? 1.02 + 0.1 * facing : 1;
+      const first = this.vertexCount;
+      // UVs from the ring's first corner (int16 UVs can't hold world-sized ones).
+      const [ox, oz] = [ring[0].x, ring[0].z];
+      for (let k = 0; k < flat.length; k += 2) {
+        const x = flat[k];
+        const z = flat[k + 1];
+        const u = ((x - ox) * -dz + (z - oz) * dx) / metres;
+        const v = (((x - ox) * dx + (z - oz) * dz) * stretch) / metres;
+        this.vertex(x, planeAt(plane, x, z), z, n, colour, 0, tile, sloped ? u : 0, sloped ? -v : 0, light);
+      }
+      for (let k = 0; k < tris.length; k += 3) {
+        let [p, q, r] = [tris[k], tris[k + 1], tris[k + 2]];
+        const cy = (flat[q * 2 + 1] - flat[p * 2 + 1]) * (flat[r * 2] - flat[p * 2]) - (flat[q * 2] - flat[p * 2]) * (flat[r * 2 + 1] - flat[p * 2 + 1]);
+        if (cy <= 0) [q, r] = [r, q];
+        this.idx.push(first + p, first + q, first + r);
+        this.colliderIdx.push(first + p, first + q, first + r);
+      }
+      if (eaves !== ring && textured) {
+        const under = this.vertexCount;
+        for (let k = 0; k < flat.length; k += 2) this.vertex(flat[k], planeAt(plane, flat[k], flat[k + 1]) - 0.05, flat[k + 1], [0, -1, 0], colour, 0, 0, 0, 0, 0.45);
+        for (let k = 0; k < tris.length; k += 3) {
+          let [p, q, r] = [tris[k], tris[k + 1], tris[k + 2]];
+          const cy = (flat[q * 2 + 1] - flat[p * 2 + 1]) * (flat[r * 2] - flat[p * 2]) - (flat[q * 2] - flat[p * 2]) * (flat[r * 2 + 1] - flat[p * 2 + 1]);
+          if (cy > 0) [q, r] = [r, q];
+          this.extras.push(under + p, under + q, under + r);
         }
       }
     }
@@ -962,19 +1120,36 @@ export class MeshBuilder {
    * An invisible solid: walls and a lid in the collider only (its vertices
    * ride along in the render buffers but no drawn triangle uses them).
    */
-  colliderPrism(polygons: Polygon[], bottom: number, top: number) {
+  colliderPrism(polygons: Polygon[], bottom: number, top: number, planes?: Plane[]) {
     const none = [0, 0, 0] as const;
     for (const poly of polygons) {
-      for (const ring of [poly.outer, ...poly.holes]) {
+      for (const ring0 of [poly.outer, ...poly.holes]) {
+        const ring = planes ? roofBreaks(ring0, planes) : ring0;
+        const yAt = (p: Local) => (planes ? Math.max(top, roofAt(planes, p.x, p.z)) : top);
         for (let k = 0; k < ring.length; k++) {
           const a = ring[k];
           const b = ring[(k + 1) % ring.length];
           const a0 = this.vertex(a.x, bottom, a.z, none, none);
           const b0 = this.vertex(b.x, bottom, b.z, none, none);
-          const a1 = this.vertex(a.x, top, a.z, none, none);
-          const b1 = this.vertex(b.x, top, b.z, none, none);
+          const a1 = this.vertex(a.x, yAt(a), a.z, none, none);
+          const b1 = this.vertex(b.x, yAt(b), b.z, none, none);
           this.colliderIdx.push(a0, b1, b0, a0, a1, b1);
         }
+      }
+      if (planes) {
+        for (const { plane, ring: region } of planeRegions(poly.outer, planes)) {
+          const flat = region.flatMap((p) => [p.x, p.z]);
+          const first = this.vertexCount;
+          for (let k = 0; k < flat.length; k += 2) this.vertex(flat[k], planeAt(plane, flat[k], flat[k + 1]), flat[k + 1], none, none);
+          const tris = earcut(flat);
+          for (let k = 0; k < tris.length; k += 3) {
+            let [p, q, r] = [tris[k], tris[k + 1], tris[k + 2]];
+            const cy = (flat[q * 2 + 1] - flat[p * 2 + 1]) * (flat[r * 2] - flat[p * 2]) - (flat[q * 2] - flat[p * 2]) * (flat[r * 2 + 1] - flat[p * 2 + 1]);
+            if (cy <= 0) [q, r] = [r, q];
+            this.colliderIdx.push(first + p, first + q, first + r);
+          }
+        }
+        continue;
       }
       const flat: number[] = [];
       const holes: number[] = [];
@@ -1028,7 +1203,7 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahMetres: number };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>> };
 };
 
 /** A building tagged as a landmark in the overrides, for hand-made models (T9). */
@@ -1063,7 +1238,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0 };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0, roofs: {} as Partial<Record<RoofShape, number>> };
   const chunks = new Map<string, MeshBuilder>();
   const skyline = new Map<string, MeshBuilder>();
   const chunkKey = (x: number, z: number) => `${Math.floor((x - grid.x0) / CHUNK_SIZE)},${Math.floor((z - grid.z0) / CHUNK_SIZE)}`;
@@ -1106,7 +1281,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const famTopAbs = new Map<string, number>();
   const cover = new Footprints();
   // First where everything stands, then the meshes: walls are shaded by the buildings around them.
-  type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean };
+  type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean; roof: RoofChoice | null };
   const placed: Placed[] = [];
   for (const s of visible) {
     const h = heights.get(s.key)!;
@@ -1121,9 +1296,11 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const base = parent ? Math.min(baseOf(parent), baseOf(s)) : baseOf(s);
     const grounded = h.minHeight < 0.5;
     const bottom = grounded ? base : base + h.minHeight;
-    const top = base + h.height;
     const fam = s.parent ?? s.key;
-    famTopAbs.set(fam, Math.max(famTopAbs.get(fam) ?? -Infinity, top));
+    const roof = grounded && !hideKey(s) ? chooseRoof(s, h, data.dsm, bottom, base + h.height, familyTop.get(fam)!) : null;
+    if (roof) counts.roofs[roof.shape] = (counts.roofs[roof.shape] ?? 0) + 1;
+    const top = roof ? roof.eave : base + h.height;
+    famTopAbs.set(fam, Math.max(famTopAbs.get(fam) ?? -Infinity, roof ? roof.ridge : top));
     const famTags = parent && !s.tags['building:colour'] ? { ...parent.tags, ...s.tags } : s.tags;
     const hide = hideKey(s);
     const o = overrides.get(s.key);
@@ -1133,7 +1310,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       counts.hidden++;
       continue;
     }
-    placed.push({ s, h, mb, base, bottom, top, grounded, famTags, fam, hide });
+    placed.push({ s, h, mb, base, bottom, top, grounded, famTags, fam, hide, roof });
   }
   // Occluders for the canyon shading: drawn, standing on the ground, more than a kiosk.
   const occluders = new Footprints<Placed>();
@@ -1188,7 +1365,8 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const canopy = isCanopy(s.tags);
     const style = facadeStyle(fam, famTags, familyTop.get(fam)!, familyRetail.get(fam) ?? false, familyShops.get(fam) ?? 0);
     const wall = wallColour(fam, famTags, style);
-    const roof = roofColour(s.key, famTags, wall);
+    const roof = p.roof?.colour ?? roofColour(s.key, famTags, wall);
+    const pitched = p.roof?.pitched;
     const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? (style.heritage ? 'shop-heritage' : 'shop') : null;
     const look: Look = {
       shade: canyonShade(across, p),
@@ -1207,12 +1385,12 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         return { upper: style.upper, ground: front ? shopLayer : null };
       },
     };
-    mb.prism(s, bottom, top, wall, roof, grounded, !hide, look);
+    mb.prism(s, bottom, top, wall, roof, grounded, !hide, look, pitched);
     // Tall buildings again for the always-loaded far skyline: no shopfronts or parapets.
     if (!hide && familyTop.get(fam)! >= SKYLINE_MIN) {
       const key = chunkKey(s.centroid.x, s.centroid.z);
       if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
-      skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) });
+      skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) }, pitched);
     }
     // Verandahs over the footpath along shopfronts on retail streets.
     if (!hide && !canopy && grounded && style.ground === 'shop' && top - bottom > 5 && opts.frontages) {
@@ -1236,7 +1414,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       }
     }
     // Plant rooms on tower roofs.
-    if (!hide && !canopy && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
+    if (!hide && !canopy && !pitched && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
       const ring = s.polygons[0].outer;
       let angle = 0;
       let longest = 0;
@@ -1253,7 +1431,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     counts[h.source]++;
     if (s.isPart) counts.parts++;
     else counts.outlines++;
-    buildings.push({ key: s.key, base: p.base, bottom, top, source: h.source });
+    buildings.push({ key: s.key, base: p.base, bottom, top: p.roof ? p.roof.ridge : top, source: h.source });
   }
 
   // Landmarks: where they stand, for the hand-made models.

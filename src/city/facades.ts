@@ -6,8 +6,8 @@
 // The atlas is a texture array: one 512 px square layer per material, each
 // repeating on its own, so walls tile cleanly and mip-map without bleeding
 // into their neighbours. A vertex's `tile` byte picks the layer (0 = plain
-// vertex colour, else layer + 1) and, for roads, the lane markings painted
-// by the shader (tile = 1 + layer + 16 * marking).
+// vertex colour, else layer + 1); from MARKED up it's asphalt with lane
+// markings painted by the shader (tile = MARKED - 1 + marking).
 //
 // Facade layers are drawn for a whole number of bays across and floors up,
 // and the generator scales each wall's UVs so a bay and a floor land on the
@@ -30,6 +30,8 @@ export const LAYERS = [
   'shop', // modern glazed shopfronts (ground floor)
   'shop-heritage', // timber shopfronts with stallrisers and recessed doors
   'lobby', // tower lobby: tall glazing between stone columns
+  'roof-tin', // corrugated iron on pitched roofs (u across the fall, v down it)
+  'roof-tile', // concrete or clay tiles on pitched roofs
   'roof', // membrane and gravel (planar)
   'asphalt', // road surface (planar)
   'paving', // footpath pavers (planar)
@@ -64,8 +66,17 @@ export const FACADE: Partial<Record<Layer, { bays: number; floors: number; bay: 
   lobby: { bays: 2, floors: 1, bay: 4.5 },
 };
 
-/** A vertex's tile byte for an atlas layer (and, on roads, a marking pattern 0-14). */
-export const tileOf = (layer: Layer, marking = 0) => 1 + LAYER[layer] + 16 * marking;
+/** Tile bytes from here up are asphalt with lane markings (see roadMarking). */
+export const MARKED = 128;
+
+/** Metres of pitched roof one repeat of a roof layer covers (its UVs run across and down the slope). */
+export const ROOF_METRES: Partial<Record<Layer, number>> = { 'roof-tin': 2.4, 'roof-tile': 2.4 };
+
+/** A vertex's tile byte for an atlas layer (and, on asphalt, a marking pattern 1-14). */
+export const tileOf = (layer: Layer, marking = 0) => {
+  if (marking && layer !== 'asphalt') throw new Error(`lane markings on ${layer}`);
+  return marking ? MARKED - 1 + marking : 1 + LAYER[layer];
+};
 
 /**
  * Road markings packed into the tile byte's high bits: 0 none; else the

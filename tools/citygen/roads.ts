@@ -523,7 +523,7 @@ function emitStrip(out: ChunkMeshes, sections: Section[], cols: number[], opts: 
       continue;
     }
     const mk = opts.marking;
-    const tile = mk ? level.tile + 16 * mk.code : level.tile;
+    const tile = mk ? tileOf('asphalt', mk.code) : level.tile;
     const row = (sec: Section, lift: number, layer: number) =>
       cols.map((o, c) => {
         const p = offsetPoint(sec.st, o);

@@ -464,6 +464,53 @@ export const painters: Record<Layer, Painter> = {
     }
     rect(c, m, 0, 0, S, 30, grey(TINT_GREY - 30), 1);
   },
+  'roof-tin'(c, m, rnd) {
+    // Corrugated iron: ridges run down the slope (canvas y), 2.4 m across in
+    // 32 corrugations, sheet laps every 1.2 m down, a little rust and fading.
+    wallBase(c, m, rnd, TINT_GREY);
+    for (let x = 0; x < S; x += S / 32) {
+      const g = c.createLinearGradient(x, 0, x + S / 32, 0);
+      g.addColorStop(0, 'rgba(0,0,0,0.16)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.12)');
+      g.addColorStop(1, 'rgba(0,0,0,0.16)');
+      c.fillStyle = g;
+      c.fillRect(x, 0, S / 32, S);
+    }
+    for (let y = 0; y < S; y += S / 2) {
+      c.fillStyle = 'rgba(0,0,0,0.22)';
+      c.fillRect(0, y, S, 3);
+      c.fillStyle = 'rgba(255,255,255,0.1)';
+      c.fillRect(0, y + 3, S, 2);
+    }
+    // Rows of screws along the purlins.
+    c.fillStyle = 'rgba(0,0,0,0.25)';
+    for (let y = S / 8; y < S; y += S / 4) for (let x = S / 64; x < S; x += S / 8) c.fillRect(x, y, 3, 3);
+    blotches(c, rnd, 10, 30, 90, 0.12, 0.05);
+  },
+  'roof-tile'(c, m, rnd) {
+    // Concrete or clay tiles: courses across the slope, 16 per 2.4 m, staggered.
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY - 40), 1);
+    const course = S / 16;
+    const tw = S / 8;
+    for (let y = 0; y < S; y += course) {
+      const off = (y / course) % 2 ? tw / 2 : 0;
+      for (let x = -off; x < S; x += tw) {
+        const v = TINT_GREY - 6 + (rnd() - 0.5) * 30;
+        const g = c.createLinearGradient(0, y, 0, y + course);
+        g.addColorStop(0, grey(v + 14));
+        g.addColorStop(1, grey(v - 26));
+        c.fillStyle = g;
+        c.fillRect(x + 1, y + 1, tw - 2, course - 2);
+        // The roll of the tile.
+        c.fillStyle = 'rgba(255,255,255,0.1)';
+        c.fillRect(x + tw * 0.3, y + 1, tw * 0.2, course - 3);
+      }
+      // Shadow under each course's lower edge.
+      c.fillStyle = 'rgba(0,0,0,0.3)';
+      c.fillRect(0, y + course - 3, S, 3);
+    }
+    blotches(c, rnd, 12, 30, 100, 0.14, 0.05);
+  },
   roof(c, m, rnd) {
     wallBase(c, m, rnd, TINT_GREY - 8);
     speckle(c, rnd, 9000, 2, 0.25);
