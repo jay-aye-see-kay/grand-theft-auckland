@@ -18,6 +18,7 @@ import testTown from './areas/test-town.mjs';
 import terrain from './areas/terrain.mjs';
 import parked from './areas/parked.mjs';
 import drive from './areas/drive.mjs';
+import bridges from './areas/bridges.mjs';
 import buildings from './areas/buildings.mjs';
 import fly from './areas/fly.mjs';
 import harbour from './areas/harbour.mjs';
@@ -26,7 +27,7 @@ import realtime from './areas/realtime.mjs';
 import phone from './areas/phone.mjs';
 
 /** In running order. Areas on the same page share it, each starting from __game.reset(). */
-const AREAS = [core, walls, terrain, parked, drive, buildings, fly, harbour, budget, realtime, testTown, phone];
+const AREAS = [core, walls, terrain, parked, drive, bridges, buildings, fly, harbour, budget, realtime, testTown, phone];
 
 const PORT = 4179;
 const URL = `http://localhost:${PORT}/?debug`;

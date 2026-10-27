@@ -26,7 +26,9 @@
 //
 // Bridges: the LiDAR DEM has bridges removed, so draping would drop them
 // into the gully. Bridge ways follow a deck profile instead (bridgeHeights)
-// and get a thin deck collider. Tunnels are skipped.
+// and get a thin deck collider. The DEM's cut-out is a little bigger than
+// the bridge OSM maps, so decks are carried on over its edge (extendDecks).
+// Tunnels are skipped.
 //
 // Footpaths are not clamped against buildings: where OSM puts a footprint
 // right against a centreline the footpath just runs inside the building,
@@ -625,6 +627,126 @@ function emitDisc(out: ChunkMeshes, cx: number, cz: number, r0: number, r: numbe
 
 // ---------------------------------------------------------------- bridges
 
+/** Furthest a deck is carried past its OSM end over the DEM's bridge cut-out, m. */
+const EXTEND_MAX = 30;
+/** Ground rising more than this over 2 m (25 %) is the cut-out's edge, not a street. */
+const HOLE_RISE = 0.5;
+/** How far past the last such rise the deck reaches, clear of the 2 m lattice's slope. */
+const EXTEND_MARGIN = 3;
+
+/**
+ * Carries bridge decks past their OSM ends over the edge of the DEM's bridge
+ * cut-out. LINZ removes bridges from the DEM over an area a few metres
+ * larger than the deck OSM maps, so the at-grade roads meeting a bridge dip
+ * into the hole, and the deck, anchored to the ground at its end node,
+ * starts metres low and climbs a wall to clear the road below (Upper Queen
+ * St over the motorway: 2.6 m low, then +5 m in 7 m). From each bridge
+ * node, every at-grade way leaving it is walked outward; the last steep rise
+ * in its ground within EXTEND_MAX (plus a margin) becomes deck, splitting
+ * the way at a new node there, so the deck is anchored on solid ground.
+ * A way that is all hole carries the walk on to the ways at its far end.
+ */
+export function extendDecks(roads: Road[], terrain: TerrainSampler): Road[] {
+  const byNode = new Map<number, { road: Road; k: number }[]>();
+  for (const r of roads) r.nodes.forEach((n, k) => {
+    if (!byNode.has(n)) byNode.set(n, []);
+    byNode.get(n)!.push({ road: r, k });
+  });
+  const pointAt = (r: Road, s: number): Local => {
+    let k = 0;
+    while (k < r.s.length - 2 && r.s[k + 1] < s) k++;
+    const f = Math.min(1, Math.max(0, (s - r.s[k]) / (r.s[k + 1] - r.s[k] || 1)));
+    return { x: r.pts[k].x + (r.pts[k + 1].x - r.pts[k].x) * f, z: r.pts[k].z + (r.pts[k + 1].z - r.pts[k].z) * f };
+  };
+  // Arc-length intervals of at-grade ways that become deck, with the layer of the bridge they extend.
+  const spans = new Map<Road, { a: number; b: number; layer: number }[]>();
+  type Front = { n: number; budget: number; minCut: number; layer: number };
+  const queue: Front[] = [];
+  for (const r of roads) if (r.bridge) for (const n of r.nodes) queue.push({ n, budget: EXTEND_MAX, minCut: 0, layer: r.layer });
+  const walked = new Set<string>();
+  while (queue.length) {
+    const { n, budget, minCut, layer } = queue.shift()!;
+    for (const { road: r, k } of byNode.get(n)!) {
+      if (r.bridge) continue;
+      for (const dir of [1, -1]) {
+        if ((dir > 0 && k === r.nodes.length - 1) || (dir < 0 && k === 0)) continue;
+        const key = `${r.id}:${k}:${dir}`;
+        if (walked.has(key)) continue;
+        walked.add(key);
+        const s0 = r.s[k];
+        const toEnd = dir > 0 ? r.s[r.s.length - 1] - s0 : s0;
+        const reach = Math.min(budget, toEnd);
+        const g: number[] = [];
+        for (let t = 0; t <= Math.ceil(reach); t++) {
+          const p = pointAt(r, s0 + dir * Math.min(t, reach));
+          g.push(terrain.heightAt(p.x, p.z));
+        }
+        let rise = -1;
+        for (let t = 2; t < g.length; t++) if (g[t] - g[t - 2] > HOLE_RISE) rise = t;
+        const cut = Math.max(minCut, rise >= 0 ? rise + EXTEND_MARGIN : 0);
+        if (cut <= 0) continue;
+        const all = cut >= toEnd - 1;
+        const len = all ? toEnd : cut;
+        const a = dir > 0 ? s0 : s0 - len;
+        if (!spans.has(r)) spans.set(r, []);
+        spans.get(r)!.push({ a, b: a + len, layer });
+        if (all && budget > toEnd) queue.push({ n: r.nodes[dir > 0 ? r.nodes.length - 1 : 0], budget: budget - toEnd, minCut: cut - toEnd, layer });
+      }
+    }
+  }
+
+  // Split each extended way at its spans' ends (new nodes, ids below zero) into deck and at-grade pieces.
+  let nextId = -1;
+  const out: Road[] = [];
+  for (const r of roads) {
+    const sp = spans.get(r);
+    if (!sp) {
+      out.push(r);
+      continue;
+    }
+    const length = r.s[r.s.length - 1];
+    const cuts = [...new Set(sp.flatMap((x) => [x.a, x.b]))].filter((s) => s > 0.5 && s < length - 0.5).sort((p, q) => p - q);
+    // Each cut lands on an existing node within half a metre, else a new one.
+    const stops: { s: number; k: number }[] = [{ s: 0, k: 0 }];
+    for (const s of cuts) {
+      const k = r.s.findIndex((v) => Math.abs(v - s) <= 0.5);
+      if (k >= 0) {
+        if (k !== stops[stops.length - 1].k) stops.push({ s: r.s[k], k });
+      } else if (s - stops[stops.length - 1].s > 0.5) stops.push({ s, k: -1 });
+    }
+    stops.push({ s: length, k: r.s.length - 1 });
+    const extra = new Map<number, { n: number; p: Local }>();
+    for (const st of stops) if (st.k < 0) extra.set(st.s, { n: nextId--, p: pointAt(r, st.s) });
+    for (let q = 0; q + 1 < stops.length; q++) {
+      const [lo, hi] = [stops[q], stops[q + 1]];
+      if (hi.s - lo.s < 0.05) continue;
+      const nodes: number[] = [];
+      const pts: Local[] = [];
+      if (lo.k < 0) {
+        nodes.push(extra.get(lo.s)!.n);
+        pts.push(extra.get(lo.s)!.p);
+      }
+      for (let k = 0; k < r.nodes.length; k++) {
+        if (r.s[k] < lo.s - 1e-6 || r.s[k] > hi.s + 1e-6) continue;
+        if ((lo.k < 0 && r.s[k] - lo.s < 0.05) || (hi.k < 0 && hi.s - r.s[k] < 0.05)) continue;
+        nodes.push(r.nodes[k]);
+        pts.push(r.pts[k]);
+      }
+      if (hi.k < 0) {
+        nodes.push(extra.get(hi.s)!.n);
+        pts.push(extra.get(hi.s)!.p);
+      }
+      if (pts.length < 2) continue;
+      const s = [0];
+      for (let k = 1; k < pts.length; k++) s.push(s[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z));
+      const mid = (lo.s + hi.s) / 2;
+      const over = sp.find((x) => mid > x.a && mid < x.b);
+      out.push({ ...r, nodes, pts, s, bridge: !!over, layer: over ? Math.max(r.layer, over.layer) : r.layer });
+    }
+  }
+  return out;
+}
+
 const median = (v: number[]) => {
   const s = v.slice().sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
@@ -767,8 +889,10 @@ export function bridgeHeights(
 
 /**
  * For each bridge node next to a crossing over a road on a lower layer: the
- * deck height that clears it. The lower road's height is the terrain there,
- * or its own deck (as first estimated) if it's a bridge too.
+ * deck height that clears it, less a RAMP_GRADE climb from the node to the
+ * crossing (a 70 m span shouldn't lift its far end the full clearance). The
+ * lower road's height is the terrain there, or its own deck (as first
+ * estimated) if it's a bridge too.
  */
 function crossingNeeds(roads: Road[], terrain: TerrainSampler, h: Map<number, number>): Map<number, number> {
   const need = new Map<number, number>();
@@ -807,7 +931,11 @@ function crossingNeeds(roads: Road[], terrain: TerrainSampler, h: Map<number, nu
       const x = a.x + (b.x - a.x) * t;
       const z = a.z + (b.z - a.z) * t;
       const req = heightOn(low.r, low.k, u, x, z) + CLEARANCE;
-      for (const n of [top.r.nodes[top.k], top.r.nodes[top.k + 1]]) need.set(n, Math.max(need.get(n) ?? -Infinity, req));
+      // Each end of a long span needs only what a ramp from there reaches at the crossing.
+      const len = top.r.s[top.k + 1] - top.r.s[top.k];
+      for (const [n, d] of [[top.r.nodes[top.k], t * len], [top.r.nodes[top.k + 1], (1 - t) * len]]) {
+        need.set(n, Math.max(need.get(n) ?? -Infinity, req - RAMP_GRADE * d));
+      }
     }
   }
   return need;
@@ -921,7 +1049,7 @@ export type RoadNetwork = {
 };
 
 export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: TerrainSampler, overrides?: Overrides): RoadNetwork {
-  const roads = collectRoads(data.osm);
+  const roads = extendDecks(collectRoads(data.osm), terrain);
   const at = new Map<number, Local>();
   const byNode = new Map<number, { road: Road; k: number }[]>();
   for (const r of roads) {
