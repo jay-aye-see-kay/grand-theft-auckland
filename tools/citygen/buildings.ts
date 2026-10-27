@@ -24,6 +24,7 @@ import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 import { SUN_DIRECTION } from '../../src/sun.ts';
 import { FACADE, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
+import { readRooftop, type PlantBox } from './rooftops.ts';
 import { fitRoof, outsetRing, planeAt, planeRegions, roofAt, roofBreaks, roofFrame, roofPlanes, type Plane, type RoofFit, type RoofShape } from './roofs.ts';
 
 export const LEVEL_HEIGHT = 3.2;
@@ -1203,7 +1204,7 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>> };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number };
 };
 
 /** A building tagged as a landmark in the overrides, for hand-made models (T9). */
@@ -1238,7 +1239,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0, roofs: {} as Partial<Record<RoofShape, number>> };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0 };
   const chunks = new Map<string, MeshBuilder>();
   const skyline = new Map<string, MeshBuilder>();
   const chunkKey = (x: number, z: number) => `${Math.floor((x - grid.x0) / CHUNK_SIZE)},${Math.floor((z - grid.z0) / CHUNK_SIZE)}`;
@@ -1281,7 +1282,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const famTopAbs = new Map<string, number>();
   const cover = new Footprints();
   // First where everything stands, then the meshes: walls are shaded by the buildings around them.
-  type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean; roof: RoofChoice | null };
+  type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean; roof: RoofChoice | null; tower?: { ring: Ring; top: number }; plant?: PlantBox[] };
   const placed: Placed[] = [];
   for (const s of visible) {
     const h = heights.get(s.key)!;
@@ -1321,6 +1322,37 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     for (const p of occluders.at(x, z)) if (p.fam !== me.fam && p.top > best && inSolid(p.s, x, z)) best = p.top;
     return best;
   };
+  // What stands on flat roofs (see rooftops.ts): towers on podiums mapped as
+  // one outline, and rooftop plant.
+  const families = new Set(solids.filter((x) => x.parent).map((x) => x.parent!));
+  for (const p of placed) {
+    const t = p.s.tags;
+    if (p.hide || p.roof || !p.grounded || isCanopy(t) || p.top - p.bottom < 3) continue;
+    const big = p.s.polygons.reduce((a, b) => (Math.abs(signedArea(b.outer)) > Math.abs(signedArea(a.outer)) ? b : a));
+    const tagged = p.h.source === 'height' || p.h.source === 'levels';
+    const r = readRooftop(data.dsm, {
+      ring: big.outer,
+      area: Math.abs(signedArea(big.outer)),
+      base: p.base,
+      towers: !p.s.isPart && !families.has(p.s.key) && !overrides.get(p.s.key)?.height,
+      tagTop: tagged ? p.top : null,
+    });
+    if (r.tower) {
+      // Not a neighbour's tower leaning over this footprint in the DSM.
+      const c = ringCentroid(r.tower.ring);
+      const other = occluders.at(c.x, c.z).some((q) => q.fam !== p.fam && q.top > r.tower!.podium + 5 && inSolid(q.s, c.x, c.z));
+      if (!other) {
+        const towerTop = p.h.source === 'height' ? p.top : r.tower.top;
+        p.tower = { ring: r.tower.ring, top: towerTop };
+        p.top = Math.max(p.bottom + 3, Math.min(r.tower.podium, towerTop - 6));
+        familyTop.set(p.fam, Math.max(familyTop.get(p.fam)!, towerTop - p.base));
+        famTopAbs.set(p.fam, Math.max(famTopAbs.get(p.fam)!, towerTop));
+        counts.towers++;
+      }
+    }
+    p.plant = r.plant;
+    counts.plant += r.plant.length;
+  }
   // Shops, cafes and bars mapped as points: a building with any gets shopfronts.
   const shopPts: Local[] = [];
   for (const n of data.osm.nodes.values()) {
@@ -1392,6 +1424,31 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
       skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) }, pitched);
     }
+    // A tower found on the podium: the same dress above the street, no shopfronts.
+    if (p.tower) {
+      const towerTop = p.tower.top;
+      const towerLook: Look = {
+        ...look,
+        groundFloor: BASE_BAND,
+        wall: (a, b, n, len) => {
+          const mx = (a.x + b.x) / 2 + n[0] * 0.8;
+          const mz = (a.z + b.z) / 2 + n[2] * 0.8;
+          return { upper: len < 1.5 || across(mx, mz, p) > towerTop - 4 ? 'plain' : style.upper, ground: null };
+        },
+      };
+      const solid = { polygons: [{ outer: p.tower.ring, holes: [] }] };
+      mb.prism(solid, top, p.tower.top, wall, roof, true, !hide, towerLook);
+      if (!hide && familyTop.get(fam)! >= SKYLINE_MIN) {
+        const key = chunkKey(s.centroid.x, s.centroid.z);
+        if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
+        skyline.get(key)!.prism(solid, top, p.tower.top, wall, roof, true, true, { ...towerLook, parapet: 0 });
+      }
+    }
+    // Rooftop plant from the DSM, near-only.
+    if (!hide && p.plant?.length) {
+      const plantColour = mix(roof, rgb(0xb4b2ac), 0.6);
+      for (const b of p.plant) mb.detail(() => mb.box(b.cx, b.cz, b.hx, b.hz, b.angle, top, b.height, plantColour, 'plain'));
+    }
     // Verandahs over the footpath along shopfronts on retail streets.
     if (!hide && !canopy && grounded && style.ground === 'shop' && top - bottom > 5 && opts.frontages) {
       const fascia = rgb(FASCIAS[Math.floor(hash(fam, 9) * FASCIAS.length)]);
@@ -1414,7 +1471,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       }
     }
     // Plant rooms on tower roofs.
-    if (!hide && !canopy && !pitched && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
+    if (!hide && !canopy && !pitched && !p.plant?.length && !p.tower && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
       const ring = s.polygons[0].outer;
       let angle = 0;
       let longest = 0;

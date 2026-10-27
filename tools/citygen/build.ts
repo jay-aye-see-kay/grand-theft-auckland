@@ -66,6 +66,7 @@ console.log(
     `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
     `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks. ` +
     `${c.verandahs} verandahs (${(c.verandahMetres / 1000).toFixed(1)} km). ` +
+    `${c.towers} towers split from podiums, ${c.plant} rooftop plant boxes. ` +
     `Pitched roofs: ${Object.entries(c.roofs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}.`,
 );
 const tallest = blds.buildings.slice().sort((a, b) => b.top - b.base - (a.top - a.base)).slice(0, 8);
