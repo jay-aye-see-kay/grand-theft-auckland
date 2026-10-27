@@ -1,0 +1,5 @@
+{
+  "permissions": {
+    "deny": ["Artifact", "mcp__claude-code-remote", "mcp__Claude_Docs"]
+  }
+}
