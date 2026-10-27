@@ -617,6 +617,15 @@ async function main() {
         });
         return out;
       },
+      /**
+       * Distance along a ray to the first drawn city surface (chunk meshes:
+       * ground, roads, buildings and verandahs, which have no colliders), or null.
+       */
+      renderHit: (from: number[], dir: number[], far = 50) => {
+        const ray = new THREE.Raycaster(new THREE.Vector3().fromArray(from), new THREE.Vector3().fromArray(dir).normalize(), 0, far);
+        const chunks = scene.children.filter((o) => o.name.startsWith('chunk'));
+        return ray.intersectObjects(chunks, false)[0]?.distance ?? null;
+      },
       /** Names of the map's fixed views (performance budgets are measured from them). */
       views: () => Object.keys(map.views ?? {}),
       /** Fix the camera on one of the map's named views, its heights above the ground there. */

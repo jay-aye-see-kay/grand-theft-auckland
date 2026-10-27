@@ -118,19 +118,21 @@ export class ChunkMesh {
    * Picks what to draw: roads or not, and per tile 0 (2 m) or 1 (coarse);
    * `tiles` null draws the far parts. Cheap when nothing changed.
    */
-  update(roads: boolean, tiles: Uint8Array | null): void {
+  update(roads: boolean, tiles: Uint8Array | null, detail = true): void {
     const parts = this.parts;
     const index = this.index;
     if (!parts || !index) return;
     const near = tiles && parts.tiles ? tiles : null;
-    // Bit 0: roads; then one bit per tile (set = coarse), or -1 / -2 for far.
-    let selection = roads ? -2 : -1;
+    // Bit 0: roads, bit 1: building detail; then one bit per tile (set =
+    // coarse), or negative for far (-1 - the same two bits).
+    const flags = (roads ? 1 : 0) + (detail ? 2 : 0);
+    let selection = -1 - flags;
     if (near) {
-      selection = roads ? 1 : 0;
-      for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 1);
+      selection = flags;
+      for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 2);
     }
     if (selection === this.selection) return;
-    const hadRoads = this.selection === -2 || (this.selection >= 0 && this.selection % 2 === 1);
+    const hadRoads = ((this.selection >= 0 ? this.selection : -1 - this.selection) & 1) === 1;
     if (Number.isNaN(this.selection) || hadRoads !== roads) {
       // The coarse ground shows the streets only when the road strips aren't drawn.
       const colour = this.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
@@ -146,7 +148,7 @@ export class ChunkMesh {
     // Roads come first in the vertex buffers, then buildings.
     if (roads && this.roads) put(this.roads.indices, 0);
     const nRoads = n;
-    if (this.buildings) put(this.buildings.indices, this.roads?.count ?? 0);
+    if (this.buildings) put(detail ? this.buildings.indices : this.buildings.indices.subarray(0, this.buildings.nearOnly), this.roads?.count ?? 0);
     const nBuildings = n - nRoads;
     if (!near) put(parts.far, this.terrainBase);
     else {

@@ -24,6 +24,8 @@ export class BuildingChunk {
   /** Surface detail (see facades.ts), or undefined for plain vertex colour. */
   readonly detail: BuildingMesh['detail'];
   readonly indices: Uint32Array;
+  /** Indices from here on are near-only detail (verandahs, parapets, rooftop plant). */
+  readonly nearOnly: number;
   private collider: RAPIER.Collider | null = null;
   private readonly vertices: Float32Array;
   private readonly colliderIndices: Uint32Array;
@@ -44,6 +46,7 @@ export class BuildingChunk {
     this.layers = data.layers;
     this.detail = data.detail;
     this.indices = data.indices;
+    this.nearOnly = data.nearOnly ?? data.indices.length;
 
     // The collider lives on the shared fixed body, so it needs world positions.
     this.vertices = new Float32Array(pos);

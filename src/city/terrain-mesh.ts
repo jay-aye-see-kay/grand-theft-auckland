@@ -49,8 +49,8 @@ const SEAWALL = new THREE.Color(0x5d5a54);
 // roads layer's colours, so coarse terrain far away still shows the streets.
 const PAVED = new THREE.Color(0x8e8b84);
 const TREES = new THREE.Color(0x456b36);
-const PAVING = new THREE.Color(0xa69a88);
-const FOOTPATH = new THREE.Color(0xa3a19b);
+const PAVING = new THREE.Color(0x9f9b93);
+const FOOTPATH = new THREE.Color(0x9d9b95);
 const ASPHALT = new THREE.Color(0x35383d);
 
 /**

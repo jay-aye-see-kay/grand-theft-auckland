@@ -45,6 +45,8 @@ const MAX_IN_FLIGHT = 6;
  * far chunk saves a draw call.
  */
 const ROAD_DRAW = 500;
+/** Buildings' small detail (verandahs, parapets, rooftop plant) is drawn only this close, m. */
+const BUILDING_DETAIL = 250;
 /** A chunk asked for explicitly (teleport, debug probe) is kept this long even if out of range, ms. */
 const PIN_MS = 5000;
 
@@ -218,7 +220,7 @@ export class ChunkStreamer {
         }
       }
     }
-    mesh.update(d < ROAD_DRAW, tiles);
+    mesh.update(d < ROAD_DRAW, tiles, d < BUILDING_DETAIL);
   }
 
   private addColliders(slot: Slot): void {

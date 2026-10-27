@@ -263,6 +263,39 @@ try {
       if (surface !== 'road') offRoad.push(`${name}: ${surface}`);
     }
     check(offRoad.length === 0, `main streets are road (${streets.length - offRoad.length}/${streets.length})${offRoad.length ? ': ' + offRoad.join(', ') : ''}`);
+    // Street verandahs along lower Queen St (Customs St to Shortland St):
+    // standing on the footpath either side, there's a drawn roof 3-5 m
+    // overhead at most points (verandahs have no colliders, so this casts
+    // against what's rendered).
+    {
+      const A = [-147, 113];
+      const B = [-180.5, 242.6];
+      const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
+      const [ux, uz] = [(B[0] - A[0]) / len, (B[1] - A[1]) / len];
+      let covered = 0;
+      let tried = 0;
+      // Look down the street from its middle: chunks draw their small detail only near the focus.
+      await game('lookFrom', [-165, 10, 180], [-180, 5, 240]);
+      await page.waitForTimeout(500);
+      for (const side of [-1, 1]) {
+        for (let t = 0.15; t < 0.9; t += 0.1) {
+          tried++;
+          for (let off = 4.5; off <= 18; off += 1.5) {
+            const x = A[0] + (B[0] - A[0]) * t + uz * side * off;
+            const z = A[1] + (B[1] - A[1]) * t - ux * side * off;
+            const { ground, top } = await game('probe', x, z);
+            if (top !== null && top - ground > 0.5) continue; // inside a building
+            const hit = await game('renderHit', [x, ground + 1.8, z], [0, 1, 0], 10);
+            if (hit !== null && hit > 1.2 && hit < 3.5) {
+              covered++;
+              break;
+            }
+          }
+        }
+      }
+      await game('lookFrom', null, [0, 0, 0]);
+      check(covered >= tried / 2, `verandahs over lower Queen St's footpaths (${covered}/${tried} points covered)`);
+    }
     const park = (await game('probe', 221, 283)).surface;
     check(park === 'grass', `Emily Place Reserve is grass (${park})`);
 

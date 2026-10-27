@@ -33,6 +33,7 @@
 // where it can't be seen.
 import { PAVED_SINK, underPaving } from '../../src/city/format.ts';
 import { MeshBuilder, parseLength, rgb } from './buildings.ts';
+import { roadMarking, tileOf } from '../../src/city/facades.ts';
 import type { GroundRaster } from './ground.ts';
 import { DRIVEABLE_HIGHWAYS, type OsmData, type Tags } from './osm.ts';
 import type { Overrides } from './overrides.ts';
@@ -87,14 +88,22 @@ const CLEARANCE = 6;
 const RAMP_GRADE = 0.07;
 
 type RGB = [number, number, number];
-type Level = { lift: number; layer: number; colour: RGB };
-/** Lift above the terrain (m), draw layer and colour of each surface. */
+type Level = { lift: number; layer: number; colour: RGB; tile: number };
+/** Lift above the terrain (m), draw layer, colour and texture (see facades.ts) of each surface. */
 const LEVELS = {
-  paving: { lift: 0.014, layer: 1, colour: rgb(0xa69a88) },
-  footpath: { lift: 0.05, layer: 2, colour: rgb(0xa3a19b) },
-  road: { lift: 0.086, layer: 3, colour: rgb(0x35383d) },
-  kerb: { lift: 0.122, layer: 4, colour: rgb(0xd2cfc6) },
+  paving: { lift: 0.014, layer: 1, colour: rgb(0x9f9b93), tile: tileOf('paving') },
+  footpath: { lift: 0.05, layer: 2, colour: rgb(0x9d9b95), tile: tileOf('paving') },
+  road: { lift: 0.086, layer: 3, colour: rgb(0x35383d), tile: tileOf('asphalt') },
+  kerb: { lift: 0.122, layer: 4, colour: rgb(0xdedbd2), tile: tileOf('concrete') },
 } satisfies Record<string, Level>;
+/** Crossing paint: a few cm over the carriageway (inside its draping band), on its own draw layer. */
+const MARK_LIFT = 0.086 + 0.055;
+const MARK_LAYER = 5;
+const MARK_COLOUR = rgb(0xd8d8d2);
+/** Lane lines' dash period along the road, m (3 m lines, 6 m gaps). */
+const DASH_PERIOD = 9;
+/** Streets that get lane lines (not lanes, service roads or shared spaces). */
+const MARKED = new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary', 'tertiary_link', 'unclassified', 'residential']);
 const DECK_SIDE = rgb(0x85827c);
 const UP = [0, 1, 0] as const;
 
@@ -125,6 +134,9 @@ type Road = {
   bridge: boolean;
   /** OSM layer (0 when untagged; 1 for an untagged bridge). */
   layer: number;
+  /** Lane lines painted by the chunk shader (see roadMarking in facades.ts), 0 for none. */
+  marking: number;
+  lanes: number;
 };
 
 function skipped(t: Tags): boolean {
@@ -179,7 +191,13 @@ export function collectRoads(osm: OsmData): Road[] {
     for (let k = 1; k < pts.length; k++) s.push(s[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z));
     const bridge = t.bridge !== undefined && t.bridge !== 'no';
     const layer = Number.isFinite(Number(t.layer)) && t.layer !== undefined ? Number(t.layer) : bridge ? 1 : 0;
-    roads.push({ id: way.id, highway, nodes, pts, s, surface, width: roadWidth(t), ...footpathSides(t), bridge, layer });
+    const width = roadWidth(t);
+    // Lanes as tagged, else two on any street wide enough; one-way streets get lines only between lanes.
+    const tagged = Number(t.lanes);
+    const lanes = Number.isFinite(tagged) && tagged >= 1 ? Math.round(tagged) : width >= 6 ? 2 : 1;
+    const oneway = t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || highway === 'motorway' || t.junction === 'roundabout';
+    const marking = MARKED.has(highway) && surface === 'road' ? roadMarking(lanes, !oneway) : 0;
+    roads.push({ id: way.id, highway, nodes, pts, s, surface, width, ...footpathSides(t), bridge, layer, marking, lanes });
   }
   return roads;
 }
@@ -463,7 +481,15 @@ function tri(mb: MeshBuilder, list: number[], a: number, b: number, c: number, d
 }
 
 /** `left` / `right`: hang a deck edge off that long edge (left is the cols[last] side). */
-type StripOpts = { level: Level; collider: boolean; left?: boolean; right?: boolean; covered?: (x: number, z: number) => boolean };
+type StripOpts = {
+  level: Level;
+  collider: boolean;
+  left?: boolean;
+  right?: boolean;
+  covered?: (x: number, z: number) => boolean;
+  /** Lane lines: the marking code and lane count over the strip's full width (cols[0]..cols[last] = right..left edge). */
+  marking?: { code: number; lanes: number; half: number };
+};
 
 /**
  * Emits the strip between lateral offsets cols[0]..cols[last] (left of the
@@ -496,10 +522,14 @@ function emitStrip(out: ChunkMeshes, sections: Section[], cols: number[], opts: 
       prev = null;
       continue;
     }
+    const mk = opts.marking;
+    const tile = mk ? level.tile + 16 * mk.code : level.tile;
     const row = (sec: Section, lift: number, layer: number) =>
       cols.map((o, c) => {
         const p = offsetPoint(sec.st, o);
-        return mb.vertex(p.x, sec.ys[c] + lift, p.z, UP, level.colour, layer);
+        // Lane units across from the right-hand edge, dash periods along.
+        const u = mk ? ((o + mk.half) / (2 * mk.half)) * mk.lanes : 0;
+        return mb.vertex(p.x, sec.ys[c] + lift, p.z, UP, level.colour, layer, tile, u, mk ? sec.st.s / DASH_PERIOD : 0);
       });
     const ra = mb === prev ? prevRow : row(a, level.lift, level.layer);
     const rb = row(b, level.lift, level.layer);
@@ -575,10 +605,10 @@ function emitDisc(out: ChunkMeshes, cx: number, cz: number, r0: number, r: numbe
   for (const [lift, layer, list] of collider ? [[level.lift, level.layer, mb.idx], [0, 0, mb.colliderIdx]] as const : [[level.lift, level.layer, mb.idx]] as const) {
     const ringIdx: number[][] = [];
     let centre = -1;
-    if (r0 === 0) centre = mb.vertex(cx, h(cx, cz) + lift, cz, UP, level.colour, layer);
+    if (r0 === 0) centre = mb.vertex(cx, h(cx, cz) + lift, cz, UP, level.colour, layer, level.tile);
     for (let q = r0 === 0 ? 1 : 0; q <= rings; q++) {
       const rr = r0 + ((r - r0) * q) / rings;
-      ringIdx.push(dir.map(([dx, dz]) => mb.vertex(cx + dx * rr, h(cx + dx * rr, cz + dz * rr) + lift, cz + dz * rr, UP, level.colour, layer)));
+      ringIdx.push(dir.map(([dx, dz]) => mb.vertex(cx + dx * rr, h(cx + dx * rr, cz + dz * rr) + lift, cz + dz * rr, UP, level.colour, layer, level.tile)));
     }
     if (centre >= 0) for (let k = 0; k < seg; k++) tri(mb, list as number[], centre, ringIdx[0][k], ringIdx[0][(k + 1) % seg]);
     for (let q = 0; q + 1 < ringIdx.length; q++) {
@@ -886,6 +916,8 @@ export type RoadNetwork = {
   deck: Map<number, number>;
   /** Deck height under a point on a bridge (its carriageway, footpaths and a margin), else null. */
   deckAt: (x: number, z: number) => number | null;
+  /** Pedestrian crossings on carriageways: node id -> 'zebra' or 'signals'. */
+  crossings: Map<number, 'zebra' | 'signals'>;
 };
 
 export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: TerrainSampler, overrides?: Overrides): RoadNetwork {
@@ -914,6 +946,14 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
     });
   }
   const deck = bridgeHeights(roads, terrain, data.dsm, at, fixed);
+  const crossings = new Map<number, 'zebra' | 'signals'>();
+  for (const [n] of byNode) {
+    const t = data.osm.nodes.get(n)?.tags;
+    if (t?.highway !== 'crossing' && t?.railway !== 'crossing') continue;
+    const kind = t.crossing ?? t['crossing:markings'] ?? '';
+    if (['zebra', 'marked', 'uncontrolled'].includes(kind) || t['crossing_ref'] === 'zebra') crossings.set(n, 'zebra');
+    else if (kind === 'traffic_signals') crossings.set(n, 'signals');
+  }
   const bridges = roads.filter((r) => r.bridge);
   const deckAt = (x: number, z: number): number | null => {
     // The highest deck in reach: where decks cross, things on them sit on the top one.
@@ -936,7 +976,7 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
     }
     return best;
   };
-  return { roads, at, byNode, deck, deckAt };
+  return { roads, at, byNode, deck, deckAt, crossings };
 }
 
 export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork, covered?: (x: number, z: number) => boolean): RoadsResult {
@@ -1031,7 +1071,8 @@ export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRa
     const fpR = r.right ? half + FOOTPATH_WIDTH : half;
 
     for (const piece of drapeStrip(st, -half, half, h, band(level))) {
-      tally('carriageway', out, () => emitStrip(out, piece.sections, piece.cols, { level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right, covered: r.bridge ? undefined : covered }));
+      const marking = r.marking ? { code: r.marking, lanes: Math.min(r.lanes, 7), half } : undefined;
+      tally('carriageway', out, () => emitStrip(out, piece.sections, piece.cols, { level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right, covered: r.bridge ? undefined : covered, marking }));
     }
     // Kerbs on the footpath's inner edge, cut where carriageways join. They
     // follow the footpath's own simplified surface, so they're always on top of it.
@@ -1070,6 +1111,41 @@ export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRa
     tally('junction', out, () => emitDisc(out, p.x, p.z, 0, half, dh, roadsHere ? LEVELS.road : LEVELS.paving, flat));
     if (fr > half) tally('junction', out, () => emitDisc(out, p.x, p.z, Math.max(0, half - 0.5), fr, dh, LEVELS.footpath, flat));
   }
+  // Pedestrian crossings painted on the carriageway: zebra stripes, or the
+  // two lines of a signalised crossing.
+  let painted = 0;
+  for (const [n, kind] of net.crossings) {
+    const entry = byNode.get(n)?.find((e) => e.road.surface === 'road' && !e.road.bridge);
+    if (!entry) continue;
+    const { road: r, k } = entry;
+    const a = r.pts[Math.max(0, k - 1)];
+    const b = r.pts[Math.min(r.pts.length - 1, k + 1)];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 0.5) continue;
+    const p = at.get(n)!;
+    const mb = out.at(p.x, p.z);
+    if (!mb) continue;
+    const [ux, uz] = [(b.x - a.x) / len, (b.z - a.z) / len];
+    const half = r.width / 2;
+    /** A flat white quad on the road: `along` is its extent along the way, `across` across it. */
+    const quad = (a0: number, a1: number, c0: number, c1: number) => {
+      const pt = (al: number, ac: number) => {
+        const x = p.x + ux * al - uz * ac;
+        const z = p.z + uz * al + ux * ac;
+        return mb.vertex(x, drape(x, z) + MARK_LIFT, z, UP, MARK_COLOUR, MARK_LAYER, tileOf('concrete'));
+      };
+      tri(mb, mb.idx, pt(a0, c0), pt(a1, c0), pt(a1, c1));
+      tri(mb, mb.idx, pt(a0, c0), pt(a1, c1), pt(a0, c1));
+    };
+    if (kind === 'zebra') {
+      for (let c = -half + 0.3; c + 0.55 <= half - 0.2; c += 1.1) quad(-1.5, 1.5, c, c + 0.55);
+    } else {
+      quad(-1.6, -1.45, -half + 0.2, half - 0.2);
+      quad(1.45, 1.6, -half + 0.2, half - 0.2);
+    }
+    painted++;
+  }
+  roadTris['crossings painted'] = painted;
   const bridges = roads.filter((r) => r.bridge).length;
   return { chunks: out.chunks, counts: { ways: roads.length, bridges, km } };
 }

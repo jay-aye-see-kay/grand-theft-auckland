@@ -49,6 +49,19 @@ const TALL_THIN = new Set(['silo', 'tower', 'chimney', 'transformer_tower', 'wat
 const MIN_TAGGED = 2;
 /** Bus shelters, when nothing is tagged. */
 const SHELTER_HEIGHT = 3;
+/** Street verandahs: height of the soffit above the footpath, slab and fascia, m. */
+const VERANDAH_HEIGHT = 3.7;
+const VERANDAH_THICK = 0.12;
+const VERANDAH_FASCIA = 0.45;
+/** Deepest a verandah reaches, and how far it stops short of the kerb, m. */
+const VERANDAH_DEPTH = 3;
+const VERANDAH_KERB = 0.4;
+/** Segment length (it steps with the street) and the spacing of kerb posts, m. */
+const VERANDAH_STEP = 10;
+const VERANDAH_POSTS = 6;
+/** Parapet faces only along roof edges at least this long, m. */
+const PARAPET_MIN_EDGE = 4;
+const FASCIAS = [0xe8e2d4, 0xf0eee8, 0x2f3a34, 0x1e1f22, 0x6b2a2a, 0xd8cdb0, 0x3a4a5e];
 /** Height of the darker band at the foot of ground-level walls. */
 const BASE_BAND = 4;
 
@@ -541,7 +554,7 @@ export function facadeStyle(key: string, tags: Tags, height: number, retailStree
     const brick = material === 'brick' || (material !== 'stone' && material !== 'sandstone' && material !== 'plaster' && hash(key, 6) < 0.45);
     [upper, palette] = brick ? ['brick', BRICK] : ['stone', hash(key, 7) < 0.6 ? SANDSTONE : PAINTED];
   } else if (b === 'parking') [upper, palette] = ['ribbon', CONCRETE];
-  else if (SHEDS.has(b)) [upper, palette] = ['plain', CONCRETE];
+  else if (SHEDS.has(b) && height < 20) [upper, palette] = ['plain', CONCRETE];
   else if (HOUSES.has(b)) [upper, palette] = ['stucco', PASTEL];
   else if (FLATS.has(b)) [upper, palette] = height > 20 ? (r < 0.6 ? ['balcony', PAINTED] : ['grid', CONCRETE]) : r < 0.5 ? ['balcony', PASTEL] : ['stucco', PASTEL];
   else if (height >= 60) [upper, palette] = r < 0.55 ? ['glass', GLASS] : r < 0.8 ? ['ribbon', CONCRETE] : ['grid', CONCRETE];
@@ -648,7 +661,10 @@ export class MeshBuilder {
   readonly pos: number[] = [];
   readonly nor: number[] = [];
   readonly col: number[] = [];
-  readonly idx: number[] = [];
+  /** Render triangles (swapped for `extras` while detail is emitted, see detail()). */
+  idx: number[] = [];
+  /** Small detail drawn only near the player (verandahs, parapets, plant rooms): after idx in the file. */
+  readonly extras: number[] = [];
   readonly colliderIdx: number[] = [];
   /** Per-vertex draw layer (roads only; buildings leave it all 0 and the file omits it). */
   readonly lay: number[] = [];
@@ -659,6 +675,17 @@ export class MeshBuilder {
 
   get vertexCount() {
     return this.pos.length / 3;
+  }
+
+  /** Runs `emit` with its triangles going to the near-only detail list. */
+  detail(emit: () => void) {
+    const core = this.idx;
+    this.idx = this.extras;
+    try {
+      emit();
+    } finally {
+      this.idx = core;
+    }
   }
 
   vertex(x: number, y: number, z: number, n: readonly number[], c: readonly number[], layer = 0, tile = 0, u = 0, v = 0, shade = 1): number {
@@ -685,7 +712,10 @@ export class MeshBuilder {
       return;
     }
     const gf = look?.groundFloor ?? BASE_BAND;
-    const banded = grounded && top - bottom > gf + 1.5;
+    // A shopfront or lobby band needs its own row of vertices; otherwise only
+    // walls tall enough for the foot darkening to matter get one.
+    const shops = !!look && look.groundFloor !== BASE_BAND;
+    const banded = grounded && top - bottom > (shops ? gf + 1.5 : BASE_BAND * 2);
     const parapet = look?.parapet ?? 0;
     const lid = top + parapet;
     for (const poly of s.polygons) {
@@ -744,14 +774,14 @@ export class MeshBuilder {
             this.idx.push(a0, b1, b0, a0, a1, b1);
             this.colliderIdx.push(a0, bc, b0, a0, ac, bc);
           }
-          if (parapet) {
-            // The parapet's inside face, looking onto the roof.
+          if (parapet && len >= PARAPET_MIN_EDGE) {
+            // The parapet's inside face, looking onto the roof (short edges, round towers' facets, go without).
             const m: [number, number, number] = [-n[0], 0, -n[2]];
             const pa = this.vertex(a.x, top, a.z, m, wall, 0, tileOf('plain'), 0, 0, 0.7);
             const pb = this.vertex(b.x, top, b.z, m, wall, 0, tileOf('plain'), len / 8, 0, 0.7);
             const qa = this.vertex(a.x, lid, a.z, m, wall, 0, tileOf('plain'), 0, parapet / 8, 0.85);
             const qb = this.vertex(b.x, lid, b.z, m, wall, 0, tileOf('plain'), len / 8, parapet / 8, 0.85);
-            this.idx.push(pa, pb, qb, pa, qb, qa);
+            this.extras.push(pa, pb, qb, pa, qb, qa);
           }
         }
       }
@@ -812,6 +842,121 @@ export class MeshBuilder {
   }
 
   /**
+   * A street verandah along a wall from a to b (outward normal n): a thin
+   * slab `depth` out over the footpath, `height` above the ground at each
+   * point (it steps with the street every few metres), with a fascia along
+   * its front, and posts at the kerb when `posts`. Drawn only: it's above
+   * head height, and posts are thin enough to walk through.
+   */
+  verandah(a: Local, b: Local, n: readonly number[], depth: number, height: number, groundAt: (x: number, z: number) => number, fascia: readonly number[], posts: boolean) {
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    const steps = Math.max(1, Math.ceil(len / VERANDAH_STEP));
+    const back: Local[] = [];
+    const ys: number[] = [];
+    // A hair off the wall so it never z-fights the facade.
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const p = { x: a.x + (b.x - a.x) * t + n[0] * 0.02, z: a.z + (b.z - a.z) * t + n[2] * 0.02 };
+      back.push(p);
+      ys.push(groundAt(p.x + n[0] * depth * 0.5, p.z + n[2] * depth * 0.5) + height);
+    }
+    const front = back.map((p) => ({ x: p.x + n[0] * depth, z: p.z + n[2] * depth }));
+    const top = rgb(0x6e706f);
+    const under = rgb(0xe4ddcc);
+    const u = (k: number) => (len * k) / steps;
+    const UP = [0, 1, 0];
+    const DOWN = [0, -1, 0];
+    const roofTile = tileOf('roof');
+    const plainTile = tileOf('plain');
+    for (let k = 0; k < steps; k++) {
+      const [p0, p1, q0, q1, y0, y1] = [back[k], back[k + 1], front[k], front[k + 1], ys[k], ys[k + 1]];
+      // Top: corrugated iron, falling slightly to the street.
+      const t = [
+        this.vertex(p0.x, y0 + VERANDAH_THICK + 0.12, p0.z, UP, top, 0, roofTile),
+        this.vertex(p1.x, y1 + VERANDAH_THICK + 0.12, p1.z, UP, top, 0, roofTile),
+        this.vertex(q1.x, y1 + VERANDAH_THICK, q1.z, UP, top, 0, roofTile),
+        this.vertex(q0.x, y0 + VERANDAH_THICK, q0.z, UP, top, 0, roofTile),
+      ];
+      this.quadUp(t, true);
+      // Soffit: pale paint, in its own shadow.
+      const d = [
+        this.vertex(p0.x, y0, p0.z, DOWN, under, 0, plainTile, u(k) / 8, 0, 0.62),
+        this.vertex(p1.x, y1, p1.z, DOWN, under, 0, plainTile, u(k + 1) / 8, 0, 0.62),
+        this.vertex(q1.x, y1, q1.z, DOWN, under, 0, plainTile, u(k + 1) / 8, depth / 8, 0.7),
+        this.vertex(q0.x, y0, q0.z, DOWN, under, 0, plainTile, u(k) / 8, depth / 8, 0.7),
+      ];
+      this.quadUp(d, false);
+      // Fascia along the front.
+      const f = [
+        this.vertex(q0.x, y0 - VERANDAH_FASCIA, q0.z, n, fascia, 0, plainTile, u(k) / 8, 0, 0.9),
+        this.vertex(q1.x, y1 - VERANDAH_FASCIA, q1.z, n, fascia, 0, plainTile, u(k + 1) / 8, 0, 0.9),
+        this.vertex(q1.x, y1 + VERANDAH_THICK, q1.z, n, fascia, 0, plainTile, u(k + 1) / 8, 0.1, 1),
+        this.vertex(q0.x, y0 + VERANDAH_THICK, q0.z, n, fascia, 0, plainTile, u(k) / 8, 0.1, 1),
+      ];
+      this.wallQuad(f, q0, q1, n);
+    }
+    // End caps, facing along the wall.
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    for (const [p, q, y, s] of [[back[0], front[0], ys[0], -1], [back[steps], front[steps], ys[steps], 1]] as const) {
+      const m = [ux * s, 0, uz * s];
+      const c = [
+        this.vertex(p.x, y, p.z, m, fascia, 0, 0, 0, 0, 0.8),
+        this.vertex(q.x, y - VERANDAH_FASCIA, q.z, m, fascia, 0, 0, 0, 0, 0.8),
+        this.vertex(q.x, y + VERANDAH_THICK, q.z, m, fascia, 0, 0, 0, 0, 0.8),
+        this.vertex(p.x, y + VERANDAH_THICK + 0.12, p.z, m, fascia, 0, 0, 0, 0, 0.8),
+      ];
+      this.wallQuad(c, p, q, m);
+    }
+    if (posts) {
+      const count = Math.max(1, Math.round(len / VERANDAH_POSTS));
+      for (let k = 0; k <= count; k++) {
+        const t = (k + 0.5) / (count + 1);
+        const x = a.x + (b.x - a.x) * t + n[0] * (depth - 0.2);
+        const z = a.z + (b.z - a.z) * t + n[2] * (depth - 0.2);
+        const g = groundAt(x, z);
+        this.post(x, z, 0.08, Math.atan2(n[2], n[0]), g, ys[Math.round(t * steps)] - g, fascia);
+      }
+    }
+  }
+
+  /** A thin square post facing direction `angle` (its back and top left out: never seen), drawn only. */
+  private post(cx: number, cz: number, half: number, angle: number, y0: number, h: number, colour: readonly number[]) {
+    const c = Math.cos(angle);
+    const sn = Math.sin(angle);
+    // Front, then the two sides, each as (corner a, corner b, outward normal).
+    const pt = (i: number, j: number) => ({ x: cx + (i * c - j * sn) * half, z: cz + (i * sn + j * c) * half });
+    const faces: [ReturnType<typeof pt>, ReturnType<typeof pt>, number[]][] = [
+      [pt(1, -1), pt(1, 1), [c, 0, sn]],
+      [pt(-1, -1), pt(1, -1), [sn, 0, -c]],
+      [pt(1, 1), pt(-1, 1), [-sn, 0, c]],
+    ];
+    for (const [a, b, n] of faces) {
+      const v = [this.vertex(a.x, y0, a.z, n, colour, 0, 0, 0, 0, 0.8), this.vertex(b.x, y0, b.z, n, colour, 0, 0, 0, 0, 0.8), this.vertex(b.x, y0 + h, b.z, n, colour), this.vertex(a.x, y0 + h, a.z, n, colour)];
+      this.wallQuad(v, a, b, n);
+    }
+  }
+
+  /**
+   * Two triangles for an upright quad: v = [bottom a, bottom b, top b, top a],
+   * wound to face along n (as prism's walls: (dz, -dx) of a to b faces out).
+   */
+  private wallQuad(v: number[], a: Local, b: Local, n: readonly number[]) {
+    const cross = (b.x - a.x) * n[2] - (b.z - a.z) * n[0];
+    if (cross < 0) this.idx.push(v[0], v[2], v[1], v[0], v[3], v[2]);
+    else this.idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
+  }
+
+  /** Two triangles over four vertices in order round a quad, facing up (or down). */
+  private quadUp(v: number[], up: boolean) {
+    const p = (k: number) => [this.pos[v[k] * 3], this.pos[v[k] * 3 + 2]];
+    const [a, b, c] = [p(0), p(1), p(2)];
+    const cy = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
+    if (cy > 0 === up) this.idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
+    else this.idx.push(v[0], v[2], v[1], v[0], v[3], v[2]);
+  }
+
+  /**
    * An invisible solid: walls and a lid in the collider only (its vertices
    * ride along in the render buffers but no drawn triangle uses them).
    */
@@ -866,7 +1011,9 @@ export class MeshBuilder {
           tile: Uint8Array.from(this.tile),
         }
       : undefined;
-    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices: Uint32Array.from(this.idx), colliderIndices: Uint32Array.from(this.colliderIdx), layers, detail };
+    const indices = Uint32Array.from([...this.idx, ...this.extras]);
+    const nearOnly = this.extras.length ? { nearOnly: this.idx.length } : {};
+    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices, colliderIndices: Uint32Array.from(this.colliderIdx), layers, detail, ...nearOnly };
   }
 }
 
@@ -1048,12 +1195,34 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         // A party wall: another building right against it.
         const mx = (a.x + b.x) / 2 + n[0] * 0.8;
         const mz = (a.z + b.z) / 2 + n[2] * 0.8;
-        if (across(mx, mz, p) > bottom + 3) return { upper: 'plain', ground: null };
+        // (Only where it's nearly as tall: above a lower neighbour the facade carries on.)
+        if (across(mx, mz, p) > top - 4) return { upper: 'plain', ground: null };
         const front = shopLayer && opts.frontages?.facing(a, b, n);
         return { upper: style.upper, ground: front ? shopLayer : null };
       },
     };
     mb.prism(s, bottom, top, wall, roof, grounded, !hide, look);
+    // Verandahs over the footpath along shopfronts on retail streets.
+    if (!hide && !canopy && grounded && style.ground === 'shop' && top - bottom > 5 && opts.frontages) {
+      const fascia = rgb(FASCIAS[Math.floor(hash(fam, 9) * FASCIAS.length)]);
+      for (const poly of s.polygons) {
+        const ring = poly.outer;
+        for (let k = 0; k < ring.length; k++) {
+          const a = ring[k];
+          const b = ring[(k + 1) % ring.length];
+          const len = Math.hypot(b.x - a.x, b.z - a.z);
+          if (len < 2.5) continue;
+          const n = [(b.z - a.z) / len, 0, -(b.x - a.x) / len];
+          const front = opts.frontages.facing(a, b, n);
+          if (!front || !(front.retail || (familyShops.get(fam) ?? 0) > 0) || front.highway === 'pedestrian') continue;
+          const depth = Math.min(VERANDAH_DEPTH, front.kerb - VERANDAH_KERB);
+          if (depth < 1.2) continue;
+          mb.detail(() => mb.verandah(a, b, n, depth, VERANDAH_HEIGHT, ground, fascia, style.heritage && hash(fam, 10) < 0.5));
+          counts.verandahs++;
+          counts.verandahMetres += len;
+        }
+      }
+    }
     // Plant rooms on tower roofs.
     if (!hide && !canopy && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
       const ring = s.polygons[0].outer;
@@ -1065,7 +1234,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         if (d > longest) [longest, angle] = [d, Math.atan2(q.z - ring[k].z, q.x - ring[k].x)];
       }
       const half = Math.min(7, Math.sqrt(s.area) * 0.18);
-      mb.box(s.centroid.x, s.centroid.z, half, half * 0.7, angle, top, 3.5, rgb(0xb4b2ac), 'plain');
+      mb.detail(() => mb.box(s.centroid.x, s.centroid.z, half, half * 0.7, angle, top, 3.5, rgb(0xb4b2ac), 'plain'));
     }
     if (grounded && !hide && top - bottom > 2.5) cover.add(s);
     if (hide) counts.hidden++;

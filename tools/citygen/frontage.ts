@@ -35,7 +35,7 @@ type Seg = { a: Local; b: Local; name: string; highway: string; half: number };
 
 const BUCKET = 40;
 /** A wall faces a street whose kerb is at most this far out, m. */
-const MAX_KERB = 9;
+const MAX_KERB = 16;
 
 export class Frontages {
   private readonly buckets = new Map<number, Seg[]>();

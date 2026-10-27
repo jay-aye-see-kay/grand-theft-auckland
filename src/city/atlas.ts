@@ -473,8 +473,8 @@ const painters: Record<Layer, Painter> = {
   },
   asphalt(c, m, rnd) {
     wallBase(c, m, rnd);
-    speckle(c, rnd, 26000, 1.6, 0.35);
-    blotches(c, rnd, 10, 60, 160, 0.12, 0.1);
+    speckle(c, rnd, 26000, 1.6, 0.3);
+    blotches(c, rnd, 10, 60, 160, 0.07, 0.06);
     // A few hairline cracks and a patch.
     c.strokeStyle = 'rgba(0,0,0,0.35)';
     c.lineWidth = 1.2;
@@ -490,8 +490,6 @@ const painters: Record<Layer, Painter> = {
       }
       c.stroke();
     }
-    c.fillStyle = 'rgba(0,0,0,0.12)';
-    c.fillRect(rnd() * S * 0.6, rnd() * S * 0.6, 90 + rnd() * 80, 60 + rnd() * 60);
   },
   paving(c, m, rnd) {
     rect(c, m, 0, 0, S, S, grey(TINT_GREY - 30), 1);
