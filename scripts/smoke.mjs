@@ -498,6 +498,41 @@ try {
     check(r.last.mode === 'foot' && r.minD < 1.5 && r.minD > 0.2,
       `player can't walk through a building (capsule centre got to ${r.minD.toFixed(2)} m from the wall; ${r.last.mode} at ${r.last.player.map((v) => v.toFixed(1)).join(', ')})`);
 
+    // Fly cheat: up, up, down, down, left, right, left, right on the stick
+    // (arrows here). Each flick is held, and let go, for a couple of frames so
+    // the game sees it; a frame that stalls past the code's 2 s gap (chunks
+    // loading) spoils a try, so allow a few.
+    {
+      const frames = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const flyCode = async (want) => {
+        for (let tries = 0; tries < 3 && (await state(page)).flying !== want; tries++) {
+          for (const k of ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight']) {
+            await page.keyboard.down(k);
+            await frames();
+            await page.keyboard.up(k);
+            await frames();
+          }
+        }
+      };
+      await flyCode(true);
+      s = await state(page);
+      const y0 = s.player[1];
+      check(s.flying && s.mode === 'foot', `fly cheat turns on flying (${s.flying})`);
+      r = await ram(['Space'], 15000, ({ last }) => last.player[1] > y0 + 10);
+      check(r.last.player[1] > y0 + 10, `flying climbs (${(r.last.player[1] - y0).toFixed(1)} m up)`);
+      // Back down to the wall's height and through it: flying ignores buildings.
+      r = await ram(['KeyC'], 15000, ({ last }) => last.player[1] < y0 + 3);
+      r = await ram(['KeyW'], 15000, ({ minD }) => minD < -3);
+      check(r.minD < -3, `flying goes through buildings (${(-r.minD).toFixed(1)} m past the wall)`);
+      // Out the other side, land: the same code again, and fall onto whatever is below.
+      await ram(['KeyW'], 1500, () => false);
+      await flyCode(false);
+      await page.waitForFunction(() => window.__game.state().playerGrounded, null, { timeout: 20000 }).catch(() => {});
+      s = await state(page);
+      check(!s.flying && s.playerGrounded && s.player[1] > s.ground - 0.5,
+        `the code again lands (flying ${s.flying}, grounded ${s.playerGrounded}, feet ${s.player[1].toFixed(1)} m over ground ${s.ground.toFixed(1)} m)`);
+    }
+
     // Harbour: water at sea level over a deep harbour floor, Queens Wharf's
     // deck (dropped by the LiDAR, laid back from OSM), and the car and the
     // player go off the end of it, splash, and are put back on dry land.

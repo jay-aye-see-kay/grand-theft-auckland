@@ -20,12 +20,27 @@ const MOVE = {
   jumpSpeed: 6,
 };
 
+// Flying (a cheat) is for sightseeing: fast, straight through buildings, no
+// gravity. Sprint is quick enough to cross the CBD in half a minute.
+const FLY = {
+  speed: 25, // m/s
+  sprint: 90,
+  climb: 15,
+  climbSprint: 45,
+  accel: 3,
+  ceiling: 600, // m above sea level: higher than anything worth seeing
+};
+
 export interface FootControls {
   /** Desired move direction in world space (x, z), length 0..1. */
   moveX: number;
   moveZ: number;
   sprint: boolean;
   jump: boolean;
+  /** Flying: climb (+1) or descend (-1). */
+  rise?: number;
+  /** Flying: lowest the feet may go (the ground here), or NaN if unknown. */
+  floor?: number;
 }
 
 const _move = new THREE.Vector3();
@@ -39,6 +54,8 @@ export class Player {
   speed = 0;
   /** Set on each footfall, for footstep sounds. */
   stepped = false;
+  /** Flying (cheat): see setFlying(). */
+  flying = false;
 
   private readonly controller: RAPIER.KinematicCharacterController;
   private readonly velocity = new THREE.Vector3();
@@ -74,6 +91,7 @@ export class Player {
 
   /** Move for one fixed step. Call before world.step(). */
   update(c: FootControls, dt: number): void {
+    if (this.flying) return this.fly(c, dt);
     const len = Math.min(1, Math.hypot(c.moveX, c.moveZ));
     const target = len > 0.05 ? (c.sprint ? MOVE.sprint : MOVE.jog) * len : 0;
     const tx = len > 0.05 ? (c.moveX / Math.max(len, 1e-6)) * target : 0;
@@ -111,6 +129,45 @@ export class Player {
     const t = this.body.translation();
     this.body.setNextKinematicTranslation({ x: t.x + m.x, y: t.y + m.y, z: t.z + m.z });
     this.speed = Math.hypot(m.x, m.z) / dt;
+  }
+
+  /**
+   * Fly or land. Flying turns off the capsule's collisions (so the camera can
+   * get anywhere), and landing turns them back on and drops from where you are.
+   */
+  setFlying(on: boolean): void {
+    if (on === this.flying) return;
+    this.flying = on;
+    this.collider.setEnabled(!on);
+    this.velocity.y = 0;
+    this.grounded = false;
+  }
+
+  private fly(c: FootControls, dt: number): void {
+    const len = Math.min(1, Math.hypot(c.moveX, c.moveZ));
+    const speed = c.sprint ? FLY.sprint : FLY.speed;
+    const k = 1 - Math.exp(-FLY.accel * dt);
+    this.velocity.x += (c.moveX * speed - this.velocity.x) * k;
+    this.velocity.z += (c.moveZ * speed - this.velocity.z) * k;
+    this.velocity.y += ((c.rise ?? 0) * (c.sprint ? FLY.climbSprint : FLY.climb) - this.velocity.y) * k * 2;
+    if (len > 0.05) {
+      const want = Math.atan2(-c.moveZ, c.moveX);
+      const d = Math.atan2(Math.sin(want - this.heading), Math.cos(want - this.heading));
+      this.heading += d * Math.min(1, MOVE.turnRate * 0.5 * dt);
+    }
+    const t = this.body.translation();
+    let y = t.y + this.velocity.y * dt;
+    const floor = (c.floor ?? NaN) + CENTRE_Y;
+    if (y < floor) {
+      y = floor;
+      this.velocity.y = Math.max(0, this.velocity.y);
+    }
+    if (y > FLY.ceiling) {
+      y = FLY.ceiling;
+      this.velocity.y = Math.min(0, this.velocity.y);
+    }
+    this.body.setNextKinematicTranslation({ x: t.x + this.velocity.x * dt, y, z: t.z + this.velocity.z * dt });
+    this.speed = Math.hypot(this.velocity.x, this.velocity.z);
   }
 
   /** Call after world.step(). */
@@ -168,7 +225,7 @@ export class Player {
   /** Hide and disable collisions while driving. */
   setActive(active: boolean): void {
     this.object.visible = active;
-    this.collider.setEnabled(active);
+    this.collider.setEnabled(active && !this.flying);
   }
 
   private syncPose(): void {

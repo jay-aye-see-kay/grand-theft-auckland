@@ -162,7 +162,9 @@ canvas {
 }
 
 .touch[data-mode='car'] .foot-only,
-.touch[data-mode='foot'] .car-only {
+.touch[data-mode='foot'] .car-only,
+.touch[data-flying] .walk-only,
+.touch:not([data-flying]) .fly-only {
   display: none;
 }
 

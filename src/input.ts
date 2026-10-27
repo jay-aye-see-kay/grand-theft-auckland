@@ -4,9 +4,11 @@ import type { DriveControls } from './car.ts';
 // controls. The touch layout switches between on-foot and driving.
 //
 // Keyboard: WASD/arrows move or drive, Space jumps or handbrakes, Shift
-// sprints, F/Enter gets in or out, R flips the car, M mutes.
+// sprints, F/Enter gets in or out, R flips the car, M mutes. Flying (a
+// cheat, see cheats.ts): Space climbs, C or Ctrl descends, Shift goes fast.
 // Gamepad (standard mapping): left stick, RT/LT pedals, A jump/handbrake,
-// X sprint, Y in/out, Back flips the car.
+// X sprint, Y in/out, Back flips the car; flying, A climbs and B descends.
+// Touch, flying: JUMP becomes UP and RUN becomes DOWN.
 
 export type Mode = 'foot' | 'car';
 
@@ -20,6 +22,8 @@ export class Input {
   sprint = false;
   /** Space / A / jump button held (jump on foot, handbrake in a car). */
   action = false;
+  /** Flying: climb (+1) or descend (-1). */
+  rise = 0;
 
   // One-shot presses, cleared by consume().
   private edges = new Set<'enterExit' | 'reset' | 'jump' | 'mute'>();
@@ -30,6 +34,7 @@ export class Input {
   private readonly root: HTMLElement;
   private ui: HTMLElement | null = null;
   private mode: Mode = 'foot';
+  private flying = false;
   private lookDX = 0;
   private padLookX = 0;
 
@@ -97,6 +102,12 @@ export class Input {
     this.ui?.setAttribute('data-mode', mode);
   }
 
+  /** Flying swaps the touch RUN button for DOWN (and JUMP reads UP). */
+  setFlying(on: boolean): void {
+    this.flying = on;
+    this.ui?.toggleAttribute('data-flying', on);
+  }
+
   /** Light up the in/out button when there's a car to get into. */
   setCanEnter(can: boolean): void {
     this.ui?.querySelector('.btn-enter')?.classList.toggle('ready', can);
@@ -118,7 +129,8 @@ export class Input {
     let throttle = up || this.touch.gas ? 1 : 0;
     let brake = down || this.touch.brake ? 1 : 0;
     let action = k.has('Space') || this.touch.action;
-    let sprint = k.has('ShiftLeft') || k.has('ShiftRight') || this.touch.sprint;
+    let sprint = k.has('ShiftLeft') || k.has('ShiftRight') || (this.touch.sprint && !this.flying);
+    let descend = k.has('KeyC') || k.has('ControlLeft') || k.has('ControlRight') || (this.touch.sprint && this.flying);
 
     this.padLookX = 0;
     for (const pad of navigator.getGamepads?.() ?? []) {
@@ -135,6 +147,7 @@ export class Input {
       brake = Math.max(brake, pad.buttons[6]?.value ?? 0);
       action ||= pressed(pad, 0);
       sprint ||= pressed(pad, 2);
+      descend ||= pressed(pad, 1);
       const edge = (i: number, name: 'enterExit' | 'reset' | 'jump') => {
         if (pressed(pad, i) && !this.padHeld.has(i)) this.edges.add(name);
         if (pressed(pad, i)) this.padHeld.add(i);
@@ -150,6 +163,7 @@ export class Input {
     this.moveY = moveY;
     this.action = action;
     this.sprint = sprint;
+    this.rise = (action ? 1 : 0) - (descend ? 1 : 0);
     Object.assign(this.drive, { throttle, brake, steer: moveX, handbrake: action });
   }
 
@@ -158,14 +172,15 @@ export class Input {
     const ui = document.createElement('div');
     ui.className = 'touch';
     ui.setAttribute('data-mode', this.mode);
+    ui.toggleAttribute('data-flying', this.flying);
     ui.innerHTML = `
       <div class="stick"><div class="stick-knob"></div></div>
       <button class="btn btn-enter" aria-label="Get in or out">🚗</button>
       <button class="btn btn-reset car-only" aria-label="Flip car">⟲</button>
-      <button class="btn btn-action" aria-label="Handbrake or jump"><span class="car-only">HB</span><span class="foot-only">JUMP</span></button>
+      <button class="btn btn-action" aria-label="Handbrake or jump"><span class="car-only">HB</span><span class="foot-only walk-only">JUMP</span><span class="foot-only fly-only">UP</span></button>
       <button class="btn btn-brake car-only" aria-label="Brake / reverse">◀</button>
       <button class="btn btn-gas car-only" aria-label="Accelerate">▲</button>
-      <button class="btn btn-sprint foot-only" aria-label="Sprint">RUN</button>
+      <button class="btn btn-sprint foot-only" aria-label="Sprint"><span class="walk-only">RUN</span><span class="fly-only">DOWN</span></button>
     `;
     this.root.appendChild(ui);
     this.ui = ui;

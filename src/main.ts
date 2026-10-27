@@ -1,7 +1,8 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { GameAudio } from './audio.ts';
-import { ChaseCamera, DRIVING, ON_FOOT } from './camera.ts';
+import { ChaseCamera, DRIVING, FLYING, ON_FOOT } from './camera.ts';
+import { FLY_CODE, StickCode } from './cheats.ts';
 import { TERRAIN_ONLY_QUERY } from './city/building-chunk.ts';
 import { Car } from './car.ts';
 import { Input } from './input.ts';
@@ -143,7 +144,24 @@ async function main() {
     return best;
   };
 
+  // Cheat: flick the stick up, up, down, down, left, right, left, right to fly.
+  const flyCode = new StickCode(FLY_CODE);
+  const setFlying = (on: boolean) => {
+    player.setFlying(on);
+    input.setFlying(on);
+    if (on) return;
+    // Landing inside a building would leave the capsule stuck in its
+    // collider: step out onto the roof instead.
+    const p = player.position;
+    let inside = false;
+    world.intersectionsWithPoint({ x: p.x, y: p.y + 0.9, z: p.z }, () => !(inside = true), RAPIER.QueryFilterFlags.ONLY_FIXED);
+    if (!inside) return;
+    const hit = world.castRay(new RAPIER.Ray({ x: p.x, y: 1000, z: p.z }, down), 2000, true, RAPIER.QueryFilterFlags.ONLY_FIXED);
+    if (hit) player.place(new THREE.Vector3(p.x, 1000 - hit.timeOfImpact + 0.05, p.z), player.heading);
+  };
+
   const enter = (car: Car) => {
+    setFlying(false);
     driving = car;
     exitRequested = false;
     player.setActive(false);
@@ -359,6 +377,7 @@ async function main() {
 
     input.update();
     if (!started) input.clearPresses();
+    if (started && !driving && flyCode.feed(input.moveX, input.moveY, now / 1000)) setFlying(!player.flying);
     if (input.consume('mute')) {
       audio.toggleMute();
       setMuteIcon();
@@ -394,14 +413,14 @@ async function main() {
         c.car.body.setAngularDamping(3);
       } else if (c.soaked !== null && clock - c.soaked > SOAK_CAR) fishOutCar(c);
     }
-    if (!driving) {
+    if (!driving && !player.flying) {
       const p = player.position;
       // Feet just under the surface is enough: they may be stuck on the drop by the sea wall.
       if (playerSoaked === null && inWater(p.x, p.y + SUBMERGED - 0.15, p.z)) {
         playerSoaked = clock;
         makeSplash(p.x, p.z, 0.5, true);
       } else if (playerSoaked !== null && clock - playerSoaked > SOAK_PLAYER) fishOutPlayer();
-    } else playerSoaked = null;
+    } else if (driving) playerSoaked = null;
     // Freeze anything standing on ground that hasn't streamed in yet, rather
     // than let it fall through the world.
     for (const c of cars) {
@@ -419,7 +438,10 @@ async function main() {
       player.place(new THREE.Vector3(x, (Number.isNaN(ground) ? 0 : ground) + 0.5, z), player.heading);
       chase.snap(player.heading);
     }
-    const playerFrozen = !driving && !map.hasGround(player.position.x, player.position.z);
+    // Flying outruns the streaming sometimes, and there's no ground to fall through.
+    const playerFrozen = !driving && !player.flying && !map.hasGround(player.position.x, player.position.z);
+    // Fly over the harbour, not along its floor.
+    const floor = player.flying ? Math.max(map.heightAt(feet.x, feet.z), water ? water.level : -Infinity) : NaN;
 
     accumulator += frameDt;
     const tPhys = performance.now();
@@ -432,7 +454,7 @@ async function main() {
         else if (exitRequested) car.update({ throttle: 0, brake: Math.abs(car.forwardSpeed()) > 1 ? 1 : 0, steer: 0, handbrake: false }, FIXED_DT);
         else car.update(input.drive, FIXED_DT);
       }
-      if (!driving && !playerFrozen) player.update({ moveX, moveZ, sprint: input.sprint, jump: jump && steps === 0 }, FIXED_DT);
+      if (!driving && !playerFrozen) player.update({ moveX, moveZ, sprint: input.sprint, jump: jump && steps === 0, rise: input.rise, floor }, FIXED_DT);
       world.step();
       for (const { car, frozen } of cars) if (!frozen) car.afterStep(FIXED_DT);
       if (!driving) player.afterStep();
@@ -494,10 +516,10 @@ async function main() {
       // sideways or towards the camera doesn't send it spinning.
       const awayFromCamera = input.moveY > 0.3 && input.moveY > Math.abs(input.moveX) * 0.5;
       chase.rotate(input.consumeLook(frameDt) * 0.006);
-      chase.update(frameDt, ON_FOOT, player.position, player.heading, player.speed, player.collider, player.speed > 0.5 && awayFromCamera);
+      chase.update(frameDt, player.flying ? FLYING : ON_FOOT, player.position, player.heading, player.speed, player.collider, player.speed > 0.5 && awayFromCamera);
       audio.setEngine(false, 0, 0);
       audio.setSkid(0, 0);
-      if (player.stepped) audio.footstep();
+      if (player.stepped && !player.flying) audio.footstep();
     }
     player.stepped = false;
     // On foot the camera is always close; this only hides them from far debug views.
@@ -505,7 +527,11 @@ async function main() {
     playerShadow.visible = player.object.visible;
     speedoBox.classList.toggle('hidden', !driving);
     input.setCanEnter(!!nearby);
-    prompt.textContent = nearby ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in') : '';
+    prompt.textContent = nearby
+      ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in')
+      : player.flying && !driving
+        ? (coarse ? 'Flying: UP / DOWN to climb, the same code to land' : 'Flying: Space / C to climb, Shift for speed, the same code to land')
+        : '';
 
     // Don't follow a sinking car under the water: watch from just above it.
     if (water && camera.position.y < water.level + 0.6) {
@@ -553,6 +579,7 @@ async function main() {
         drivingIndex: cars.findIndex((c) => c.car === driving),
         player: player.position.toArray(),
         playerGrounded: player.isGrounded,
+        flying: player.flying,
         speedKmh: driving ? Math.abs(driving.forwardSpeed()) * 3.6 : 0,
         skid: driving?.skid ?? 0,
         skidQuads: skids.laid,

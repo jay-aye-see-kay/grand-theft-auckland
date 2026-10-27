@@ -29,7 +29,8 @@ get a check in `scripts/smoke.mjs`.
 
 - `src/main.ts`: game loop (fixed 60 Hz physics, render interpolation), enter/exit, HUD, `?debug` hooks
 - `src/car.ts` (`TUNING`), `src/corolla.ts` (model, `bake()`), `src/player.ts`, `src/camera.ts`,
-  `src/input.ts` (touch/keyboard/gamepad), `src/audio.ts` (synthesised), `src/skids.ts`
+  `src/input.ts` (touch/keyboard/gamepad), `src/cheats.ts` (stick-flick codes: ↑↑↓↓←→←→ flies),
+  `src/audio.ts` (synthesised), `src/skids.ts`
 - `src/sky.ts`, `src/sun.ts`, `src/splash.ts` (title screen with data credits)
 - `src/maps/`: `auckland.ts` (default) and `test-town.ts` (`?map=test`)
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),

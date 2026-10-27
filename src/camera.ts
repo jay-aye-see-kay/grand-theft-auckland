@@ -17,6 +17,8 @@ export interface CameraProfile {
 
 export const DRIVING: CameraProfile = { distance: 6.5, height: 2.4, lookHeight: 1.1, lookAhead: 2, followRate: 3.5, speedPullback: 0.07 };
 export const ON_FOOT: CameraProfile = { distance: 4.2, height: 1.9, lookHeight: 1.55, lookAhead: 0.6, followRate: 1.6, speedPullback: 0.05 };
+/** Flying (cheat): further back and a little above, to take in whole buildings. */
+export const FLYING: CameraProfile = { distance: 12, height: 3.5, lookHeight: 1, lookAhead: 2, followRate: 1.2, speedPullback: 0.04 };
 
 const _fwd = new THREE.Vector3();
 const _desired = new THREE.Vector3();
