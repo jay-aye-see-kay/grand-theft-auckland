@@ -1,6 +1,7 @@
 # Handover: making it Auckland
 
-Read `CLAUDE.md` first. This doc is the brief; `docs/TASKS.md` is the live
+Read `CLAUDE.md` first, then `docs/HANDOVER-2.md` (state after the first
+run, unfinished work on `backup/wip`, lessons). This doc is the brief; `docs/TASKS.md` is the live
 checklist.
 
 ## Where things are (end of first session)

@@ -89,7 +89,8 @@ and verified.
 
 ## Tier 2: recognisably Auckland
 
-- [ ] **T9 Landmarks:**
+- [ ] **T9 Landmarks:** Part 1 (Sky Tower, Ferry Building, Chief Post Office, Civic) is
+  written but unverified, on `backup/wip` (see HANDOVER-2.md). Part 2 is the rest.
   - Sky Tower
   - Ferry Building
   - Britomart
