@@ -64,7 +64,7 @@ and verified.
   only near the player, colliders within 300 m, `?debug` perf overlay, `__game.view(...)` and
   smoke budgets. Budgets and conventions for new geometry are in CLAUDE.md.
 - [x] **T8 Attribution.** Done: title screen (tap to play) with linked credits; README section.
-- [ ] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
+- [x] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
   isn't recognisable, looks PS1 not PS2/3").** Overturns the flat-vertex-colour
   decision. Make one reference block of lower Queen St (Customs → Shortland) look
   as good as phones allow, then generalise:
@@ -78,7 +78,14 @@ and verified.
   - the sun is currently in the south: in NZ it should be in the north
   - Done when: a street-level screenshot on Queen St reads as Queen St, within
     budget. Then roll the look out across the map before the rest of tier 2.
-- [ ] **Milestone: tier 1 live.** Add a phone test list to Questions, then carry on.
+  - Done (map-wide): northern sun + ACES + haze + baked wall light; 16-layer canvas facade
+    atlas styled from OSM tags; 1,413 verandahs; road/paver textures, shader lane lines,
+    531 crossings; always-loaded skyline LOD (Sky Tower visible from the street). Street
+    ~130k tris / 30 calls. Follow-ups: T8c.
+- [ ] **T8c Look polish.** Stop lane lines at junction mouths; tone down garish shop
+  window displays; cut ground triangles under paving (a lower Queen St view hits
+  139–155k tris); street-level sanity pass on Ponsonby Rd/High St/Wynyard.
+- [x] **Milestone: tier 1 live.** Phone test list added to Questions.
 
 ## Tier 2: recognisably Auckland
 
@@ -118,6 +125,13 @@ After tier 3, add the next most valuable tasks here and keep going.
 - Traffic, pedestrians, police, missions (roadmap M3–M4)
 
 ## Questions for the owner
+
+- **Tier 1 + street look is live. On your phone, please check:**
+  1. Frame rate walking and driving up Queen St from the Britomart spawn (smooth? hot?).
+  2. Does Queen St / K Road read as Auckland at eye level now? What's most off?
+  3. Can you see the Sky Tower over the rooftops from downtown?
+  4. Touch controls and sound still feel OK; load time on mobile data.
+  5. Drive off a wharf into the harbour (should splash and reset).
 
 - **Deploys from `main` are blocked by the `github-pages` environment** (it
   only allows the repo's default branch, `claude/gta-style-auckland-game-pffg64`).
