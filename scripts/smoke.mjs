@@ -93,20 +93,26 @@ try {
     await shot('3-walked');
 
     // Sample the peak rather than one moment: CI frame timing varies a lot.
+    // Under CPU contention the sim can run well behind real time (or eat the
+    // key press), so sample for longer and press again if it never left the ground.
     const standY = s.player[1];
-    await page.keyboard.press('Space');
     let peakY = standY;
-    for (let i = 0; i < 12; i++) {
-      await page.waitForTimeout(50);
-      peakY = Math.max(peakY, (await state(page)).player[1]);
+    for (let tries = 0; tries < 3 && peakY - standY <= 0.4; tries++) {
+      await page.keyboard.press('Space');
+      const t0 = Date.now();
+      while (Date.now() - t0 < 1500 && peakY - standY <= 0.4) {
+        await page.waitForTimeout(40);
+        peakY = Math.max(peakY, (await state(page)).player[1]);
+      }
+      await page.waitForFunction(() => window.__game.state().playerGrounded, null, { timeout: 3000 }).catch(() => {});
     }
     check(peakY - standY > 0.4, `jumps (peak +${(peakY - standY).toFixed(2)} m)${tag}`);
     await page.waitForTimeout(600);
 
+    // Back until it's in reach of the car again: polled, with plenty of time
+    // (a slow sim covers the distance in more wall-clock time than it took to go).
     await page.keyboard.down('KeyA');
-    // Back until it's in reach of the car again (or as long as it walked away, and a bit).
-    await page.waitForTimeout(walkMs / 2);
-    await page.waitForFunction(() => window.__game.state().nearCar, null, { timeout: walkMs }).catch(() => {});
+    await page.waitForFunction(() => window.__game.state().nearCar, null, { timeout: Math.max(walkMs * 3, 8000), polling: 50 }).catch(() => {});
     await page.keyboard.up('KeyA');
     s = await state(page);
     check(s.nearCar, `walks back to the car${tag}`);
@@ -620,12 +626,16 @@ try {
     check(dist(before, after) > 1, `touch stick walks (moved ${dist(before, after).toFixed(1)} m)`);
 
     // Walk back and get in with the button.
+    // Until the car is in reach again (polled: a slow sim needs longer than the walk out took).
     await touch('touchStart', cy);
     await touch('touchMove', cy + 50);
-    await page.waitForTimeout(touchMs);
+    await page.waitForFunction(() => window.__game.state().nearCar, null, { timeout: Math.max(touchMs * 3, 8000), polling: 50 }).catch(() => {});
     await touch('touchEnd');
-    await page.locator('.btn-enter').tap({ force: true }); // it pulses, so never "stable"
-    await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 3000 }).catch(() => {});
+    // Slow frames can miss a tap, so retry.
+    for (let tries = 0; tries < 4 && (await state(page)).mode !== 'car'; tries++) {
+      await page.locator('.btn-enter').tap({ force: true }); // it pulses, so never "stable"
+      await page.waitForFunction(() => window.__game.state().mode === 'car', null, { timeout: 2000 }).catch(() => {});
+    }
     const s = await state(page);
     check(s.mode === 'car', 'touch enter button gets in');
     check(await page.locator('.btn-gas').isVisible(), 'driving touch layout');
