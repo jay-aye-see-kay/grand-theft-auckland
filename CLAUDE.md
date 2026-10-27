@@ -16,14 +16,15 @@ https://jay-aye-see-kay.github.io/grand-theft-auckland/ (`?debug` for perf overl
 npm ci
 npm run build   # tsc typecheck + vite build into dist/
 npm run sim     # headless car handling report (Node, no browser)
-npm run smoke   # after build: plays the game in headless Chromium, asserts core actions
+npm run smoke   # after build: core checks in headless Chromium (~30 s)
+npm run smoke:full   # every area (a few min); `npm run smoke -- --only=harbour,fly`
 npm run dev     # dev server with --host, for phones on the LAN
 npm run citygen:build   # regenerate public/city/cbd/ (fetches OSM + LiDAR into .cache/)
 ```
 
 CI (`.github/workflows/deploy.yml`) only builds and deploys from the default
 branch; it does not run sim or smoke, so run them before pushing. New features
-get a check in `scripts/smoke.mjs`.
+get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
 
 ## Layout
 
@@ -38,7 +39,7 @@ get a check in `scripts/smoke.mjs`.
 - `tools/citygen/`: offline generator. OSM + LINZ LiDAR → projected (origin Britomart) →
   terrain, buildings, roads, ground, piers, sea walls, parking → `public/city/cbd/` (committed,
   deterministic). Hand fixes in `overrides/cbd.json` keyed by OSM id (see `overrides/README.md`).
-- `scripts/smoke.mjs` (Playwright), `scripts/sim-car.ts`
+- `scripts/smoke/` (Playwright: `run.mjs`, one file per area), `scripts/sim-car.ts`
 
 ## Conventions
 
@@ -58,7 +59,7 @@ get a check in `scripts/smoke.mjs`.
 ## Phone budget
 
 Measured at `__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`
-(`__game.state()`, `__game.breakdown()`). Smoke fails past:
+(`__game.state()`, `__game.breakdown()`). `smoke:full` fails past:
 
 | View | Triangles | Draw calls |
 |---|---|---|
@@ -78,10 +79,13 @@ shadows only. 2 m ground within 90 m, 10 m beyond; colliders within ~300 m.
   safe: citygen smooths ground under streets and the game draws the fine
   (2 m grid) ground `PAVED_SINK` (5 cm) lower under road strips.
 - **Skid marks** are double-sided (strips laid sliding backwards face down).
-- **Smoke:** headless Chromium renders in software (~10–20 fps) and the sim
-  falls behind real time, so movement checks use loose thresholds. Its fps
-  means nothing for phones. Tap pulsing buttons with `{ force: true }`. Close
-  one page before opening the next.
+- **Smoke:** headless Chromium renders in software (~10–20 fps), so checks
+  never wait on the clock: `__game.step(n)` pauses real time and runs n fixed
+  ticks without drawing (keys held by Playwright still count), and areas
+  loop on `run({ keys, max, until })`. Then results repeat exactly; keep it
+  that way (`--repeat=3`), and mark checks that read wall-clock numbers
+  `{ stable: false }`. Each area starts from `__game.reset()`. Its fps means
+  nothing for phones. Tap pulsing buttons with `{ force: true }`.
 - **Playwright** is pinned to 1.63.0 to match `/opt/pw-browsers`. Don't run
   `playwright install`.
 
