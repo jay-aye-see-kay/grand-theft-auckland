@@ -1,143 +1,61 @@
 # Tasks
 
-Live checklist for the Auckland work. Brief and orchestration rules:
-`docs/HANDOVER.md`. Tick tasks with a one-line note when they're done
-and verified.
+Each chunk should fit in one session. Tick it with a one-line note when done.
 
-## Tier 1: real map, grey box
+## Status
 
-- [x] **T1 Data fetch and projection.** Done: `npm run citygen:stats`; Britomart 3.6 m,
-  Queen/K Rd 65.8 m. API: `loadCityData()` (fetch.ts), `lonLatToLocal`, `sampleLocal`, `wayLocal`.
-  - Build `tools/citygen/fetch.ts` and `project.ts`. Fetch OSM for the CBD
-    bbox in tiles, and DEM/DSM windows for the same area.
-  - Cache them in `.cache/` (gitignored).
-  - Project everything to local metres, with the origin at Britomart.
-  - Done when: a script prints counts of buildings, roads and heights for
-    the bbox, plus the ground elevation at Britomart and at the
-    Queen St / K Road corner. Sanity check: Britomart should be near sea
-    level and K Road somewhere around 60–80 m. If not, the projection or
-    the DEM window is wrong.
-- [x] **T2 Terrain.** Done: 90 chunks, 1 MB total in `public/city/cbd/`, harbour flat at -2 m
-  until T7. Add layers as `<layer>/<i>_<j>.*` listed in chunk `files`, loaded in
-  `src/city/streamer.ts`. Aerial views hit 73 draw calls already.
-  - Generate per-chunk heightfields at 2 m resolution (render mesh +
-    Rapier heightfield).
-  - Add Auckland loading in the game, with `?map=test` keeping the old
-    town.
-  - Done when: you can drive the Corolla over real hills with no seams
-    between chunks. A smoke check covers this.
-- [x] **T3 Buildings.** Done: 2486 outlines + 367 parts, 1 draw call per chunk, 493 KB total.
-  Skyline reads right (Sky Tower parts from OSM). Glitches for T6: w1173588444 (PwC crown 200 m),
-  w766845442 (height=1), w464644562 (80 m kiosk from LiDAR), r12738128 (car park at 9 m),
-  w24252617 (Glasshouse 3.2 m). Far chunks (e.g. Sky Tower from the harbour) need T13.
-  - Extrude footprints using the height rules in HANDOVER.md, seated on
-    the terrain.
-  - Merge them per chunk, with colliders.
-  - Done when: the skyline matches a photo of the CBD from the harbour,
-    you can't drive through buildings, and the draw-call budget holds.
-- [x] **T4 Roads v1.** Done: roads/footpaths/flush kerbs draped on terrain (1 MB, 452k tris),
-  land-use ground tint. `probe(x,z).surface` in debug. T6 glitches: CMJ flyover ramps flat
-  (w119020515, w620912278), speckle by K Rd bridge (w8371382), lower Queen St at Britomart is
-  pedestrian paving (w51185933, w1250664764). Kerbside parking: lower Queen St (-147,113)→(-245,494).
-  - Road, footpath and kerb polygons from OSM centrelines, draped on the
-    terrain, with filtered highway classes.
-  - Done when: Queen St, Customs St, Albert St and K Road are driveable
-    and line up with the buildings.
-- [x] **T5 Spawn, parked cars and play.** Done: spawn on the plaza east of the Chief Post
-  Office, purple car on Galway St; 9 cars from `parking.json` (build-time, kerbside, tilted
-  to slope); fall-out-of-world recovery. Aerial view now 137 draw calls (see T7b).
-  - Spawn at Britomart with the purple Corolla.
-  - Park the other Corollas on real streets.
-  - Update the smoke test for the Auckland map.
-  - Done when: all smoke checks pass on the Auckland map.
-- [x] **T6 Overrides.** Done: `overrides/cbd.json` (+README); ~10 fixes incl. PwC, Customhouse,
-  CMJ ramp decks, canopies as slabs, capped LiDAR heights; 6 landmarks recorded in manifest.
-  - `overrides/cbd.json` keyed by OSM ID: delete, height, landmark and
-    block.
-  - Use it to fix the worst five glitches found in T3–T5.
-- [x] **T7 Water.** Done: shader water at 0 m, sea floor -8 m, sea walls from the DEM, pier decks
-  (Queens Wharf), splash + reset. Left: jagged pontoon slopes, saw-tooth distant coast.
-  - Harbour plane, coastline and wharf edges. The car should splash and
-    reset, not fall forever.
-- [x] **T7b Performance pass.** Done: street views ~117–120k tris, 28–30 calls; aerial ~116k,
-  35–41 calls (was 141). Roads 452k→148k, one draw call per chunk (`ChunkMesh`), 2 m ground
-  only near the player, colliders within 300 m, `?debug` perf overlay, `__game.view(...)` and
-  smoke budgets. Budgets and conventions for new geometry are in CLAUDE.md.
-- [x] **T8 Attribution.** Done: title screen (tap to play) with linked credits; README section.
-- [x] **T8b Street-level look-dev (owner feedback: "aerials good, ground level
-  isn't recognisable, looks PS1 not PS2/3").** Overturns the flat-vertex-colour
-  decision. Make one reference block of lower Queen St (Customs → Shortland) look
-  as good as phones allow, then generalise:
-  - textured facades from a procedural atlas (window grids, spandrels, curtain
-    glass, heritage brick/stucco), styled per building from OSM tags
-  - verandahs and shopfronts on retail frontages
-  - baked AO / base darkening in vertex colours, better sun/sky/haze, tone mapping
-  - asphalt/concrete textures, lane markings and crossings (or the LINZ 7.5 cm
-    aerials draped on the ground; evaluate)
-  - the Sky Tower visible over the rooftops from the street (distant low-LOD)
-  - the sun is currently in the south: in NZ it should be in the north
-  - Done when: a street-level screenshot on Queen St reads as Queen St, within
-    budget. Then roll the look out across the map before the rest of tier 2.
-  - Done (map-wide): northern sun + ACES + haze + baked wall light; 16-layer canvas facade
-    atlas styled from OSM tags; 1,413 verandahs; road/paver textures, shader lane lines,
-    531 crossings; always-loaded skyline LOD (Sky Tower visible from the street). Street
-    ~130k tris / 30 calls. Follow-ups: T8c.
-- [ ] **T8c Look polish.** Stop lane lines at junction mouths; tone down garish shop
-  window displays; cut ground triangles under paving (a lower Queen St view hits
-  139–155k tris); street-level sanity pass on Ponsonby Rd/High St/Wynyard.
-- [x] **Milestone: tier 1 live.** Phone test list added to Questions.
+- Live: https://jay-aye-see-kay.github.io/grand-theft-auckland/ (`?debug` for perf overlay and test hooks).
+- Done: tier 1 and the street-level look (see `docs/HISTORY.md`).
+- Branches: `main` and the default branch `claude/gta-style-auckland-game-pffg64`
+  are identical. Only the default branch deploys, so push both until one is
+  retired. `backup/wip` holds unverified landmark work (chunk 1).
+- Regenerating the map in a fresh container re-downloads OSM and ~76 MB of LiDAR into `.cache/`.
 
-## Tier 2: recognisably Auckland
+## Next
 
-- [ ] **T9 Landmarks:** Part 1 (Sky Tower, Ferry Building, Chief Post Office, Civic) is
-  written but unverified, on `backup/wip` (see HANDOVER-2.md). Part 2 is the rest.
-  - Sky Tower
-  - Ferry Building
-  - Britomart
-  - Civic Theatre
-  - Town Hall
-  - Wynyard silos
-  - Harbour Bridge (backdrop)
-  - Rangitoto (skyline)
-- [ ] **T10 Road geometry v2:** lane markings, clean junctions, crossings,
-  traffic lights from OSM. Try `osm2streets-js` first.
-- [ ] **T11 Facades:**
-  - window grids from levels, shopfronts on retail streets
-  - verandahs on Queen St, K Road and High St
-  - roof colours sampled from the aerial photos
-- [ ] **T12 Street furniture and trees:** lamps, bus stops and signals from
-  OSM; trees from DSM minus DEM. Use instancing.
-- [ ] **T13 Chunk streaming and a low-poly skyline for distant views.**
-- [ ] **T14 Minimap from road data.**
-- [ ] **Milestone: tier 2 live.** Add a phone test list to Questions, then carry on.
+- [ ] **1. Land T9a from `backup/wip`.** Three commits, not yet verified: Sky Tower,
+  Ferry Building, Chief Post Office and Civic in `src/landmarks/`, plus a smoke fix
+  for walking after a camera snap and ramming the CPO wall. Merge into `main`,
+  build/sim/smoke, check budgets and colliders, screenshot each landmark.
+- [ ] **2. Fast, deterministic smoke.** Add `__game.step(n)` to advance physics
+  without real-time waits; move the walk, drive and wall checks onto it. Split
+  into a quick core suite and a full suite, with `--only=<area>`.
+- [ ] **3. Wall tunnelling.** On a slow runner a car rammed at the CPO ended up
+  ~50 m past the wall. Find out if this can happen in game on a slow phone
+  (colliders are built asynchronously within ~300 m), and fix (e.g. CCD).
+- [ ] **4. Lane lines** stop at junction mouths.
+- [ ] **5. Queen St polish:** tone down garish shop window displays; cut ground
+  triangles under paving (a lower Queen St view hits 139–155k).
+- [ ] **6. Street sanity pass** on Ponsonby Rd, High St and Wynyard.
+- [ ] **7. Landmarks: Town Hall, Wynyard silos.**
+- [ ] **8. Landmarks: Harbour Bridge backdrop, Rangitoto on the horizon.**
+- [ ] **9. Clean junctions.** Time-box `osm2streets-js` first; fall back to our own code.
+- [ ] **10. Street furniture:** lamps, bus stops, traffic signals from OSM, instanced.
+- [ ] **11. Trees** from DSM − DEM, instanced.
+- [ ] **12. Roof colours** sampled from the LINZ aerials.
+- [ ] **13. Coast cleanup:** jagged marina pontoon slopes, saw-toothed distant coastline.
+- [ ] **14. Minimap** from road data.
+- [ ] **Milestone: tier 2 live.** Ask the owner for a phone test.
 
-## Tier 3: stretch
+## Later (tier 3)
 
-After tier 3, add the next most valuable tasks here and keep going.
+- More areas: Ponsonby, Parnell, Grafton, Newmarket, Mt Eden.
+- Drivable Harbour Bridge to Devonport; motorways and Spaghetti Junction.
+- Volcanic cones (Mt Eden, One Tree Hill) from the LiDAR.
+- Incremental citygen (cache per layer) if regeneration gets slow.
 
-- [ ] More areas: Ponsonby, Parnell, Grafton, Newmarket, Mt Eden.
-- [ ] Drivable Harbour Bridge to Devonport; motorways and Spaghetti Junction.
-- [ ] Volcanic cones (Mt Eden, One Tree Hill) from the LiDAR.
+## Parked (owner's choice)
 
-## Parked (owner chose not to now)
-
-- Handling and camera tuning (a `?debug` slider panel would help)
-- Tyre smoke and breakable crates
-- Traffic, pedestrians, police, missions (roadmap M3–M4)
+- Handling and camera tuning (a `?debug` slider panel would help).
+- Tyre smoke, breakable crates, a loading bar.
+- Traffic, pedestrians, police, missions.
 
 ## Questions for the owner
 
-- **Tier 1 + street look is live. On your phone, please check:**
-  1. Frame rate walking and driving up Queen St from the Britomart spawn (smooth? hot?).
-  2. Does Queen St / K Road read as Auckland at eye level now? What's most off?
-  3. Can you see the Sky Tower over the rooftops from downtown?
-  4. Touch controls and sound still feel OK; load time on mobile data.
-  5. Drive off a wharf into the harbour (should splash and reset).
-
-- **Deploys from `main` are blocked by the `github-pages` environment** (it
-  only allows the repo's default branch, `claude/gta-style-auckland-game-pffg64`).
-  Workaround in use: every verified push to `main` is also fast-forwarded to
-  that branch, which deploys (the workflow deploys only from the default
-  branch). To fix: Settings → General → default branch = `main` (and allow
-  `main` in Settings → Environments → github-pages if needed). Then the old
-  branch can be deleted; nothing else needs changing.
+- **Phone test of what's live:** frame rate driving up Queen St from spawn;
+  does street level read as Auckland, and what's most off; Sky Tower visible
+  over the rooftops; touch controls, sound and load time; driving off a wharf
+  (should splash and reset).
+- **Branches:** make `main` the default (Settings → General, and allow it in
+  Settings → Environments → github-pages), then delete
+  `claude/gta-style-auckland-game-pffg64`? Or keep working on the default branch.

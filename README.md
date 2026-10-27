@@ -3,14 +3,14 @@
 A GTA III–flavoured open-world driving game set in Auckland, running in the
 browser on phones and desktop. Three.js + Rapier physics + TypeScript + Vite.
 
-**Status:** M1 in progress. Walk around a placeholder test town, get in
-and out of four parked Corollas (yours is the purple '95), make engine
-noise and leave skid marks. See [ROADMAP.md](ROADMAP.md) for the plan.
+Drive and walk the real Auckland CBD, generated from OpenStreetMap and LINZ
+LiDAR. Spawn outside Britomart next to your purple '95. Plan:
+[docs/BRIEF.md](docs/BRIEF.md) and [docs/TASKS.md](docs/TASKS.md).
 
 ## Play
 
-Deployed to GitHub Pages on every push. Add `?debug` to the URL for an
-FPS / pixel-ratio / draw-call readout.
+https://jay-aye-see-kay.github.io/grand-theft-auckland/ (add `?debug` for a
+performance overlay, `?map=test` for the old test town).
 
 | | Keyboard | Touch | Gamepad |
 |---|---|---|---|
@@ -43,20 +43,10 @@ Run it before and after touching the numbers in `TUNING` in `src/car.ts`.
 
 `npm run smoke` (after `npm run build`) starts on foot, walks, jumps, gets
 in, drives, handbrakes, gets out, then repeats the basics with touch
-controls on a phone-sized screen. It fails on any console error. CI runs it
-before every deploy and keeps the screenshots as a build artifact.
+controls on a phone-sized screen. It fails on any console error or a blown
+triangle/draw-call budget. CI only builds and deploys, so run it locally.
 
-## Layout
-
-- `src/main.ts`: game loop, enter/exit, HUD, adaptive resolution
-- `src/car.ts`: Rapier ray-cast vehicle and arcade handling
-- `src/corolla.ts`: low-poly '95 Corolla model built in code (4 draw calls + wheels)
-- `src/player.ts`: on-foot character: capsule controller, walk cycle
-- `src/camera.ts`: follow camera with driving and on-foot framing
-- `src/input.ts`: keyboard, touch and gamepad
-- `src/audio.ts`: synthesised engine, tyres, crashes, footsteps
-- `src/skids.ts`: skid marks
-- `src/world.ts`: placeholder test town (replaced by real Auckland in M2)
+Project structure and conventions: [CLAUDE.md](CLAUDE.md).
 
 ## Deploying
 
