@@ -15,8 +15,9 @@ npm run dev     # local dev server (--host, so phones on the LAN can connect)
 ```
 
 A change is not done until `npm run build && npm run sim && npm run smoke`
-all pass. CI (`.github/workflows/deploy.yml`) runs the same three and
-deploys to Pages on pushes to `main` and `claude/**`. When you add a feature,
+all pass locally. CI (`.github/workflows/deploy.yml`) only builds and
+deploys (from the default branch); by the owner's choice it does not run sim
+or smoke, so run them yourself before pushing. When you add a feature,
 add a check for it to `scripts/smoke.mjs`.
 
 ## Conventions

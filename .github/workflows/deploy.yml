@@ -26,14 +26,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: node --experimental-strip-types scripts/sim-car.ts
-      - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke.mjs smoke-shots
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: smoke-screenshots
-          path: smoke-shots
+      # No sim or smoke gate before deploy (owner's call while there are no
+      # users): run `npm run sim` and `npm run smoke` locally instead.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -42,7 +36,7 @@ jobs:
   deploy:
     needs: build
     # The github-pages environment only accepts the default branch; other
-    # branches still get the full build and smoke test.
+    # branches still get the build.
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     environment:
