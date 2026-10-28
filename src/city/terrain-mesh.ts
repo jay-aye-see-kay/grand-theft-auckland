@@ -233,11 +233,19 @@ export function buildTerrainParts(
   /** Quads of a grid (side w, spacing `per` cells) over cells [r0, r1) x [c0, c1). */
   /** Whether the cell of side `per` samples with its north-west corner at sample (r, c) is a cavity's opening. */
   const open = (r: number, c: number, per: number) => !!carve && carve.open(origin.x + (c + per / 2) * cell, origin.z + (r + per / 2) * cell);
+  // Cells wholly inside a building (citygen marks them) are never seen: a
+  // building's walls run from below the ground to its roof.
+  const covered = ground?.covered;
+  const under = (r: number, c: number, per: number) => {
+    if (!covered) return false;
+    for (let dr = 0; dr < per; dr++) for (let dc = 0; dc < per; dc++) if (covered[(r + dr + GROUND_APRON) * ground!.n + c + dc + GROUND_APRON] !== 1) return false;
+    return true;
+  };
   const quads = (grid: Int32Array, w: number, per: number, r0: number, r1: number, c0: number, c1: number) => {
     const tris: number[] = [];
     for (let gz = r0 / per; gz < r1 / per; gz++) {
       for (let gx = c0 / per; gx < c1 / per; gx++) {
-        if (open(gz * per, gx * per, per)) continue;
+        if (open(gz * per, gx * per, per) || under(gz * per, gx * per, per)) continue;
         const p00 = at(grid, w, gx, gz);
         const p10 = at(grid, w, gx + 1, gz);
         const p01 = at(grid, w, gx, gz + 1);

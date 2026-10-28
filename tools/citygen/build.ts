@@ -30,6 +30,7 @@ import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
 import { buildBarriers } from './barriers.ts';
 import { emitTrees, findTrees, treeTris } from './trees.ts';
+import { placeFurniture } from './furniture.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
 import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, SAMPLES, SEA_SHELF, TerrainSampler, WATER_LEVEL } from './terrain.ts';
@@ -86,6 +87,12 @@ const walls = buildSeawalls(data.dem, grid, terrainSampler, (x, z) => {
   return mb;
 });
 console.log(`Sea walls: ${walls.km.toFixed(1)} km along ${walls.lines} coastlines`);
+// The ground under buildings is never seen: the game leaves it out of the terrain mesh.
+const families = new Map<string, number>();
+for (const f of blds.footprints) {
+  if (!families.has(f.family)) families.set(f.family, families.size + 1);
+  ground.coverBuilding(families.get(f.family)!, f.bbox, f.inside);
+}
 const roads = buildRoads(grid, terrainSampler, ground, network, blds.covers, paths);
 // Trees after the roads have painted the ground, so mapped trees in a carriageway are left out.
 const forest = findTrees(data, { grid, ground, covers: blds.covers, deckAt: network.deckAt });
@@ -98,6 +105,18 @@ emitTrees(forest.trees, grid, terrainSampler, (x, z) => {
   return mb;
 });
 ground.paintCanopy(forest.trees);
+const furniture = placeFurniture(data.osm, network, grid, terrainSampler, ground, blds.covers, (x, z) => {
+  const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+  const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+  if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+  let mb = blds.chunks.get(`${i},${j}`);
+  if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
+  return mb;
+});
+console.log(
+  `Furniture: ${furniture.lamp} lamps, ${furniture.signal} signals, ${furniture.shelter} shelters, ${furniture.stop} stops, ${furniture.bench} benches, ` +
+    `${furniture.bin} bins (${furniture.mapped} from OSM), ${furniture.tris} near-only triangles`,
+);
 const barriers = buildBarriers(data.osm, {
   grid,
   terrain: terrainSampler,

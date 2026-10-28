@@ -147,6 +147,12 @@ function inPolygon(p: Polygon, x: number, z: number): boolean {
   return inRing(p.outer, x, z) && !p.holes.some((h) => inRing(h, x, z));
 }
 
+/** [minX, minZ, maxX, maxZ] of a solid's outer rings. */
+function bboxOf(s: Solid): [number, number, number, number] {
+  const pts = s.polygons.flatMap((p) => p.outer);
+  return [Math.min(...pts.map((p) => p.x)), Math.min(...pts.map((p) => p.z)), Math.max(...pts.map((p) => p.x)), Math.max(...pts.map((p) => p.z))];
+}
+
 function inSolid(s: Solid, x: number, z: number): boolean {
   return s.polygons.some((p) => inPolygon(p, x, z));
 }
@@ -1440,6 +1446,12 @@ export type BuildingsResult = {
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
   counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  /**
+   * Drawn buildings standing on the ground (walls from below it up), each
+   * with its family (an outline and its parts): the ground under them is
+   * never seen.
+   */
+  footprints: { family: string; bbox: [number, number, number, number]; inside: (x: number, z: number) => boolean }[];
 };
 
 /** A building tagged as a landmark in the overrides, for hand-made models (T9). */
@@ -1542,6 +1554,8 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   }
   const famTopAbs = new Map<string, number>();
   const cover = new Footprints();
+  /** Drawn buildings standing on the ground, by family (see BuildingsResult.footprints). */
+  const solidFootprints: { s: Solid; family: string }[] = [];
   // First where everything stands, then the meshes: walls are shaded by the buildings around them.
   type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean; roof: RoofChoice | null; tower?: { ring: Ring; top: number }; plant?: PlantBox[] };
   const placed: Placed[] = [];
@@ -1831,7 +1845,10 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       const half = Math.min(7, Math.sqrt(s.area) * 0.18);
       mb.detail(() => mb.box(s.centroid.x, s.centroid.z, half, half * 0.7, angle, top, 3.5, rgb(0xb4b2ac), 'plain'));
     }
-    if (grounded && !hide && top - bottom > 2.5) cover.add(s);
+    if (grounded && !hide && top - bottom > 2.5) {
+      cover.add(s);
+      solidFootprints.push({ s, family: fam });
+    }
     if (hide) counts.hidden++;
     counts[h.source]++;
     if (s.isPart) counts.parts++;
@@ -1861,7 +1878,10 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   landmarks.sort((a, b) => a.id.localeCompare(b.id) || a.osm.localeCompare(b.osm));
 
   counts.blocks = addBlocks(data, overrides, new Set(solids.map((s) => s.key)), chunkAt);
-  return { chunks, skyline, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z) };
+  return {
+    chunks, skyline, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z),
+    footprints: solidFootprints.map(({ s, family }) => ({ family, bbox: bboxOf(s), inside: (x: number, z: number) => inSolid(s, x, z) })),
+  };
 }
 
 /** Default height of an invisible block (a road block, a fence line), m. */

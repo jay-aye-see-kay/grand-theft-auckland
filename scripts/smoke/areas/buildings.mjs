@@ -40,6 +40,20 @@ export default {
     check(krd.top - krd.ground > 3.4 && krd.top - krd.ground < 4.4 && under > 2.3 && under < 3.3,
       `K Road verandah ${(krd.top - krd.ground).toFixed(1)} m over the footpath, first thing overhead ${(under + 1).toFixed(1)} m up`);
 
+    // Street furniture (tools/citygen/furniture.ts): the bus shelter OSM maps
+    // at the Durham St stop on Queen St, its roof found by looking down.
+    await game('placePlayer', -230, 400, 0);
+    await step(30);
+    let roof = 0;
+    for (let x = -229.5; x <= -221.5; x += 0.5) {
+      for (let z = 400; z <= 408; z += 0.5) {
+        const g = await game('groundHeight', x, z);
+        const hit = await game('renderHit', [x, g + 10, z], [0, -1, 0], 12);
+        if (hit !== null && 10 - hit > 2.4 && 10 - hit < 2.8) roof++;
+      }
+    }
+    check(roof > 10, `a bus shelter at the Durham St stop on Queen St (${roof} points under its roof)`);
+
     // Shapes read from the LiDAR (tools/citygen/roofs.ts, rooftops.ts): a
     // Freemans Bay house's gabled roof rises from eave to ridge, and West
     // Plaza (one OSM outline, LiDAR median 28 m) is a tall tower on a podium.

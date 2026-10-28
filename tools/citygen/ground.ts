@@ -52,6 +52,8 @@ export class GroundRaster {
   readonly classes: Uint8Array;
   /** Tree canopy cover per lattice point, 0..255 (see paintCanopy). */
   readonly canopy: Uint8Array;
+  /** Points on a 1 m lattice (twice the class lattice's) inside a building: which one (see coverBuilding), 0 for none. */
+  private readonly under: Uint32Array;
 
   constructor(grid: Grid) {
     this.c0 = grid.x0 / CELL_SIZE - GROUND_APRON;
@@ -60,6 +62,23 @@ export class GroundRaster {
     this.rows = grid.nz * CELLS + 1 + 2 * GROUND_APRON;
     this.classes = new Uint8Array(this.cols * this.rows); // 0 = urban
     this.canopy = new Uint8Array(this.cols * this.rows);
+    this.under = new Uint32Array((2 * this.cols - 1) * (2 * this.rows - 1));
+  }
+
+  /**
+   * Marks the 1 m lattice points inside a building (`id` > 0, one per
+   * building: an outline and its parts share one) over its bounding box.
+   */
+  coverBuilding(id: number, bbox: readonly [number, number, number, number], inside: (x: number, z: number) => boolean) {
+    const half = CELL_SIZE / 2;
+    const w = 2 * this.cols - 1;
+    const x0 = this.c0 * CELL_SIZE;
+    const z0 = this.r0 * CELL_SIZE;
+    for (let j = Math.max(0, Math.ceil((bbox[1] - z0) / half)); j <= Math.min(2 * this.rows - 2, Math.floor((bbox[3] - z0) / half)); j++) {
+      for (let i = Math.max(0, Math.ceil((bbox[0] - x0) / half)); i <= Math.min(w - 1, Math.floor((bbox[2] - x0) / half)); i++) {
+        if (inside(x0 + i * half, z0 + j * half)) this.under[j * w + i] = id;
+      }
+    }
   }
 
   /**
@@ -168,12 +187,25 @@ export class GroundRaster {
     const n = GROUND_SAMPLES;
     const classes = new Uint8Array(n * n);
     const canopy = new Uint8Array(n * n);
+    const covered = new Uint8Array(n * n);
+    const w = 2 * this.cols - 1;
     for (let r = 0; r < n; r++) {
       const src = (j * CELLS + r) * this.cols + i * CELLS;
       classes.set(this.classes.subarray(src, src + n), r * n);
       canopy.set(this.canopy.subarray(src, src + n), r * n);
+      // A cell is covered if one building holds all nine 1 m points on and in
+      // it (two buildings side by side can leave a crack between them).
+      const rr = j * CELLS + r;
+      for (let c = 0; c < n; c++) {
+        const cc = i * CELLS + c;
+        if (rr + 1 >= this.rows || cc + 1 >= this.cols) continue;
+        const id = this.under[2 * rr * w + 2 * cc];
+        let all = id > 0;
+        for (let dj = 0; dj <= 2 && all; dj++) for (let di = 0; di <= 2 && all; di++) all = this.under[(2 * rr + dj) * w + 2 * cc + di] === id;
+        covered[r * n + c] = all ? 1 : 0;
+      }
     }
-    return { n, classes, canopy };
+    return { n, classes, canopy, covered };
   }
 }
 

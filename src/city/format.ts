@@ -405,7 +405,7 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
 // canopy (or, far away where trees aren't drawn, tints them as canopy), and
 // the debug probe reports the class under a point.
 const GROUND_MAGIC = 0x47415447; // 'GTAG'
-const GROUND_VERSION = 3;
+const GROUND_VERSION = 4;
 const GROUND_HEADER = 8;
 /** Extra lattice points stored beyond each chunk edge, so coarse LODs can average across seams. */
 export const GROUND_APRON = 2;
@@ -438,7 +438,16 @@ export interface GroundSamples {
   classes: Uint8Array;
   /** Tree canopy cover per lattice point, 0..255. */
   canopy: Uint8Array;
+  /**
+   * Per lattice point, 1 if the 2 m cell south-east of it (rows and columns
+   * +1) is wholly inside one building standing on the ground: never seen, so
+   * the terrain mesh leaves it out. Stored in the class byte's top bit.
+   */
+  covered?: Uint8Array;
 }
+
+/** The class byte's top bit: the cell is under a building (see GroundSamples.covered). */
+const COVERED_BIT = 0x80;
 
 export function encodeGround(g: GroundSamples): Uint8Array {
   const nn = g.n * g.n;
@@ -447,7 +456,7 @@ export function encodeGround(g: GroundSamples): Uint8Array {
   view.setUint32(0, GROUND_MAGIC, true);
   view.setUint16(4, GROUND_VERSION, true);
   view.setUint16(6, g.n, true);
-  out.set(g.classes.subarray(0, nn), GROUND_HEADER);
+  for (let k = 0; k < nn; k++) out[GROUND_HEADER + k] = g.classes[k] | (g.covered?.[k] ? COVERED_BIT : 0);
   out.set(g.canopy.subarray(0, nn), GROUND_HEADER + nn);
   return out;
 }
@@ -459,7 +468,13 @@ export function decodeGround(bytes: Uint8Array): GroundSamples {
   const n = view.getUint16(6, true);
   const nn = n * n;
   if (bytes.byteLength < GROUND_HEADER + 2 * nn) throw new Error('ground chunk: truncated');
-  return { n, classes: bytes.slice(GROUND_HEADER, GROUND_HEADER + nn), canopy: bytes.slice(GROUND_HEADER + nn, GROUND_HEADER + 2 * nn) };
+  const classes = bytes.slice(GROUND_HEADER, GROUND_HEADER + nn);
+  const covered = new Uint8Array(nn);
+  for (let k = 0; k < nn; k++) {
+    covered[k] = classes[k] >> 7;
+    classes[k] &= ~COVERED_BIT;
+  }
+  return { n, classes, canopy: bytes.slice(GROUND_HEADER + nn, GROUND_HEADER + 2 * nn), covered };
 }
 
 // Skyline file (the far LOD of tall buildings, always loaded), before

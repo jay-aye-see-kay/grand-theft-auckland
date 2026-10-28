@@ -126,7 +126,7 @@ const PAVED_STREETS = new Set(['pedestrian', 'living_street']);
 const CARRIAGEWAYS = new Set<string>([...DRIVEABLE_HIGHWAYS, 'busway'].filter((h) => !PAVED_STREETS.has(h)));
 const SKIP_SERVICE = new Set(['parking_aisle', 'driveway', 'drive-through', 'emergency_access']);
 
-type Road = {
+export type Road = {
   id: number;
   highway: string;
   /** Node ids and their local points, consecutive duplicates removed. */
