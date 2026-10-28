@@ -8,7 +8,12 @@
 // where a few cm is below depth-buffer precision. Where the same surface
 // overlaps itself it has one flat colour and an up normal, so the two copies
 // are indistinguishable. Kerbs are drawn on top, so they're cut back where
-// another carriageway joins (the junction's mouth).
+// another carriageway joins, to the corner where the two kerbs meet.
+//
+// Junction boxes: where ways meet at an angle, each way's stretch inside the
+// junction (out to its "mouth", behind any crossing there) is plain asphalt,
+// so lane lines stop at the box; signalised junctions get a limit line at
+// each mouth. The road graph (roadgraph.ts) uses the mouths as stop lines.
 //
 // Draping: cross-sections are considered every 2 m (the heightfield spacing)
 // and then simplified, keeping one only where needed to stay within a band
@@ -139,6 +144,8 @@ type Road = {
   /** Lane lines painted by the chunk shader (see roadMarking in facades.ts), 0 for none. */
   marking: number;
   lanes: number;
+  /** Traffic only goes this way along the nodes (1, or -1 for oneway=-1); 0 for both ways. */
+  oneway: 1 | -1 | 0;
 };
 
 function skipped(t: Tags): boolean {
@@ -197,9 +204,9 @@ export function collectRoads(osm: OsmData): Road[] {
     // Lanes as tagged, else two on any street wide enough; one-way streets get lines only between lanes.
     const tagged = Number(t.lanes);
     const lanes = Number.isFinite(tagged) && tagged >= 1 ? Math.round(tagged) : width >= 6 ? 2 : 1;
-    const oneway = t.oneway === 'yes' || t.oneway === '1' || t.oneway === '-1' || highway === 'motorway' || t.junction === 'roundabout';
+    const oneway = t.oneway === '-1' ? -1 : t.oneway === 'yes' || t.oneway === '1' || highway === 'motorway' || t.junction === 'roundabout' ? 1 : 0;
     const marking = MARKED.has(highway) && surface === 'road' ? roadMarking(lanes, !oneway) : 0;
-    roads.push({ id: way.id, highway, nodes, pts, s, surface, width, ...footpathSides(t), bridge, layer, marking, lanes });
+    roads.push({ id: way.id, highway, nodes, pts, s, surface, width, ...footpathSides(t), bridge, layer, marking, lanes, oneway });
   }
   return roads;
 }
@@ -1058,68 +1065,192 @@ function joinsAtAngle(r: Road, k: number, o: Road, ok: number): boolean {
 /** Arc-length intervals [from, to] on one side of a road where its kerb is cut for a joining carriageway. */
 type Cuts = { left: [number, number][]; right: [number, number][] };
 
-function kerbCuts(r: Road, k: number, others: { road: Road; k: number }[]): Cuts {
-  const cuts: Cuts = { left: [], right: [] };
-  const { pts } = r;
-  const a = pts[Math.max(0, k - 1)];
-  const b = pts[Math.min(pts.length - 1, k + 1)];
-  const tl = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-  const t = { x: (b.x - a.x) / tl, z: (b.z - a.z) / tl };
-  const nl = { x: t.z, z: -t.x };
-  for (const o of others) {
-    if (o.road.surface !== 'road') continue;
-    const op = o.road.pts;
-    for (const kk of [o.k - 1, o.k + 1]) {
-      if (kk < 0 || kk >= op.length) continue;
-      const dx = op[kk].x - op[o.k].x;
-      const dz = op[kk].z - op[o.k].z;
-      const dl = Math.hypot(dx, dz) || 1;
-      const d = { x: dx / dl, z: dz / dl };
-      const cos = d.x * t.x + d.z * t.z;
-      const sin = Math.abs(d.x * nl.z - d.z * nl.x);
-      if (sin < 0.2) continue; // a continuation, not a side road
-      const s = Math.max(sin, 0.25);
-      const centre = r.s[k] + ((r.width / 2) * cos) / s;
-      const half = o.road.width / 2 / s + 1;
-      (d.x * nl.x + d.z * nl.z > 0 ? cuts.left : cuts.right).push([centre - half, centre + half]);
-    }
-  }
-  return cuts;
+/** Limit lines: how far up the way from the mouth signals may be mapped, and the line's width, m. */
+const LIMIT_REACH = 15;
+const LIMIT_WIDTH = 0.4;
+
+/** The point `s` metres along a way, and its unit direction there. */
+function pointAlong(r: Road, s: number) {
+  let k = 0;
+  while (k < r.s.length - 2 && r.s[k + 1] < s) k++;
+  const f = Math.min(1, Math.max(0, (s - r.s[k]) / (r.s[k + 1] - r.s[k] || 1)));
+  const d = towards(r, k, k + 1);
+  return { x: r.pts[k].x + (r.pts[k + 1].x - r.pts[k].x) * f, z: r.pts[k].z + (r.pts[k + 1].z - r.pts[k].z) * f, ux: d.x, uz: d.z };
 }
 
-/** Splits kept sections into runs that avoid the cut intervals (cut ends become new sections). */
-function uncutRuns(sections: Section[], cuts: [number, number][]): Section[][] {
-  const runs: Section[][] = [];
-  let cur: Section[] = [];
+/** Lane lines stop this far before the corner where two carriageways' edges meet, m. */
+const MOUTH_MARGIN = 1;
+/** A mouth is never further than this from its junction node, m (very acute meets). */
+const MOUTH_MAX = 20;
+/** Arms within this of straight on (or of each other) don't make a corner: continuations and merges. */
+const CORNER_COS = Math.cos((15 * Math.PI) / 180);
+
+/** A crossing this close past a mouth belongs to the junction, m. */
+const CROSSING_REACH = 10;
+/** Half a painted crossing's extent along the road, m (see the crossings below). */
+const CROSSING_HALF = 1.6;
+
+/** Key for one arm of a junction: way point k, leaving towards k + dir. */
+const armKey = (k: number, dir: 1 | -1) => k * 2 + (dir > 0 ? 1 : 0);
+
+/** One way's stretch of a junction arm: from point k (d m from the junction node) in direction dir, `len` m to the way's end. */
+type ArmLeg = { r: Road; k: number; dir: 1 | -1; d: number; len: number };
+
+/**
+ * An arm's ways from its junction node outward, up to `max` m: OSM often
+ * splits a street a few metres from a junction (where a bus lane or a
+ * crossing starts), so a way that carries straight on, end to end, is
+ * followed too. Stops at the next junction.
+ */
+function armLegs(byNode: Map<number, { road: Road; k: number }[]>, r: Road, k: number, dir: 1 | -1, max: number): ArmLeg[] {
+  const legs: ArmLeg[] = [];
+  let d = 0;
+  for (;;) {
+    const end = dir > 0 ? r.s.length - 1 : 0;
+    const len = Math.abs(r.s[end] - r.s[k]);
+    legs.push({ r, k, dir, d, len });
+    d += len;
+    const here = byNode.get(r.nodes[end])!;
+    if (d >= max || here.length !== 2) return legs;
+    const next = here.find((e) => e.road !== r);
+    if (!next || (next.k !== 0 && next.k !== next.road.nodes.length - 1) || joinsAtAngle(r, end, next.road, next.k)) return legs;
+    if (legs.some((l) => l.r === next.road)) return legs;
+    [r, k, dir] = [next.road, next.k, next.k === 0 ? 1 : -1];
+  }
+}
+
+/** Where traffic arriving at a junction stops: the limit line's spot on way r, with `dir` pointing out of the junction. */
+export type StopLine = { r: Road; s: number; dir: 1 | -1; signalled: boolean };
+
+/**
+ * Junction mouths: at every node where ways meet at an angle, how far each
+ * way leaving it (an "arm") runs inside the junction box. Each pair of
+ * neighbouring arms (by angle) meets at a corner where their carriageway
+ * edges cross; an arm's mouth is past its furthest corner, plus a margin,
+ * and behind any pedestrian crossing just outside that. Lane lines stop at
+ * the mouth (`boxes`: stretches of each way inside a junction), limit lines
+ * are painted there at signals (`stops`), and the road graph's stop lines
+ * are there (`mouth`, keyed by road, then armKey).
+ */
+export function junctionMouths(byNode: Map<number, { road: Road; k: number }[]>, crossing: (n: number) => boolean, signal: (n: number) => boolean) {
+  const mouth = new Map<Road, Map<number, number>>();
+  const boxes = new Map<Road, [number, number][]>();
+  const kerbs = new Map<Road, Cuts>();
+  /** Cuts arm A's kerb on its side facing a joining carriageway, from the junction node out to their corner. */
+  const cutKerb = (A: { r: Road; k: number; dir: 1 | -1 }, side: number, t: number) => {
+    if (!kerbs.has(A.r)) kerbs.set(A.r, { left: [], right: [] });
+    const s0 = A.r.s[A.k];
+    const s1 = s0 + A.dir * t;
+    // The arm's left is the way's left going forwards, its right going backwards.
+    kerbs.get(A.r)![side * A.dir > 0 ? 'left' : 'right'].push([Math.min(s0, s1), Math.max(s0, s1)]);
+  };
+  const stops: StopLine[] = [];
+  type Arm = { r: Road; k: number; dir: 1 | -1; d: { x: number; z: number }; w: number; angle: number; t: number };
+  for (const entries of byNode.values()) {
+    if (entries.length < 2) continue;
+    if (!entries.some((e, q) => entries.some((f, w) => w !== q && f.road !== e.road && joinsAtAngle(e.road, e.k, f.road, f.k)))) continue;
+    const arms: Arm[] = [];
+    for (const { road: r, k } of entries) {
+      for (const dir of [1, -1] as const) {
+        if (k + dir < 0 || k + dir >= r.pts.length) continue;
+        const d = towards(r, k, k + dir);
+        arms.push({ r, k, dir, d, w: r.width / 2, angle: Math.atan2(d.z, d.x), t: 0 });
+      }
+    }
+    arms.sort((p, q) => p.angle - q.angle);
+    for (let i = 0; i < arms.length; i++) {
+      const A = arms[i];
+      const B = arms[(i + 1) % arms.length];
+      const cos = A.d.x * B.d.x + A.d.z * B.d.z;
+      if (A === B || Math.abs(cos) > CORNER_COS) continue;
+      // Each arm's edge on the side facing the other: offset by its half-width along its left normal (d.z, -d.x), or right.
+      const sa = A.d.z * B.d.x - A.d.x * B.d.z > 0 ? 1 : -1;
+      const sb = B.d.z * A.d.x - B.d.x * A.d.z > 0 ? 1 : -1;
+      const pa = { x: sa * A.w * A.d.z, z: -sa * A.w * A.d.x };
+      const pb = { x: sb * B.w * B.d.z, z: -sb * B.w * B.d.x };
+      // pa + ta * dA = pb + tb * dB
+      const det = -A.d.x * B.d.z + A.d.z * B.d.x;
+      const rx = pb.x - pa.x;
+      const rz = pb.z - pa.z;
+      const ta = (-rx * B.d.z + rz * B.d.x) / det;
+      const tb = (A.d.x * rz - A.d.z * rx) / det;
+      if (ta > 0 && tb > 0) {
+        A.t = Math.max(A.t, ta);
+        B.t = Math.max(B.t, tb);
+        // Each kerb runs up to the corner and stops: where it meets the other's.
+        if (B.r.surface === 'road') cutKerb(A, sa, ta);
+        if (A.r.surface === 'road') cutKerb(B, sb, tb);
+      }
+    }
+    for (const A of arms) {
+      if (A.t <= 0) continue;
+      let t = Math.min(A.t + MOUTH_MARGIN, MOUTH_MAX);
+      const legs = armLegs(byNode, A.r, A.k, A.dir, MOUTH_MAX + CROSSING_REACH + LIMIT_REACH);
+      const at = (l: ArmLeg, q: number) => l.d + Math.abs(l.r.s[q] - l.r.s[l.k]);
+      const points = legs.flatMap((l) => {
+        const qs: number[] = [];
+        for (let q = l.k + l.dir; q >= 0 && q < l.r.nodes.length; q += l.dir) qs.push(q);
+        return qs.map((q) => ({ n: l.r.nodes[q], d: at(l, q) }));
+      });
+      // Pedestrian crossings at the junction (OSM puts them a few metres out
+      // on each arm) are part of it: the mouth goes behind them.
+      for (const p of points) if (p.d <= t + CROSSING_REACH && crossing(p.n)) t = Math.max(t, p.d + CROSSING_HALF + MOUTH_MARGIN / 2);
+      const reach = legs[legs.length - 1].d + legs[legs.length - 1].len;
+      t = Math.min(t, reach);
+      if (!mouth.has(A.r)) mouth.set(A.r, new Map());
+      mouth.get(A.r)!.set(armKey(A.k, A.dir), Math.min(t, legs[0].len));
+      for (const l of legs) {
+        if (l.d >= t) break;
+        const s0 = l.r.s[l.k];
+        const s1 = s0 + l.dir * Math.min(l.len, t - l.d);
+        if (!boxes.has(l.r)) boxes.set(l.r, []);
+        boxes.get(l.r)!.push([Math.min(s0, s1), Math.max(s0, s1)]);
+      }
+      const leg = legs.find((l) => t <= l.d + l.len + 1e-6) ?? legs[legs.length - 1];
+      stops.push({
+        r: leg.r,
+        s: leg.r.s[leg.k] + leg.dir * Math.min(leg.len, t - leg.d),
+        dir: leg.dir,
+        // Signals on the junction node or up the arm within a short block of the mouth.
+        signalled: signal(A.r.nodes[A.k]) || points.some((p) => p.d <= t + LIMIT_REACH && signal(p.n)),
+      });
+    }
+  }
+  return { mouth, boxes, stops, kerbs };
+}
+
+/**
+ * Splits kept sections into runs inside and outside the intervals (new
+ * sections where an interval ends mid-span), in order along the way.
+ */
+function splitRuns(sections: Section[], cuts: [number, number][]): { sections: Section[]; cut: boolean }[] {
   const cutAt = (s: number) => cuts.some(([a, b]) => s > a && s < b);
   const lerp = (p: Section, q: Section, s: number): Section => {
     const f = (s - p.st.s) / (q.st.s - p.st.s);
     const st = { s, x: p.st.x + (q.st.x - p.st.x) * f, z: p.st.z + (q.st.z - p.st.z) * f, nx: q.st.nx, nz: q.st.nz, m: 1, hard: false };
     return { st, ys: p.ys.map((y, c) => y + (q.ys[c] - y) * f) };
   };
+  const all: Section[] = [];
   for (let q = 0; q < sections.length; q++) {
-    const p = sections[q];
     if (q > 0) {
       const prev = sections[q - 1];
-      // Interval ends inside this span split it.
-      const ends = cuts.flat().filter((s) => s > prev.st.s && s < p.st.s).sort((a, b) => a - b);
-      for (const s of ends) {
-        const mid = lerp(prev, p, s);
-        if (!cutAt(s - 1e-3)) cur.push(mid);
-        if (cur.length > 1) runs.push(cur);
-        cur = [];
-        if (!cutAt(s + 1e-3)) cur.push(mid);
-      }
+      const ends = [...new Set(cuts.flat())].filter((s) => s > prev.st.s + 1e-3 && s < sections[q].st.s - 1e-3).sort((a, b) => a - b);
+      for (const s of ends) all.push(lerp(prev, sections[q], s));
     }
-    if (!cutAt(p.st.s)) cur.push(p);
-    else {
-      if (cur.length > 1) runs.push(cur);
-      cur = [];
-    }
+    all.push(sections[q]);
   }
-  if (cur.length > 1) runs.push(cur);
+  const runs: { sections: Section[]; cut: boolean }[] = [];
+  for (let q = 0; q + 1 < all.length; q++) {
+    const cut = cutAt((all[q].st.s + all[q + 1].st.s) / 2);
+    const last = runs[runs.length - 1];
+    if (last && last.cut === cut) last.sections.push(all[q + 1]);
+    else runs.push({ sections: [all[q], all[q + 1]], cut });
+  }
   return runs;
 }
+
+/** Splits kept sections into runs that avoid the cut intervals (cut ends become new sections). */
+const uncutRuns = (sections: Section[], cuts: [number, number][]): Section[][] => splitRuns(sections, cuts).filter((r) => !r.cut).map((r) => r.sections);
 
 // ---------------------------------------------------------------- build
 
@@ -1138,6 +1269,16 @@ export type RoadNetwork = {
   deckAt: (x: number, z: number) => number | null;
   /** Pedestrian crossings on carriageways: node id -> 'zebra' or 'signals'. */
   crossings: Map<number, 'zebra' | 'signals'>;
+  /** Traffic signals (highway=traffic_signals nodes). */
+  signals: Set<number>;
+  /** How far way r runs inside the junction at its point k, leaving towards k + dir (0 if there's no junction there), m. */
+  mouth: (r: Road, k: number, dir: 1 | -1) => number;
+  /** Stretches of each way inside a junction (arc length), where lane lines stop. */
+  boxes: Map<Road, [number, number][]>;
+  /** One per junction arm: where arriving traffic stops. */
+  stops: StopLine[];
+  /** Stretches of each way's kerbs (by side) inside a junction, up to the corner where they meet the next street's. */
+  kerbs: Map<Road, Cuts>;
 };
 
 export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: TerrainSampler, overrides?: Overrides): RoadNetwork {
@@ -1174,6 +1315,9 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
     if (['zebra', 'marked', 'uncontrolled'].includes(kind) || t['crossing_ref'] === 'zebra') crossings.set(n, 'zebra');
     else if (kind === 'traffic_signals') crossings.set(n, 'signals');
   }
+  const signals = new Set([...byNode.keys()].filter((n) => data.osm.nodes.get(n)?.tags.highway === 'traffic_signals'));
+  const mouths = junctionMouths(byNode, (n) => crossings.has(n), (n) => signals.has(n));
+  const mouth = (r: Road, k: number, dir: 1 | -1) => mouths.mouth.get(r)?.get(armKey(k, dir)) ?? 0;
   const bridges = roads.filter((r) => r.bridge);
   const deckAt = (x: number, z: number): number | null => {
     // The highest deck in reach: where decks cross, things on them sit on the top one.
@@ -1196,7 +1340,7 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
     }
     return best;
   };
-  return { roads, at, byNode, deck, deckAt, crossings };
+  return { roads, at, byNode, deck, deckAt, crossings, signals, mouth, boxes: mouths.boxes, stops: mouths.stops, kerbs: mouths.kerbs };
 }
 
 export function buildRoads(
@@ -1292,21 +1436,19 @@ export function buildRoads(
     const fpL = r.left ? half + FOOTPATH_WIDTH : half;
     const fpR = r.right ? half + FOOTPATH_WIDTH : half;
 
+    // Lane lines stop at junction mouths: the junction box is plain asphalt.
+    const boxes = net.boxes.get(r) ?? [];
     for (const piece of drapeStrip(st, -half, half, h, band(level))) {
       const marking = r.marking ? { code: r.marking, lanes: Math.min(r.lanes, 7), half } : undefined;
-      tally('carriageway', out, () => emitStrip(out, piece.sections, piece.cols, { level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right, covered: r.bridge ? undefined : covered, marking }));
+      for (const run of marking ? splitRuns(piece.sections, boxes) : [{ sections: piece.sections, cut: false }]) {
+        tally('carriageway', out, () => emitStrip(out, run.sections, piece.cols, {
+          level, collider: r.bridge, left: r.bridge && !r.left, right: r.bridge && !r.right, covered: r.bridge ? undefined : covered, marking: run.cut ? undefined : marking,
+        }));
+      }
     }
     // Kerbs on the footpath's inner edge, cut where carriageways join. They
     // follow the footpath's own simplified surface, so they're always on top of it.
-    const cuts: Cuts = { left: [], right: [] };
-    if (r.left || r.right) {
-      r.nodes.forEach((n, k) => {
-        const others = byNode.get(n)!.filter((o) => o.road !== r);
-        const c = kerbCuts(r, k, others);
-        cuts.left.push(...c.left);
-        cuts.right.push(...c.right);
-      });
-    }
+    const cuts = net.kerbs.get(r) ?? { left: [], right: [] };
     for (const [o0, o1, on, isLeft, k0, k1, side] of [
       [half, fpL, r.left, true, half, half + KERB_WIDTH, cuts.left],
       [-fpR, -half, r.right, false, -half - KERB_WIDTH, -half, cuts.right],
@@ -1368,6 +1510,31 @@ export function buildRoads(
     painted++;
   }
   roadTris['crossings painted'] = painted;
+  // Limit lines where traffic arrives at a signalised junction: across the
+  // lanes coming in (the left half of a two-way street), at the mouth.
+  let limits = 0;
+  for (const { r, s: sLine, dir, signalled } of net.stops) {
+    // Traffic comes in against `dir`; a one-way the other way has nobody arriving.
+    if (!signalled || r.surface !== 'road' || r.bridge || r.oneway === dir) continue;
+    const p = pointAlong(r, sLine);
+    const mb = out.at(p.x, p.z);
+    if (!mb) continue;
+    const half = r.width / 2;
+    // Offsets are left of the way's direction; arriving traffic keeps left of its own (against dir).
+    const [o0, o1] = r.oneway ? [-half + 0.2, half - 0.2] : dir > 0 ? [-half + 0.2, -0.15] : [0.15, half - 0.2];
+    const pt = (al: number, o: number) => {
+      const x = p.x + p.ux * al + p.uz * o;
+      const z = p.z + p.uz * al - p.ux * o;
+      return mb.vertex(x, drape(x, z) + MARK_LIFT, z, UP, MARK_COLOUR, MARK_LAYER, tileOf('concrete'));
+    };
+    // A white bar across the arriving lanes, just outside the box.
+    const [a0, a1] = dir > 0 ? [0, LIMIT_WIDTH] : [-LIMIT_WIDTH, 0];
+    const v = [pt(a0, o0), pt(a1, o0), pt(a1, o1), pt(a0, o1)];
+    tri(mb, mb.idx, v[0], v[1], v[2]);
+    tri(mb, mb.idx, v[0], v[2], v[3]);
+    limits++;
+  }
+  roadTris['limit lines'] = limits;
   km['park path'] = emitPaths(out, paths, ground, terrain, covered);
   const bridges = roads.filter((r) => r.bridge).length;
   return { chunks: out.chunks, counts: { ways: roads.length, bridges, km } };

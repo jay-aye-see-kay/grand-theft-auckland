@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { CITY_FORMAT, type CityManifest } from '../city/format.ts';
+import { RoadGraph } from '../city/road-graph.ts';
 import { buildAtlas } from '../city/atlas.ts';
 import { ChunkStreamer } from '../city/streamer.ts';
 import { Skyline } from '../city/skyline.ts';
@@ -48,6 +49,8 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   const parked = (await pres.json()) as CityParking;
   // Named places for missions (tools/citygen/places.ts).
   const places = await Gazetteer.load(new URL('places.json', base));
+  // The drivable network, for routing and lanes (tools/citygen/roadgraph.ts).
+  const roads = await RoadGraph.load(new URL('roadgraph.json', base));
 
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   // Facade, road and ground textures, painted on the spot (atlas.ts).
@@ -126,6 +129,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
     },
     landmarks: () => landmarks.list(),
     places,
+    roads,
     debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth, skylineTris: skyline?.total ?? 0, skylineDrawn: skyline?.drawn ?? 0 }),
   };
 }

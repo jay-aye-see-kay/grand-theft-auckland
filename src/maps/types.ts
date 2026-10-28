@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { RoadGraph } from '../city/road-graph.ts';
 import type { Gazetteer } from '../missions/runtime/places.ts';
 
 // What the game loop needs from a map. The test town and Auckland both
@@ -79,6 +80,8 @@ export interface GameMap {
   landmarks?(): { id: string; name: string; x: number; z: number; base: number; height: number; top: number; lod: string; triangles: { near: number; far: number }; colliders: number; replaces: boolean }[];
   /** Named places for missions (real maps only: missions are set on real streets). */
   readonly places?: Gazetteer;
+  /** The drivable network: routing, lanes for traffic (real maps only). */
+  readonly roads?: RoadGraph;
   /** Extra numbers for ?debug and the smoke test. */
   debugInfo(): Record<string, number>;
 }
