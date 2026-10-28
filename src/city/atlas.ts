@@ -488,6 +488,260 @@ function heritageShops(kinds: [ShopKind, ShopKind]): Painter {
   };
 }
 
+// ---------------------------------------------------------------- murals and ads
+//
+// Painted on blank side walls (buildings.ts paints one per wall, stretched
+// over a rectangle of it): four artworks to a layer, one per quadrant, so
+// eight cost two layers. Each quadrant keeps its colours to itself (mask 0).
+
+const Q = S / 2;
+
+/** Paints quadrant q (0..3: left-right, top-bottom) with `draw` in a local Q x Q frame, clipped. */
+function quadrant(c: Ctx, m: Ctx, q: number, draw: (c: Ctx) => void) {
+  const x = (q % 2) * Q;
+  const y = Math.floor(q / 2) * Q;
+  m.fillStyle = grey(0);
+  m.fillRect(x, y, Q, Q);
+  c.save();
+  c.beginPath();
+  c.rect(x, y, Q, Q);
+  c.clip();
+  c.translate(x, y);
+  draw(c);
+  c.restore();
+}
+
+function circle(c: Ctx, x: number, y: number, r: number, colour: string) {
+  c.fillStyle = colour;
+  c.beginPath();
+  c.arc(x, y, r, 0, Math.PI * 2);
+  c.fill();
+}
+
+/** A spiral of `turns` from radius r0 out to r1, stroked `w` wide. */
+function spiral(c: Ctx, x: number, y: number, r0: number, r1: number, turns: number, w: number, colour: string) {
+  c.strokeStyle = colour;
+  c.lineWidth = w;
+  c.lineCap = 'round';
+  c.beginPath();
+  for (let t = 0; t <= 1; t += 0.01) {
+    const a = t * turns * Math.PI * 2;
+    const r = r0 + (r1 - r0) * t;
+    if (t === 0) c.moveTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+    else c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r);
+  }
+  c.stroke();
+}
+
+/** Weathering over a painted wall: speckle and soft stains. */
+function weather(c: Ctx, rnd: () => number) {
+  for (let k = 0; k < 900; k++) {
+    c.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,255,255'},${0.05 + rnd() * 0.08})`;
+    c.fillRect(rnd() * Q, rnd() * Q, 2, 2);
+  }
+  const g = c.createLinearGradient(0, 0, 0, Q);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(40,30,20,0.18)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, Q, Q);
+}
+
+const muralPainter: Painter = (c, m, rnd) => {
+  // Harbour sunset: bands of sea, a big sun, a volcano's cone on the horizon.
+  quadrant(c, m, 0, (c) => {
+    const g = c.createLinearGradient(0, 0, 0, Q);
+    g.addColorStop(0, '#f6c445');
+    g.addColorStop(0.5, '#ef6f45');
+    g.addColorStop(1, '#7a2f6b');
+    c.fillStyle = g;
+    c.fillRect(0, 0, Q, Q);
+    circle(c, Q * 0.62, Q * 0.42, Q * 0.2, '#fff1c4');
+    c.fillStyle = '#3b2550';
+    c.beginPath();
+    c.moveTo(0, Q * 0.62);
+    c.quadraticCurveTo(Q * 0.25, Q * 0.38, Q * 0.5, Q * 0.62);
+    c.lineTo(Q, Q * 0.62);
+    c.lineTo(Q, Q);
+    c.lineTo(0, Q);
+    c.fill();
+    for (let k = 0; k < 6; k++) {
+      c.fillStyle = k % 2 ? '#2a6f8f' : '#3a8fb0';
+      c.beginPath();
+      const y = Q * (0.66 + k * 0.06);
+      c.moveTo(0, y);
+      for (let x = 0; x <= Q; x += 16) c.quadraticCurveTo(x + 8, y - 8, x + 16, y);
+      c.lineTo(Q, Q);
+      c.lineTo(0, Q);
+      c.fill();
+    }
+    weather(c, rnd);
+  });
+  // A big native bird (a tūī: dark, with its white throat tuft) on flax leaves.
+  quadrant(c, m, 1, (c) => {
+    c.fillStyle = '#e8dcc0';
+    c.fillRect(0, 0, Q, Q);
+    for (let k = 0; k < 7; k++) {
+      c.strokeStyle = k % 2 ? '#3f7a3a' : '#5c9a45';
+      c.lineWidth = 14;
+      c.beginPath();
+      const x = Q * (0.05 + k * 0.14);
+      c.moveTo(x, Q);
+      c.quadraticCurveTo(x + Q * 0.05, Q * 0.5, x + Q * (k % 2 ? 0.2 : -0.12), Q * 0.15);
+      c.stroke();
+    }
+    c.fillStyle = '#1d2a3a';
+    c.beginPath();
+    c.ellipse(Q * 0.52, Q * 0.48, Q * 0.2, Q * 0.13, -0.5, 0, Math.PI * 2);
+    c.fill();
+    circle(c, Q * 0.7, Q * 0.33, Q * 0.08, '#1d2a3a');
+    c.beginPath();
+    c.moveTo(Q * 0.76, Q * 0.31);
+    c.lineTo(Q * 0.88, Q * 0.29);
+    c.lineTo(Q * 0.77, Q * 0.35);
+    c.fill();
+    c.beginPath();
+    c.moveTo(Q * 0.36, Q * 0.56);
+    c.lineTo(Q * 0.16, Q * 0.78);
+    c.lineTo(Q * 0.3, Q * 0.58);
+    c.fill();
+    circle(c, Q * 0.66, Q * 0.42, Q * 0.03, '#f4f2ea');
+    circle(c, Q * 0.69, Q * 0.43, Q * 0.025, '#f4f2ea');
+    // A sheen of blue-green on the dark feathers.
+    c.fillStyle = 'rgba(60,170,160,0.35)';
+    c.beginPath();
+    c.ellipse(Q * 0.5, Q * 0.44, Q * 0.13, Q * 0.05, -0.5, 0, Math.PI * 2);
+    c.fill();
+    weather(c, rnd);
+  });
+  // Bold triangles in black, red and cream, in bands (a woven or tapa pattern).
+  quadrant(c, m, 2, (c) => {
+    c.fillStyle = '#efe3c6';
+    c.fillRect(0, 0, Q, Q);
+    const band = Q / 6;
+    for (let row = 0; row < 6; row++) {
+      const colour = ['#1e1a18', '#a8322a', '#1e1a18', '#c8892c', '#1e1a18', '#a8322a'][row];
+      c.fillStyle = colour;
+      const tw = band * (row % 2 ? 0.8 : 1.2);
+      for (let x = (row % 2) * tw * 0.5 - tw; x < Q + tw; x += tw) {
+        c.beginPath();
+        c.moveTo(x, row * band + band * 0.9);
+        c.lineTo(x + tw / 2, row * band + band * 0.1);
+        c.lineTo(x + tw, row * band + band * 0.9);
+        c.fill();
+      }
+    }
+    weather(c, rnd);
+  });
+  // Spirals unfolding from a deep blue ground, pink and teal.
+  quadrant(c, m, 3, (c) => {
+    c.fillStyle = '#20356b';
+    c.fillRect(0, 0, Q, Q);
+    spiral(c, Q * 0.35, Q * 0.45, 4, Q * 0.3, 2.5, 18, '#ff7aa8');
+    spiral(c, Q * 0.72, Q * 0.65, 4, Q * 0.22, 2, 14, '#40d0c0');
+    spiral(c, Q * 0.78, Q * 0.2, 3, Q * 0.12, 1.6, 10, '#ffd34a');
+    for (let k = 0; k < 40; k++) circle(c, rnd() * Q, rnd() * Q, 2 + rnd() * 4, 'rgba(255,255,255,0.7)');
+    weather(c, rnd);
+  });
+};
+
+const adPainter: Painter = (c, m, rnd) => {
+  const frame = (c: Ctx) => {
+    c.fillStyle = '#f2f2ee';
+    c.fillRect(0, 0, Q, 8);
+    c.fillRect(0, Q - 8, Q, 8);
+    c.fillRect(0, 0, 8, Q);
+    c.fillRect(Q - 8, 0, 8, Q);
+  };
+  const words = (c: Ctx, x: number, y: number, w: number, h: number, colour: string) => lettering(c, rnd, x, y, w, h, colour);
+  // A soft drink: red field, a tilted can, a slogan.
+  quadrant(c, m, 0, (c) => {
+    c.fillStyle = '#c8202c';
+    c.fillRect(0, 0, Q, Q);
+    c.save();
+    c.translate(Q * 0.7, Q * 0.55);
+    c.rotate(0.25);
+    c.fillStyle = '#e8e8e4';
+    c.fillRect(-28, -70, 56, 140);
+    c.fillStyle = '#c8202c';
+    c.fillRect(-28, -40, 56, 70);
+    c.fillStyle = '#9aa0a4';
+    c.fillRect(-28, -76, 56, 8);
+    c.restore();
+    words(c, 16, Q * 0.15, Q * 0.5, Q * 0.18, '#fff');
+    words(c, 16, Q * 0.42, Q * 0.45, Q * 0.1, '#ffe08a');
+    frame(c);
+  });
+  // A radio station: yellow, a huge number, waves.
+  quadrant(c, m, 1, (c) => {
+    c.fillStyle = '#f2c230';
+    c.fillRect(0, 0, Q, Q);
+    c.fillStyle = '#1b1b1d';
+    c.fillRect(Q * 0.1, Q * 0.18, Q * 0.14, Q * 0.48);
+    c.fillRect(Q * 0.3, Q * 0.18, Q * 0.3, Q * 0.1);
+    c.fillRect(Q * 0.46, Q * 0.18, Q * 0.14, Q * 0.48);
+    c.fillRect(Q * 0.3, Q * 0.56, Q * 0.3, Q * 0.1);
+    for (let k = 0; k < 3; k++) {
+      c.strokeStyle = '#1b1b1d';
+      c.lineWidth = 8;
+      c.beginPath();
+      c.arc(Q * 0.72, Q * 0.42, 20 + k * 18, -0.9, 0.9);
+      c.stroke();
+    }
+    words(c, 16, Q * 0.74, Q - 32, Q * 0.14, '#1b1b1d');
+    frame(c);
+  });
+  // A car yard: a blue sky, a hatchback, a price in a starburst.
+  quadrant(c, m, 2, (c) => {
+    const g = c.createLinearGradient(0, 0, 0, Q);
+    g.addColorStop(0, '#3a8fd8');
+    g.addColorStop(1, '#bfe0f5');
+    c.fillStyle = g;
+    c.fillRect(0, 0, Q, Q);
+    c.fillStyle = '#d23a2a';
+    c.beginPath();
+    c.moveTo(Q * 0.12, Q * 0.72);
+    c.lineTo(Q * 0.18, Q * 0.56);
+    c.lineTo(Q * 0.38, Q * 0.5);
+    c.lineTo(Q * 0.62, Q * 0.5);
+    c.lineTo(Q * 0.78, Q * 0.6);
+    c.lineTo(Q * 0.86, Q * 0.72);
+    c.fill();
+    circle(c, Q * 0.28, Q * 0.74, Q * 0.06, '#1b1b1d');
+    circle(c, Q * 0.7, Q * 0.74, Q * 0.06, '#1b1b1d');
+    c.fillStyle = 'rgba(200,230,250,0.9)';
+    c.fillRect(Q * 0.4, Q * 0.53, Q * 0.18, Q * 0.06);
+    c.fillStyle = '#ffd400';
+    c.beginPath();
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      const r = k % 2 ? 34 : 50;
+      c.lineTo(Q * 0.78 + Math.cos(a) * r, Q * 0.24 + Math.sin(a) * r);
+    }
+    c.fill();
+    words(c, Q * 0.7, Q * 0.2, Q * 0.16, Q * 0.08, '#c8202c');
+    words(c, 16, Q * 0.1, Q * 0.5, Q * 0.14, '#fff');
+    frame(c);
+  });
+  // A faded sign painted on brick a century ago.
+  quadrant(c, m, 3, (c) => {
+    c.fillStyle = '#7a4636';
+    c.fillRect(0, 0, Q, Q);
+    for (let y = 0; y < Q; y += 10) {
+      for (let x = (y / 10) % 2 ? -12 : 0; x < Q; x += 24) {
+        c.fillStyle = `rgba(${rnd() < 0.5 ? '0,0,0' : '255,220,200'},${0.06 + rnd() * 0.1})`;
+        c.fillRect(x + 1, y + 1, 22, 8);
+      }
+    }
+    c.fillStyle = 'rgba(232,220,190,0.55)';
+    c.fillRect(Q * 0.08, Q * 0.12, Q * 0.84, Q * 0.76);
+    c.fillStyle = 'rgba(122,70,54,0.85)';
+    c.fillRect(Q * 0.12, Q * 0.16, Q * 0.76, Q * 0.68);
+    words(c, Q * 0.16, Q * 0.2, Q * 0.68, Q * 0.2, 'rgba(232,220,190,0.6)');
+    words(c, Q * 0.16, Q * 0.44, Q * 0.68, Q * 0.14, 'rgba(232,220,190,0.5)');
+    words(c, Q * 0.2, Q * 0.64, Q * 0.6, Q * 0.12, 'rgba(232,220,190,0.45)');
+  });
+};
+
 export const painters: Record<Layer, Painter> = {
   glass(c, m, rnd) {
     const { bw, fh } = cell('glass');
@@ -1115,6 +1369,8 @@ export const painters: Record<Layer, Painter> = {
     }
     rect(c, m, 0, 0, S, 30, grey(TINT_GREY - 30), 1);
   },
+  murals: muralPainter,
+  ads: adPainter,
   'roof-tin'(c, m, rnd) {
     // Corrugated iron: ridges run down the slope (canvas y), 2.4 m across in
     // 32 corrugations, sheet laps every 1.2 m down, a little rust and fading.

@@ -27,7 +27,7 @@ import { sampleLocal, type Raster } from './raster.ts';
 import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 import { SUN_DIRECTION } from '../../src/sun.ts';
-import { FACADE, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
+import { FACADE, MURAL_QUADRANTS, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
 import { eraStyle, FLATS, hash, HOUSES, SHEDS, type FacadeStyle } from './eras.ts';
 import type { WikidataFacts } from './wikidata.ts';
@@ -690,6 +690,11 @@ export function canyonShade(across: (x: number, z: number, self: unknown) => num
 }
 
 /** Accumulates one chunk's merged mesh in absolute local metres. */
+/** Share of blank side walls (clear of their neighbours, not onto a street) painted with a mural or an ad. */
+const PAINTED_WALLS = 0.4;
+/** What's painted on a blank wall: which artwork, how wide (centred), and from and to what height. */
+type Painting = { layer: Layer; quadrant: number; w: number; y0: number; y1: number };
+
 /** Mapped verandahs are looked for this far in front of a wall, m. */
 const VERANDAH_PROBE = 1;
 /** A building=roof no wider than this (on average) is a verandah strip, m. */
@@ -1035,6 +1040,30 @@ export class MeshBuilder {
     const a0 = this.vertex(a.x, bottom, a.z, n, wall);
     const b0 = this.vertex(b.x, bottom, b.z, n, wall);
     return [a0, bc, b0, a0, ac, bc];
+  }
+
+  /** A painting on wall a-b (outward normal n): one quad a hair proud of it, centred, its artwork's quadrant of the layer. */
+  mural(a: Local, b: Local, n: readonly number[], len: number, art: Painting, light: number) {
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    const t0 = (len - art.w) / 2;
+    const p0 = { x: a.x + ux * t0 + n[0] * 0.03, z: a.z + uz * t0 + n[2] * 0.03 };
+    const p1 = { x: p0.x + ux * art.w, z: p0.z + uz * art.w };
+    const [u0, v0] = MURAL_QUADRANTS[art.quadrant];
+    const tile = tileOf(art.layer);
+    // u runs back along the wall (rings run right to left seen from outside); an inset keeps mips off the neighbours.
+    const uA = u0 + 0.49;
+    const uB = u0 + 0.01;
+    const vb = v0 + 0.01;
+    const vt = v0 + 0.49;
+    const white = [1, 1, 1];
+    const q = [
+      this.vertex(p0.x, art.y0, p0.z, n, white, 0, tile, uA, vb, light * 0.95),
+      this.vertex(p1.x, art.y0, p1.z, n, white, 0, tile, uB, vb, light * 0.95),
+      this.vertex(p1.x, art.y1, p1.z, n, white, 0, tile, uB, vt, light),
+      this.vertex(p0.x, art.y1, p0.z, n, white, 0, tile, uA, vt, light),
+    ];
+    this.wallQuad(q, p0, p1, n);
   }
 
   /**
@@ -1445,7 +1474,7 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
   /**
    * Drawn buildings standing on the ground (walls from below it up), each
    * with its family (an outline and its parts): the ground under them is
@@ -1488,7 +1517,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
   // Verandahs mapped in OSM: thin building=roof strips along shopfronts (K Road
   // has most of its own). Drawn as a slab they hang at a guessed height and
   // double up with ours, so the wall they cover gets a verandah() instead.
@@ -1698,6 +1727,28 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     // Shopfronts: one of the shop layers per building, started a shop along at random, so a row reads as different businesses.
     const shops = style.heritage ? HERITAGE_SHOPS : MODERN_SHOPS;
     const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? shops[Math.floor(hash(fam, 13) * shops.length)] : null;
+    // Side walls standing clear of their neighbours (above a lower one, or
+    // over a car park or lane) are often blank in the city, and some of those
+    // carry a mural or a painted ad: a little of the city's own character.
+    const painting = (a: Local, b: Local, n: readonly number[], len: number): Painting | null => {
+      if (hide || canopy || !grounded || top - bottom < 8 || len < 7 || opts.frontages?.facing(a, b, n)) return null;
+      const r = hash(`${s.key}:${a.x.toFixed(1)},${a.z.toFixed(1)}`, 30);
+      if (r >= PAINTED_WALLS) return null;
+      const next = across((a.x + b.x) / 2 + n[0] * 0.8, (a.z + b.z) / 2 + n[2] * 0.8, p);
+      if (next > top - 4) return null;
+      const from = Math.max(bottom + 3, next + 0.5);
+      if (top - from < 6) return null;
+      // Old brick gets a sign painted a century ago; the rest a mural, or a newer ad.
+      const brick = style.upper === 'brick' || style.upper === 'warehouse';
+      const pick = r / PAINTED_WALLS;
+      const [layer, quadrant]: [Layer, number] = brick && pick < 0.5 ? ['ads', 3] : pick < 0.65 ? ['murals', Math.floor(pick * 6.15) % 4] : ['ads', Math.floor(pick * 9) % 3];
+      let w = Math.min(len - 1.5, 18);
+      let h = Math.min(top - from - 1, 16);
+      if (w > h * 1.6) w = h * 1.6;
+      if (h > w * 1.2) h = w * 1.2;
+      const y0 = layer === 'ads' && quadrant === 3 ? top - 0.8 - h : from + (top - from - h) / 2;
+      return { layer, quadrant, w, y0, y1: y0 + h };
+    };
     const look: Look = {
       shade: canyonShade(across, p),
       floor: style.floor,
@@ -1706,7 +1757,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       parapet: grounded && !canopy && top - bottom > 5 ? style.parapet : 0,
       shopShift: hash(fam, 14) < 0.5 ? 0 : 0.5,
       wall: (a, b, n, len) => {
-        if (canopy || len < 1.5) return { upper: 'plain', ground: null };
+        if (canopy || len < 1.5 || painting(a, b, n, len)) return { upper: 'plain', ground: null };
         // A party wall: another building right against it.
         const mx = (a.x + b.x) / 2 + n[0] * 0.8;
         const mz = (a.z + b.z) / 2 + n[2] * 0.8;
@@ -1736,6 +1787,14 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       }
     }
     mb.prism(s, bottom, top, wall, roof, grounded, !hide, look, pitched);
+    for (const poly of s.polygons) {
+      eachEdge(poly.outer, (a, b, n, len) => {
+        const art = painting(a, b, n, len);
+        if (!art) return;
+        mb.detail(() => mb.mural(a, b, n, len, art, look.shade(a, b, n, bottom, top, grounded).top));
+        counts.murals++;
+      });
+    }
     // Massing details on street facades (near-only): cornice, string courses, a crest on the parapet.
     if (!hide && !canopy && grounded && !pitched && top - bottom > 5 && (style.cornice > 0 || style.courses || style.crest)) {
       const trim = mix(wall, rgb(0xf4f0e6), 0.35);
