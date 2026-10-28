@@ -17,6 +17,10 @@ import { MISSIONS } from './missions/index.ts';
 import { MissionHud } from './missions/runtime/hud.ts';
 import { MissionMarkers } from './missions/runtime/markers.ts';
 import { MissionRunner } from './missions/runtime/runner.ts';
+import { RoomPanel } from './net/panel.ts';
+import { roundQuat, roundVec, round2, type Pose } from './net/protocol.ts';
+import { Remotes } from './net/remotes.ts';
+import { cleanName, Room, type PoseBody } from './net/room.ts';
 import './style.css';
 
 const FIXED_DT = 1 / 60;
@@ -45,6 +49,9 @@ const SHORE_SEARCH = 300;
 const CAR_DETAIL = 120;
 /** Cars beyond this are not drawn at all (a few pixels in the haze), m. */
 const CAR_DRAW = 600;
+/** Default names in a room, with a number on the end. */
+const NICKNAMES = ['Kūmara', 'Pūkeko', 'Jandal', 'Pavlova', 'Tui', 'Kea', 'Chur', 'Cuz', 'Hokey Pokey', 'Pineapple Lump', 'Sweet As', 'Hard Out'];
+const NAME_KEY = 'gta.name';
 
 async function main() {
   const app = document.getElementById('app')!;
@@ -146,6 +153,37 @@ async function main() {
   scene.add(markers.group);
   const missionHud = new MissionHud(hud);
 
+  // Rooms (#26): other players, the 👥 panel, and the link to them.
+  const remotes = new Remotes(world, scene, cars.map((c) => c.car), hud);
+  /** Someone with a better claim got into the car we're in (both got in at once). */
+  let evicted = false;
+  remotes.onEvicted = () => (evicted = true);
+  const savedName = cleanName(storage?.getItem(NAME_KEY) ?? '');
+  const room = new Room({
+    map: map.name,
+    name: savedName || `${NICKNAMES[Math.floor(Math.random() * NICKNAMES.length)]} ${10 + Math.floor(Math.random() * 90)}`,
+    local: params.get('net') === 'local',
+    turn: params.get('turn') !== 'off',
+    localPose: () => localPose(),
+    events: {
+      welcomed: (at) => void spawnNear(at),
+      joined: (m) => remotes.add(m.id, m.name),
+      renamed: (m) => remotes.rename(m.id, m.name),
+      pose: (id, pose) => remotes.receive(id, pose, clock),
+      left: (id) => remotes.remove(id),
+      toast: (text) => roomPanel.toast(text),
+      changed: () => {
+        roomPanel.refresh();
+        if (!started) roomNote.textContent = room.role === 'guest' ? `In room ${room.code}` : room.busy && room.code ? `Joining room ${room.code}…` : room.error;
+      },
+    },
+  });
+  const roomPanel = new RoomPanel(hud, room);
+  roomPanel.onRename = (name) => storage?.setItem(NAME_KEY, name);
+  const roomNote = document.createElement('p');
+  roomNote.className = 'sub';
+  status.after(roomNote);
+
   const chase = new ChaseCamera(camera, world);
   const input = new Input(app);
   input.attachLook(renderer.domElement);
@@ -159,6 +197,7 @@ async function main() {
     let best: Car | null = null;
     let bestD = ENTER_RANGE;
     for (const { car } of cars) {
+      if (remotes.drives(car)) continue;
       const d = car.object.position.distanceTo(player.position);
       if (d < bestD && Math.abs(car.forwardSpeed()) < 3) {
         best = car;
@@ -323,6 +362,58 @@ async function main() {
     if (car === driving) chase.snap();
   };
 
+  /** What we send the room ~15 times a second. */
+  const localPose = (): PoseBody => {
+    if (driving) {
+      const t = driving.body.translation();
+      const r = driving.body.rotation();
+      const v = driving.body.linvel();
+      const d = input.drive;
+      return {
+        c: cars.findIndex((c) => c.car === driving),
+        p: roundVec(t.x, t.y, t.z),
+        q: roundQuat(r.x, r.y, r.z, r.w),
+        v: roundVec(v.x, v.y, v.z),
+        d: exitRequested ? [0, 0, 1, 0] : [round2(d.steer), round2(d.throttle), round2(d.brake), d.handbrake ? 1 : 0],
+      };
+    }
+    const p = player.position;
+    const h = player.heading;
+    return {
+      c: -1,
+      p: roundVec(p.x, p.y, p.z),
+      h: round2(h),
+      v: roundVec(Math.cos(h) * player.speed, 0, -Math.sin(h) * player.speed),
+      g: player.isGrounded ? 1 : 0,
+      f: player.flying ? 1 : 0,
+    };
+  };
+
+  /** Just joined a friend's room: out of any car and onto the ground beside them (their passenger side). */
+  const spawnNear = async (at: Pose | null) => {
+    if (!at) return;
+    if (driving) exit(driving);
+    setFlying(false);
+    const [x, y, z] = at.p;
+    await map.ensureLoaded(x, z);
+    const inCar = at.c >= 0 && !!at.q;
+    const heading = inCar ? new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...at.q!), 'YXZ').y : (at.h ?? 0);
+    const from = { x, y: inCar ? y : y + 1, z };
+    const reach = inCar ? 3 : 1.6;
+    const exclude = inCar ? cars[at.c]?.car.collider : undefined;
+    let spot = new THREE.Vector3(x, y, z);
+    for (const turn of [Math.PI / 2, -Math.PI / 2, Math.PI, 0]) {
+      const dir = { x: Math.cos(heading + turn), y: 0, z: -Math.sin(heading + turn) };
+      if (world.castRay(new RAPIER.Ray(from, dir), reach + 0.5, true, undefined, undefined, exclude)) continue;
+      spot = new THREE.Vector3(x + dir.x * reach, y, z + dir.z * reach);
+      break;
+    }
+    const ground = map.heightAt(spot.x, spot.z);
+    spot.y = Number.isNaN(ground) ? spot.y + 0.5 : ground + 0.05;
+    player.place(spot, heading);
+    chase.snap(heading);
+  };
+
   // Blob shadows lie on whatever is underneath, tilted to match slopes.
   const down = { x: 0, y: -1, z: 0 };
   const up = new THREE.Vector3(0, 1, 0);
@@ -386,6 +477,9 @@ async function main() {
     if (!(e.target instanceof Element && e.target.closest('a'))) start();
   });
   addEventListener('keydown', start, { once: true });
+  // A shared link (?room=CODE): join while the title screen is up.
+  const linked = params.get('room');
+  if (linked) void room.join(linked);
   // Some mobile browsers suspend audio when backgrounded; any touch brings it back.
   addEventListener('pointerdown', () => started && audio.unlock());
 
@@ -448,7 +542,8 @@ async function main() {
     // Into the harbour: a splash, a moment sinking (heavily damped, like
     // water), then back on the nearest road.
     for (const c of cars) {
-      if (c.frozen) continue;
+      // Someone else's car on our screen: their game puts it back, not ours.
+      if (c.frozen || remotes.drives(c.car)) continue;
       const p = c.car.body.translation();
       if (c.soaked === null && inWater(p.x, p.y, p.z)) {
         c.soaked = clock;
@@ -470,10 +565,11 @@ async function main() {
     // than let it fall through the world.
     for (const c of cars) {
       const p = c.car.body.translation();
-      const frozen = !map.hasGround(p.x, p.z);
+      const remote = remotes.drives(c.car);
+      const frozen = !remote && !map.hasGround(p.x, p.z);
       if (frozen !== c.frozen) c.car.body.setEnabled(!frozen);
       c.frozen = frozen;
-      if (lost(p)) rescue(c.car);
+      if (!remote && lost(p)) rescue(c.car);
     }
     // The physics body, not the interpolated model, which sits at the origin until the first render.
     const feet = player.body.translation();
@@ -491,10 +587,14 @@ async function main() {
     accumulator += frameDt;
     const tPhys = performance.now();
     let steps = 0;
+    const drivingIndex = cars.findIndex((c) => c.car === driving);
     while (accumulator >= FIXED_DT && steps < MAX_STEPS) {
+      // Game time at the end of this step.
+      remotes.beforeStep(clock - accumulator + FIXED_DT, drivingIndex, room.myId, !driving);
       for (const { car, frozen } of cars) {
         if (frozen) continue;
-        if (car !== driving) car.update(null, FIXED_DT);
+        // Parked, or someone else driving it on our screen (their controls just turn its wheels).
+        if (car !== driving) car.update(remotes.controlsFor(car), FIXED_DT);
         // Like GTA III: asking to get out at speed brakes to a stop first.
         else if (exitRequested) car.update({ throttle: 0, brake: Math.abs(car.forwardSpeed()) > 1 ? 1 : 0, steer: 0, handbrake: false }, FIXED_DT);
         else car.update(input.drive, FIXED_DT);
@@ -503,6 +603,7 @@ async function main() {
       world.step();
       for (const { car, frozen } of cars) if (!frozen) car.afterStep(FIXED_DT);
       if (!driving) player.afterStep();
+      remotes.afterStep();
       accumulator -= FIXED_DT;
       steps++;
     }
@@ -510,6 +611,11 @@ async function main() {
     perf.physicsMs = smooth(perf.physicsMs, performance.now() - tPhys);
 
     if (driving && exitRequested && Math.abs(driving.forwardSpeed()) < 1.5) exit(driving);
+    if (evicted && driving) {
+      exit(driving);
+      roomPanel.toast('Someone else got in first');
+    }
+    evicted = false;
 
     // Stuck on its roof for a couple of seconds: flip it back over.
     upsideDownTime = driving && driving.isUpsideDown() && Math.abs(driving.forwardSpeed()) < 1 ? upsideDownTime + frameDt : 0;
@@ -596,6 +702,9 @@ async function main() {
     applyDebugView();
     skyDome.follow(camera);
     water?.update(camera, clock);
+    camera.updateMatrixWorld();
+    remotes.render(alpha, frameDt, camera);
+    room.tick(clock);
     if (missions) {
       const view = missions.view();
       const focus = driving ? driving.object.position : player.position;
@@ -834,6 +943,20 @@ async function main() {
         up: new THREE.Vector3(0, 1, 0).applyQuaternion(car.object.quaternion).y,
         frozen,
       })),
+      /** Rooms: our role, code and id, who's here, and where we see the others (and which car they're in). */
+      room: () => ({ role: room.role, code: room.code, busy: room.busy, error: room.error, myId: room.myId, members: room.list().map(({ id, name, host, rate, stats }) => ({ id, name, host, rate, stats })), remotes: remotes.debug() }),
+      /** Start hosting; `local`: over a BroadcastChannel to other tabs (smoke tests), not PeerJS. */
+      host: (local = false) => {
+        room.local ||= local;
+        return room.host();
+      },
+      join: (code: string, local = false) => {
+        room.local ||= local;
+        return room.join(code);
+      },
+      leaveRoom: () => room.leave(),
+      /** Whether each parked car is being driven by someone else in the room (kinematic on our screen). */
+      remoteCars: () => cars.map(({ car }) => remotes.drives(car)),
       /** Missions: what's on screen (banner, subtitle, timer, goal, start markers), how the last one ended, everything said. */
       missions: () => missions?.debugState() ?? null,
       /** Start a mission by id where the player is, abandoning any running one. */
@@ -889,6 +1012,7 @@ async function main() {
        */
       reset: async () => {
         debugView = null;
+        room.leave(true);
         if (driving) exit(driving);
         setFlying(false);
         for (const [i, c] of cars.entries()) {

@@ -27,11 +27,12 @@ import harbour from './areas/harbour.mjs';
 import missions from './areas/missions.mjs';
 import roads from './areas/roads.mjs';
 import budget from './areas/budget.mjs';
+import rooms from './areas/rooms.mjs';
 import realtime from './areas/realtime.mjs';
 import phone from './areas/phone.mjs';
 
 /** In running order. Areas on the same page share it, each starting from __game.reset(). */
-const AREAS = [core, walls, terrain, trees, parks, parked, drive, bridges, buildings, fly, harbour, budget, missions, roads, realtime, testTown, phone];
+const AREAS = [core, walls, terrain, trees, parks, parked, drive, bridges, buildings, fly, harbour, budget, missions, roads, rooms, realtime, testTown, phone];
 
 const PORT = 4179;
 const URL = `http://localhost:${PORT}/?debug`;
