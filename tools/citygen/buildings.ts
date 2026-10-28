@@ -72,6 +72,8 @@ const VERANDAH_POSTS = 6;
 const SKYLINE_MIN = 40;
 /** Parapet faces only along roof edges at least this long, m. */
 const PARAPET_MIN_EDGE = 4;
+const MODERN_SHOPS: Layer[] = ['shop', 'shop-b', 'shop-c'];
+const HERITAGE_SHOPS: Layer[] = ['shop-heritage', 'shop-heritage-b'];
 const FASCIAS = [0xe8e2d4, 0xf0eee8, 0x2f3a34, 0x1e1f22, 0x6b2a2a, 0xd8cdb0, 0x3a4a5e];
 /** Height of the darker band at the foot of ground-level walls. */
 const BASE_BAND = 4;
@@ -625,6 +627,8 @@ export type Look = {
   groundAt: (x: number, z: number) => number;
   /** Where the floors above the ground floor start (absolute, m); floor lines are this plus whole floors. Default bottom + groundFloor. */
   origin?: number;
+  /** Street band texture shifted this much of a repeat along the wall (which shop comes first). */
+  shopShift?: number;
   /** One quad per wall, no street band or steps (the far skyline). */
   flat?: boolean;
   /** Height of the parapet round a flat roof, m (0 for none). */
@@ -956,6 +960,7 @@ export class MeshBuilder {
   steppedWall(a: Local, b: Local, n: readonly number[], len: number, bottom: number, lid: number, wall: readonly number[], l: { foot: number; band: number; top: number }, face: WallFace, look: Look, gf: number) {
     const floor = look.floor;
     const origin = look.origin ?? bottom + gf;
+    const shift = look.shopShift ?? 0;
     const low = face.ground;
     const lowFacade = low && FACADE[low];
     const upFacade = face.upper && FACADE[face.upper];
@@ -994,15 +999,16 @@ export class MeshBuilder {
         let start = Math.min(top, origin + Math.ceil((shopTop - 0.4 - origin) / floor - 1e-6) * floor);
         if (start - shopTop < SILL) start = shopTop;
         // Its foot follows the footpath down the step (a taller window downhill), a little below it.
+        // (u runs back along the wall: rings run right to left seen from the street, and signs must read.)
         const p0 = { x: a.x + (b.x - a.x) * t0 + n[0] * STEP_PROBE, z: a.z + (b.z - a.z) * t0 + n[2] * STEP_PROBE };
         const p1 = { x: a.x + (b.x - a.x) * t1 + n[0] * STEP_PROBE, z: a.z + (b.z - a.z) * t1 + n[2] * STEP_PROBE };
         const f0 = Math.max(bottom, Math.min(g, look.groundAt(p0.x, p0.z)) - SHOP_SINK);
         const f1 = Math.max(bottom, Math.min(g, look.groundAt(p1.x, p1.z)) - SHOP_SINK);
         const shop = [
-          this.vertex(a.x + (b.x - a.x) * t0, f0, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, t0 * uLow, 0, light(f0)),
-          this.vertex(a.x + (b.x - a.x) * t1, f1, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, t1 * uLow, 0, light(f1)),
-          this.vertex(a.x + (b.x - a.x) * t1, shopTop, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, t1 * uLow, 1, light(shopTop)),
-          this.vertex(a.x + (b.x - a.x) * t0, shopTop, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, t0 * uLow, 1, light(shopTop)),
+          this.vertex(a.x + (b.x - a.x) * t0, f0, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, shift - t0 * uLow, 0, light(f0)),
+          this.vertex(a.x + (b.x - a.x) * t1, f1, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, shift - t1 * uLow, 0, light(f1)),
+          this.vertex(a.x + (b.x - a.x) * t1, shopTop, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, shift - t1 * uLow, 1, light(shopTop)),
+          this.vertex(a.x + (b.x - a.x) * t0, shopTop, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, shift - t0 * uLow, 1, light(shopTop)),
         ];
         this.idx.push(shop[0], shop[2], shop[1], shop[0], shop[3], shop[2]);
         // Below it, out of sight, down to the bottom: only where the ground dips lower than the shop's foot.
@@ -1675,13 +1681,16 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const wall = wallColour(fam, famTags, style);
     const roof = p.roof?.colour ?? roofColour(s.key, famTags, wall);
     const pitched = p.roof?.pitched;
-    const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? (style.heritage ? 'shop-heritage' : 'shop') : null;
+    // Shopfronts: one of the shop layers per building, started a shop along at random, so a row reads as different businesses.
+    const shops = style.heritage ? HERITAGE_SHOPS : MODERN_SHOPS;
+    const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? shops[Math.floor(hash(fam, 13) * shops.length)] : null;
     const look: Look = {
       shade: canyonShade(across, p),
       floor: style.floor,
       groundFloor: style.ground === 'lobby' ? 5 : style.ground === 'shop' ? 4.2 : BASE_BAND,
       groundAt: ground,
       parapet: grounded && !canopy && top - bottom > 5 ? style.parapet : 0,
+      shopShift: hash(fam, 14) < 0.5 ? 0 : 0.5,
       wall: (a, b, n, len) => {
         if (canopy || len < 1.5) return { upper: 'plain', ground: null };
         // A party wall: another building right against it.

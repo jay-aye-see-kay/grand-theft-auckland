@@ -142,6 +142,351 @@ export function punched(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number,
 /** Bay and floor size in px for a facade layer. */
 const cell = (layer: Layer) => ({ bw: S / FACADE[layer]!.bays, fh: S / FACADE[layer]!.floors });
 
+// ---------------------------------------------------------------- shopfronts
+//
+// A shop layer is one storey (4.2 m) by two shops (4.5 m each), so a metre is
+// SX px across but SY px up: shapes are painted narrow to come out right.
+// From the top: wall above the verandah, the shop's sign under it, the
+// window (an interior you can read from the street, not a pattern), and a
+// kick plate. Each shop is one of a few kinds, so a row reads as different
+// businesses.
+
+const SX = S / 9;
+const SY = S / 4.2;
+/** Canvas y of the verandah's underside (3.7 m up): signs hang below it. */
+const UNDER = Math.round((4.2 - 3.65) * SY);
+
+type ShopKind = 'cafe' | 'fashion' | 'dairy' | 'bright' | 'bar' | 'vacant' | 'books';
+/** Shop kinds per layer, two each (left, right): the three modern layers and two heritage ones. */
+const SHOP_PAIRS: Record<string, [ShopKind, ShopKind]> = {
+  shop: ['cafe', 'fashion'],
+  'shop-b': ['dairy', 'bright'],
+  'shop-c': ['bar', 'vacant'],
+  'shop-heritage': ['books', 'cafe'],
+  'shop-heritage-b': ['fashion', 'dairy'],
+};
+
+const hsl = (h: number, s: number, l: number, a = 1) => `hsla(${h | 0},${s | 0}%,${l | 0}%,${a})`;
+
+/** Blocky parody lettering, centred in a box. */
+function lettering(c: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, colour: string) {
+  const words = 1 + Math.floor(rnd() * 2);
+  const glyphs: number[] = [];
+  for (let k = 0; k < words; k++) {
+    if (k) glyphs.push(-1);
+    for (let n = 3 + Math.floor(rnd() * 5); n > 0; n--) glyphs.push(0.45 + rnd() * 0.35);
+  }
+  const unit = Math.min(h * 0.42, w / (glyphs.reduce((s, g) => s + (g < 0 ? 0.6 : g + 0.18), 0) + 0.5));
+  let tx = x + (w - glyphs.reduce((s, g) => s + (g < 0 ? 0.6 : g + 0.18), 0) * unit) / 2;
+  c.fillStyle = colour;
+  for (const g of glyphs) {
+    if (g < 0) {
+      tx += unit * 0.6;
+      continue;
+    }
+    // Letters as a stem and a bar or two: reads as type at a distance, says nothing.
+    const gw = g * unit;
+    const gh = h * 0.5;
+    const gy = y + (h - gh) / 2;
+    c.fillRect(tx, gy, Math.max(2, gw * 0.3), gh);
+    const bar = rnd();
+    if (bar < 0.7) c.fillRect(tx, gy, gw, Math.max(2, gh * 0.18));
+    if (bar > 0.3) c.fillRect(tx, gy + gh * 0.82, gw, Math.max(2, gh * 0.18));
+    if (bar > 0.5 && bar < 0.85) c.fillRect(tx + gw * 0.7, gy, Math.max(2, gw * 0.3), gh);
+    tx += gw + unit * 0.18;
+  }
+}
+
+/** A shop's interior, seen through its window from x, y (w by h px). */
+function interior(c: Ctx, rnd: () => number, kind: ShopKind, x: number, y: number, w: number, h: number) {
+  const floorY = y + h * 0.86;
+  const warm = kind === 'cafe' || kind === 'bar' || kind === 'books';
+  const lightL = kind === 'bright' || kind === 'dairy' ? 78 : kind === 'bar' ? 22 : kind === 'vacant' ? 30 : 55;
+  // Back wall and ceiling, floor in front, lit from the ceiling.
+  const wallH = warm ? 32 + rnd() * 10 : 200 + rnd() * 30;
+  const g = c.createLinearGradient(0, y, 0, floorY);
+  g.addColorStop(0, hsl(wallH, warm ? 35 : 8, lightL * 0.55));
+  g.addColorStop(0.25, hsl(wallH, warm ? 40 : 10, lightL));
+  g.addColorStop(1, hsl(wallH, warm ? 30 : 8, lightL * 0.8));
+  c.fillStyle = g;
+  c.fillRect(x, y, w, floorY - y);
+  c.fillStyle = hsl(wallH, 15, lightL * 0.45);
+  c.fillRect(x, floorY, w, y + h - floorY);
+  // Downlights.
+  c.fillStyle = kind === 'bar' ? 'rgba(255,190,110,0.9)' : 'rgba(255,250,235,0.85)';
+  for (let lx = x + 10; lx < x + w - 6; lx += 22 + rnd() * 10) c.fillRect(lx, y + 8, 7, 3);
+  const dark = (a = 0.85) => `rgba(28,24,22,${a})`;
+  switch (kind) {
+    case 'cafe': {
+      // Counter along the back with a coffee machine, a menu board, tables in front.
+      c.fillStyle = hsl(25, 35, 26);
+      c.fillRect(x + w * 0.35, floorY - 1.0 * SY, w * 0.62, 1.0 * SY);
+      c.fillStyle = '#b8b8b4';
+      c.fillRect(x + w * 0.55, floorY - 1.45 * SY, 0.6 * SX, 0.45 * SY);
+      c.fillStyle = '#1e1e1e';
+      c.fillRect(x + w * 0.4, y + 0.25 * SY, w * 0.45, 0.55 * SY);
+      c.fillStyle = 'rgba(240,235,220,0.75)';
+      for (let k = 0; k < 6; k++) c.fillRect(x + w * 0.43, y + 0.32 * SY + k * 0.07 * SY, w * (0.15 + rnd() * 0.22), 3);
+      // Pendant lamps.
+      for (let k = 0; k < 3; k++) {
+        const px = x + w * (0.2 + k * 0.28);
+        c.fillStyle = 'rgba(40,36,32,0.9)';
+        c.fillRect(px, y, 1.5, 0.5 * SY);
+        c.fillStyle = 'rgba(255,214,150,0.95)';
+        c.fillRect(px - 5, y + 0.5 * SY, 11, 7);
+      }
+      for (let k = 0; k < 2; k++) {
+        const tx = x + w * (0.12 + k * 0.45);
+        c.fillStyle = dark();
+        c.fillRect(tx, floorY - 0.75 * SY, 0.7 * SX, 5);
+        c.fillRect(tx + 0.33 * SX, floorY - 0.75 * SY, 3, 0.75 * SY);
+        c.fillRect(tx - 0.25 * SX, floorY - 0.9 * SY, 3, 0.9 * SY);
+        c.fillRect(tx + 0.95 * SX, floorY - 0.9 * SY, 3, 0.9 * SY);
+      }
+      break;
+    }
+    case 'fashion': {
+      // Mannequins in the window, rails of clothes behind.
+      for (let k = 0; k < 2; k++) {
+        const rx = x + w * (0.08 + k * 0.48);
+        c.fillStyle = '#6a6a6a';
+        c.fillRect(rx, floorY - 1.55 * SY, w * 0.4, 3);
+        for (let gx = rx + 3; gx < rx + w * 0.4 - 4; gx += 5 + rnd() * 3) {
+          c.fillStyle = hsl(rnd() * 360, 12 + rnd() * 25, 25 + rnd() * 45);
+          c.fillRect(gx, floorY - 1.52 * SY, 4, (0.6 + rnd() * 0.45) * SY);
+        }
+      }
+      for (let k = 0; k < 2; k++) {
+        const mx = x + w * (0.25 + k * 0.45);
+        const tone = hsl(30, 10, 82);
+        c.fillStyle = tone;
+        c.fillRect(mx - 0.1 * SX, floorY - 1.78 * SY, 0.2 * SX, 0.2 * SY);
+        c.fillStyle = hsl(rnd() * 360, 25 + rnd() * 30, 30 + rnd() * 30);
+        c.fillRect(mx - 0.22 * SX, floorY - 1.56 * SY, 0.44 * SX, 0.75 * SY);
+        c.fillStyle = hsl(rnd() * 360, 10, 20 + rnd() * 25);
+        c.fillRect(mx - 0.18 * SX, floorY - 0.82 * SY, 0.36 * SX, 0.72 * SY);
+        c.fillStyle = '#444';
+        c.fillRect(mx - 0.25 * SX, floorY - 0.1 * SY, 0.5 * SX, 0.1 * SY);
+      }
+      break;
+    }
+    case 'dairy': {
+      // Shelves of stock to the ceiling, a fridge glowing, posters stuck to the glass.
+      for (let sy = y + 0.35 * SY; sy < floorY - 0.2 * SY; sy += 0.38 * SY) {
+        c.fillStyle = '#d0d0cc';
+        c.fillRect(x, sy + 0.3 * SY, w, 3);
+        for (let px = x + 2; px < x + w - 4; px += 3 + rnd() * 4) {
+          c.fillStyle = hsl(rnd() * 360, 45 + rnd() * 35, 35 + rnd() * 35);
+          const ph = (0.12 + rnd() * 0.16) * SY;
+          c.fillRect(px, sy + 0.3 * SY - ph, 2 + rnd() * 3, ph);
+        }
+      }
+      c.fillStyle = 'rgba(200,235,255,0.55)';
+      c.fillRect(x + w * 0.7, y + 0.3 * SY, w * 0.26, floorY - y - 0.3 * SY);
+      for (let k = 0; k < 2 + Math.floor(rnd() * 2); k++) {
+        const pw = (0.5 + rnd() * 0.3) * SX;
+        const ph = (0.7 + rnd() * 0.4) * SY;
+        const px = x + 6 + rnd() * (w * 0.6 - pw);
+        const py = y + (0.6 + rnd() * 0.5) * SY;
+        c.fillStyle = hsl([0, 210, 45, 120, 280][Math.floor(rnd() * 5)], 70, 45);
+        c.fillRect(px, py, pw, ph);
+        c.fillStyle = 'rgba(255,255,255,0.9)';
+        c.fillRect(px + 4, py + ph * 0.12, pw - 8, ph * 0.18);
+        c.fillStyle = 'rgba(255,240,120,0.95)';
+        c.fillRect(px + 4, py + ph * 0.6, pw * 0.6, ph * 0.22);
+      }
+      break;
+    }
+    case 'bright': {
+      // A phone shop or bank: white and bright, a long counter, screens on the back wall.
+      c.fillStyle = '#f2f2ee';
+      c.fillRect(x + w * 0.1, floorY - 0.95 * SY, w * 0.8, 0.95 * SY);
+      c.fillStyle = hsl(200 + rnd() * 40, 60, 40);
+      c.fillRect(x + w * 0.1, floorY - 0.95 * SY, w * 0.8, 0.08 * SY);
+      for (let k = 0; k < 3; k++) {
+        c.fillStyle = '#1b2a3a';
+        c.fillRect(x + w * (0.12 + k * 0.28), y + 0.45 * SY, w * 0.2, 0.42 * SY);
+        c.fillStyle = hsl(rnd() * 360, 60, 55, 0.8);
+        c.fillRect(x + w * (0.12 + k * 0.28) + 3, y + 0.45 * SY + 3, w * 0.2 - 6, 0.42 * SY - 6);
+      }
+      break;
+    }
+    case 'bar': {
+      // Dark, warm: a lit bar back with bottles, stools.
+      c.fillStyle = 'rgba(255,170,80,0.35)';
+      c.fillRect(x + w * 0.1, y + 0.45 * SY, w * 0.8, 0.8 * SY);
+      for (let sy = y + 0.6 * SY; sy < y + 1.2 * SY; sy += 0.3 * SY) {
+        for (let px = x + w * 0.12; px < x + w * 0.88; px += 4 + rnd() * 3) {
+          c.fillStyle = hsl(20 + rnd() * 120, 50, 25 + rnd() * 30, 0.9);
+          c.fillRect(px, sy, 3, 0.2 * SY);
+        }
+      }
+      c.fillStyle = hsl(20, 40, 16);
+      c.fillRect(x + w * 0.05, floorY - 1.1 * SY, w * 0.9, 1.1 * SY);
+      c.fillStyle = 'rgba(255,190,110,0.5)';
+      c.fillRect(x + w * 0.05, floorY - 1.1 * SY, w * 0.9, 3);
+      break;
+    }
+    case 'books': {
+      // Bookcases to the ceiling, a table of books in the window.
+      for (let sy = y + 0.3 * SY; sy < floorY - 0.2 * SY; sy += 0.32 * SY) {
+        c.fillStyle = hsl(25, 35, 22);
+        c.fillRect(x, sy + 0.26 * SY, w, 4);
+        for (let px = x + 1; px < x + w - 3; px += 2 + rnd() * 2) {
+          c.fillStyle = hsl(rnd() * 360, 20 + rnd() * 30, 20 + rnd() * 35);
+          const bh = (0.16 + rnd() * 0.08) * SY;
+          c.fillRect(px, sy + 0.26 * SY - bh, 2, bh);
+        }
+      }
+      c.fillStyle = hsl(25, 35, 20);
+      c.fillRect(x + w * 0.15, floorY - 0.8 * SY, w * 0.7, 0.8 * SY);
+      break;
+    }
+    case 'vacant': {
+      // Papered over, a leasing sign.
+      c.fillStyle = 'rgba(232,228,214,0.92)';
+      c.fillRect(x, y + 0.15 * SY, w, h - 0.15 * SY);
+      c.fillStyle = 'rgba(0,0,0,0.06)';
+      for (let k = 0; k < 6; k++) c.fillRect(x + rnd() * w, y + 0.15 * SY, 2, h - 0.15 * SY);
+      const sw = w * 0.5;
+      c.fillStyle = hsl(rnd() < 0.5 ? 0 : 215, 70, 38);
+      c.fillRect(x + (w - sw) / 2, y + 0.7 * SY, sw, 0.7 * SY);
+      lettering(c, rnd, x + (w - sw) / 2 + 4, y + 0.75 * SY, sw - 8, 0.3 * SY, '#fff');
+      c.fillStyle = '#fff';
+      c.fillRect(x + (w - sw) / 2 + 8, y + 1.15 * SY, sw - 16, 0.12 * SY);
+      break;
+    }
+  }
+}
+
+/** Glass over an interior: the street reflected low down, a sheen, darker at the edges. */
+function shopGlass(c: Ctx, rnd: () => number, x: number, y: number, w: number, h: number) {
+  const g = c.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, 'rgba(20,24,28,0.35)');
+  g.addColorStop(0.2, 'rgba(20,24,28,0.05)');
+  g.addColorStop(0.65, 'rgba(160,175,185,0.08)');
+  g.addColorStop(1, 'rgba(150,160,165,0.28)');
+  c.fillStyle = g;
+  c.fillRect(x, y, w, h);
+  c.fillStyle = `rgba(220,232,240,${0.1 + rnd() * 0.08})`;
+  c.beginPath();
+  c.moveTo(x + w * 0.15, y);
+  c.lineTo(x + w * 0.38, y);
+  c.lineTo(x + w * 0.12, y + h);
+  c.lineTo(x, y + h);
+  c.lineTo(x, y + h * 0.55);
+  c.closePath();
+  c.fill();
+}
+
+/** Sign colours: the fascia board, and its lettering. */
+const SIGNS: [string, string][] = [
+  ['#1d1f22', '#f4f0e6'], ['#f2f0ea', '#1d1f22'], ['#9e2a2b', '#fff6e8'], ['#1f4e79', '#ffffff'], ['#e3b23c', '#1d1f22'],
+  ['#2d5a3d', '#f1e8d0'], ['#5b2a6e', '#ffffff'], ['#c8553d', '#ffffff'], ['#3b3f45', '#e3b23c'], ['#e8e0d0', '#9e2a2b'],
+];
+
+/** Modern aluminium shopfronts: two shops of the given kinds. */
+function modernShops(kinds: [ShopKind, ShopKind]): Painter {
+  return (c, m, rnd) => {
+    const bw = S / 2;
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
+    speckle(c, rnd, 600, 2, 0.1, 0, 0, S, UNDER);
+    for (let b = 0; b < 2; b++) {
+      const x = b * bw;
+      const kind = kinds[b];
+      const [board, ink] = SIGNS[Math.floor(rnd() * SIGNS.length)];
+      // Sign box under the verandah line, full width of the shop.
+      const sy = UNDER + 6;
+      const sh = Math.round(0.42 * SY);
+      rect(c, m, x + 6, sy, bw - 12, sh, board, 0);
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      c.fillRect(x + 6, sy, bw - 12, 4);
+      lettering(c, rnd, x + 16, sy + 4, bw - 32, sh - 8, ink);
+      // The window and door.
+      const top = sy + sh + 6;
+      const bottom = S - Math.round(0.32 * SY);
+      rect(c, m, x + 6, top, bw - 12, bottom - top, '#000', 0);
+      interior(c, rnd, kind, x + 10, top + 4, bw - 20, bottom - top - 4);
+      shopGlass(c, rnd, x + 10, top + 4, bw - 20, bottom - top - 4);
+      // Door: on the left or right, a darker leaf with a push bar.
+      const dw = Math.round(1.0 * SX);
+      const dx = rnd() < 0.5 ? x + 14 : x + bw - 14 - dw;
+      c.fillStyle = 'rgba(10,12,14,0.35)';
+      c.fillRect(dx, top + 0.15 * SY, dw, bottom - top - 0.15 * SY);
+      c.fillStyle = '#a8adb0';
+      c.fillRect(dx + 4, top + (bottom - top) * 0.55, dw - 8, 4);
+      // Frames: aluminium or black.
+      c.fillStyle = rnd() < 0.6 ? '#9ea4a8' : '#26282a';
+      c.fillRect(x + 6, top, bw - 12, 5);
+      for (const fx of [x + 6, dx - 2, dx + dw - 2, x + bw - 11]) c.fillRect(fx, top, 5, bottom - top);
+      c.fillRect(x + 6, top + 0.12 * SY + 4, bw - 12, 3);
+      // Kick plate and step.
+      rect(c, m, x + 6, bottom, bw - 12, S - bottom, kind === 'vacant' ? '#5a5a58' : '#3a3c3e', 0);
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      c.fillRect(x + 6, bottom, bw - 12, 3);
+    }
+    // Piers between and either side of the shops (the building's own wall).
+    rect(c, m, 0, UNDER, 6, S - UNDER, grey(TINT_GREY - 20), 1);
+    rect(c, m, bw - 6, UNDER, 12, S - UNDER, grey(TINT_GREY - 20), 1);
+    rect(c, m, S - 6, UNDER, 6, S - UNDER, grey(TINT_GREY - 20), 1);
+  };
+}
+
+/** Victorian and Edwardian timber shopfronts: painted fascia, transom lights, stallrisers, recessed doors. */
+function heritageShops(kinds: [ShopKind, ShopKind]): Painter {
+  return (c, m, rnd) => {
+    const bw = S / 2;
+    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
+    const paints = [[38, 64, 48], [96, 30, 34], [32, 44, 70], [224, 214, 190], [20, 20, 22], [130, 90, 40], [70, 78, 60]];
+    for (let b = 0; b < 2; b++) {
+      const x = b * bw;
+      const p = paints[Math.floor(rnd() * paints.length)];
+      const paint = rgb(p[0], p[1], p[2]);
+      const light = p[0] + p[1] + p[2] > 400;
+      // Fascia board with signwritten lettering, under the verandah line.
+      const fy = UNDER + 4;
+      const fh = Math.round(0.4 * SY);
+      rect(c, m, x + 4, fy, bw - 8, fh, paint, 0);
+      c.fillStyle = 'rgba(0,0,0,0.25)';
+      c.fillRect(x + 4, fy + fh - 4, bw - 8, 4);
+      lettering(c, rnd, x + 18, fy + 4, bw - 36, fh - 8, light ? '#3a2a1a' : 'rgba(235,215,150,0.95)');
+      // Transom lights over the windows.
+      const ty = fy + fh + 2;
+      const th = Math.round(0.3 * SY);
+      rect(c, m, x + 4, ty, bw - 8, th + 6, paint, 0);
+      for (let k = 0; k < 6; k++) glass(c, m, rnd, x + 10 + k * ((bw - 20) / 6), ty + 4, (bw - 20) / 6 - 6, th - 2, 0, 0.1);
+      // Display windows either side of a recessed door, over tiled stallrisers.
+      const top = ty + th + 8;
+      const sill = S - Math.round(0.55 * SY);
+      rect(c, m, x + 4, top, bw - 8, S - top, paint, 0);
+      const doorW = Math.round(1.1 * SX);
+      const winW = (bw - 8 - doorW - 16) / 2;
+      for (const wx of [x + 10, x + 10 + winW + doorW + 4]) {
+        rect(c, m, wx, top + 6, winW, sill - top - 6, '#000', 0);
+        interior(c, rnd, kinds[b], wx, top + 6, winW, sill - top - 6);
+        shopGlass(c, rnd, wx, top + 6, winW, sill - top - 6);
+        c.fillStyle = paint;
+        c.fillRect(wx + winW / 2 - 2, top + 6, 4, sill - top - 6);
+        // Tiled stallriser.
+        for (let ty2 = sill + 8; ty2 < S - 4; ty2 += 12) {
+          for (let tx2 = wx; tx2 < wx + winW; tx2 += 12) {
+            const v = rnd() * 20;
+            c.fillStyle = light ? rgb(150 + v, 60 + v, 50 + v) : rgb(70 + v, 90 + v, 80 + v);
+            c.fillRect(tx2 + 1, ty2 + 1, 10, 10);
+          }
+        }
+      }
+      // Recessed door: deep shadow, a panelled door with a glazed top.
+      const dx = x + 10 + winW + 2;
+      rect(c, m, dx, top + 6, doorW, S - top - 6, '#0e1012', 0);
+      rect(c, m, dx + 10, top + 30, doorW - 20, S - top - 40, rgb(p[0] * 0.7, p[1] * 0.7, p[2] * 0.7), 0);
+      glass(c, m, rnd, dx + 16, top + 40, doorW - 32, 0.9 * SY, 0, 0.3);
+    }
+    // Pilasters between the shops.
+    for (const px of [0, bw - 8, S - 8]) rect(c, m, px, UNDER, 16, S - UNDER, grey(TINT_GREY + 10), 1);
+  };
+}
+
 export const painters: Record<Layer, Painter> = {
   glass(c, m, rnd) {
     const { bw, fh } = cell('glass');
@@ -735,121 +1080,11 @@ export const painters: Record<Layer, Painter> = {
     blotches(c, rnd, 12, 30, 110, 0.12, 0.05);
     rect(c, m, 0, S - 30, S, 30, grey(TINT_GREY - 40), 1);
   },
-  shop(c, m, rnd) {
-    // One storey, two shops. Top: fascia and sign board (mostly under the verandah).
-    const bw = S / 2;
-    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
-    const signs = [[40, 44, 52], [180, 40, 40], [30, 90, 140], [230, 200, 60], [240, 240, 236], [20, 110, 80], [120, 40, 110]];
-    for (let b = 0; b < 2; b++) {
-      const x = b * bw;
-      const sc = signs[Math.floor(rnd() * signs.length)];
-      rect(c, m, x + 6, 10, bw - 12, 80, rgb(sc[0], sc[1], sc[2]), 0);
-      // Parody lettering: blocky, unreadable.
-      c.fillStyle = sc[0] + sc[1] + sc[2] > 400 ? 'rgba(20,20,20,0.85)' : 'rgba(250,250,245,0.9)';
-      let tx = x + 26;
-      while (tx < x + bw - 50) {
-        const w = 10 + rnd() * 16;
-        c.fillRect(tx, 34, w, 32);
-        tx += w + 5 + (rnd() < 0.2 ? 14 : 0);
-      }
-      // Shop window: dark interior, lit displays, reflections.
-      const top = 100;
-      const h = S - top - 34;
-      const g = c.createLinearGradient(0, top, 0, top + h);
-      g.addColorStop(0, '#2a3036');
-      g.addColorStop(1, '#14181c');
-      c.fillStyle = g;
-      c.fillRect(x + 6, top, bw - 12, h);
-      for (let k = 0; k < 9; k++) {
-        c.fillStyle = `hsla(${rnd() * 360},${30 + rnd() * 40}%,${45 + rnd() * 30}%,0.7)`;
-        c.fillRect(x + 20 + rnd() * (bw - 70), top + 60 + rnd() * (h - 120), 14 + rnd() * 40, 20 + rnd() * 60);
-      }
-      c.fillStyle = 'rgba(255,250,235,0.18)';
-      c.fillRect(x + 6, top, bw - 12, 30);
-      c.fillStyle = 'rgba(190,210,225,0.16)';
-      c.beginPath();
-      c.moveTo(x + 40, top);
-      c.lineTo(x + 110, top);
-      c.lineTo(x + 50, top + h);
-      c.lineTo(x + 6, top + h);
-      c.closePath();
-      c.fill();
-      m.fillStyle = grey(0);
-      m.fillRect(x + 6, top, bw - 12, h);
-      // Door in the first shop.
-      if (b === 0) {
-        rect(c, m, x + bw - 80, top + 30, 60, h - 30, '#1a1e22', 0);
-        c.fillStyle = 'rgba(180,200,210,0.25)';
-        c.fillRect(x + bw - 74, top + 36, 48, h - 50);
-      }
-      // Aluminium frames.
-      c.fillStyle = '#9ea4a8';
-      for (const fx of [x + 6, x + bw / 2, x + bw - 10]) c.fillRect(fx, top, 4, h);
-      c.fillRect(x + 6, top, bw - 12, 4);
-      c.fillRect(x + 6, top + h - 4, bw - 12, 4);
-      // Kick plate.
-      rect(c, m, x, S - 34, bw, 34, '#3a3c3e', 0);
-    }
-    rect(c, m, 0, 0, 6, S, grey(TINT_GREY - 20), 1);
-    rect(c, m, bw - 6, 0, 12, S, grey(TINT_GREY - 20), 1);
-  },
-  'shop-heritage'(c, m, rnd) {
-    const bw = S / 2;
-    rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);
-    const paints = [[38, 64, 48], [96, 30, 34], [32, 44, 70], [224, 214, 190], [20, 20, 22], [130, 90, 40]];
-    for (let b = 0; b < 2; b++) {
-      const x = b * bw;
-      const p = paints[Math.floor(rnd() * paints.length)];
-      const paint = rgb(p[0], p[1], p[2]);
-      // Fascia board with painted lettering.
-      rect(c, m, x + 4, 8, bw - 8, 60, paint, 0);
-      c.fillStyle = 'rgba(235,215,150,0.85)';
-      let tx = x + 30;
-      while (tx < x + bw - 50) {
-        const w = 8 + rnd() * 12;
-        c.fillRect(tx, 28, w, 22);
-        tx += w + 4 + (rnd() < 0.2 ? 12 : 0);
-      }
-      // Transom lights: small leaded panes.
-      rect(c, m, x + 4, 72, bw - 8, 54, paint, 0);
-      for (let k = 0; k < 6; k++) glass(c, m, rnd, x + 10 + k * ((bw - 20) / 6), 78, (bw - 20) / 6 - 6, 42, 0, 0.1);
-      // Display windows with timber frames over a tiled stallriser.
-      const top = 132;
-      const sill = S - 80;
-      rect(c, m, x + 4, top, bw - 8, S - top, paint, 0);
-      const doorW = 70;
-      const winW = (bw - 8 - doorW - 16) / 2;
-      for (const wx of [x + 10, x + 10 + winW + doorW + 4]) {
-        const g = c.createLinearGradient(0, top, 0, sill);
-        g.addColorStop(0, '#303842');
-        g.addColorStop(1, '#171b20');
-        c.fillStyle = g;
-        c.fillRect(wx, top + 6, winW, sill - top - 6);
-        for (let k = 0; k < 5; k++) {
-          c.fillStyle = `hsla(${rnd() * 360},${30 + rnd() * 40}%,${50 + rnd() * 25}%,0.6)`;
-          c.fillRect(wx + 8 + rnd() * (winW - 40), top + 120 + rnd() * 160, 12 + rnd() * 28, 20 + rnd() * 50);
-        }
-        c.fillStyle = 'rgba(200,215,230,0.14)';
-        c.fillRect(wx, top + 6, winW * 0.4, sill - top - 6);
-        c.fillStyle = paint;
-        c.fillRect(wx + winW / 2 - 2, top + 6, 4, sill - top - 6);
-        // Tiled stallriser.
-        for (let ty = sill + 8; ty < S - 4; ty += 12) {
-          for (let tx2 = wx; tx2 < wx + winW; tx2 += 12) {
-            c.fillStyle = rgb(70 + rnd() * 30, 90 + rnd() * 30, 80 + rnd() * 20);
-            c.fillRect(tx2 + 1, ty + 1, 10, 10);
-          }
-        }
-      }
-      // Recessed door: deep shadow, a panelled door.
-      const dx = x + 10 + winW + 2;
-      rect(c, m, dx, top + 6, doorW, S - top - 6, '#0e1012', 0);
-      rect(c, m, dx + 12, top + 40, doorW - 24, S - top - 50, rgb(p[0] * 0.7, p[1] * 0.7, p[2] * 0.7), 0);
-      glass(c, m, rnd, dx + 18, top + 50, doorW - 36, 150, 0, 0.3);
-    }
-    // Pilasters between the shops.
-    for (const px of [0, bw - 8, S - 8]) rect(c, m, px, 0, 16, S, grey(TINT_GREY + 10), 1);
-  },
+  shop: modernShops(SHOP_PAIRS.shop),
+  'shop-b': modernShops(SHOP_PAIRS['shop-b']),
+  'shop-c': modernShops(SHOP_PAIRS['shop-c']),
+  'shop-heritage': heritageShops(SHOP_PAIRS['shop-heritage']),
+  'shop-heritage-b': heritageShops(SHOP_PAIRS['shop-heritage-b']),
   lobby(c, m, rnd) {
     const bw = S / 2;
     rect(c, m, 0, 0, S, S, grey(TINT_GREY), 1);

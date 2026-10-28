@@ -38,8 +38,11 @@ export const LAYERS = [
   'weatherboard', // villas and cottages: weatherboards, double-hung sashes
   'carpark', // parking buildings: open decks between concrete bands
   'shed', // industrial: ribbed metal cladding, a band of translucent panels
-  'shop', // modern glazed shopfronts (ground floor)
-  'shop-heritage', // timber shopfronts with stallrisers and recessed doors
+  'shop', // modern glazed shopfronts (ground floor): a cafe and a clothes shop
+  'shop-b', // a dairy and a bright phone shop or bank
+  'shop-c', // a bar and an empty shop, papered over
+  'shop-heritage', // timber shopfronts with stallrisers and recessed doors: books, a cafe
+  'shop-heritage-b', // clothes, a dairy
   'lobby', // tower lobby: tall glazing between stone columns
   'roof-tin', // corrugated iron on pitched roofs (u across the fall, v down it)
   'roof-tile', // concrete or clay tiles on pitched roofs
@@ -84,7 +87,10 @@ export const FACADE: Partial<Record<Layer, { bays: number; floors: number; bay: 
   carpark: { bays: 2, floors: 4, bay: 5.5 },
   shed: { bays: 4, floors: 1, bay: 3 },
   shop: { bays: 2, floors: 1, bay: 4.5 },
+  'shop-b': { bays: 2, floors: 1, bay: 4.5 },
+  'shop-c': { bays: 2, floors: 1, bay: 4.5 },
   'shop-heritage': { bays: 2, floors: 1, bay: 4.5 },
+  'shop-heritage-b': { bays: 2, floors: 1, bay: 4.5 },
   lobby: { bays: 2, floors: 1, bay: 4.5 },
 };
 
