@@ -50,6 +50,8 @@ export class GroundRaster {
   readonly cols: number;
   readonly rows: number;
   readonly classes: Uint8Array;
+  /** Tree canopy cover per lattice point, 0..255 (see paintCanopy). */
+  readonly canopy: Uint8Array;
 
   constructor(grid: Grid) {
     this.c0 = grid.x0 / CELL_SIZE - GROUND_APRON;
@@ -57,6 +59,32 @@ export class GroundRaster {
     this.cols = grid.nx * CELLS + 1 + 2 * GROUND_APRON;
     this.rows = grid.nz * CELLS + 1 + 2 * GROUND_APRON;
     this.classes = new Uint8Array(this.cols * this.rows); // 0 = urban
+    this.canopy = new Uint8Array(this.cols * this.rows);
+  }
+
+  /**
+   * Paints the trees' crowns as canopy cover: full under the middle of a
+   * crown, falling off to nothing at its edge. The game shades the ground
+   * by it near the player and draws it as canopy far away, where the trees
+   * themselves aren't drawn.
+   */
+  paintCanopy(trees: { x: number; z: number; crown: number }[]) {
+    for (const t of trees) {
+      const r = t.crown;
+      for (let rr = Math.ceil((t.z - r) / CELL_SIZE) - this.r0; rr <= Math.floor((t.z + r) / CELL_SIZE) - this.r0; rr++) {
+        if (rr < 0 || rr >= this.rows) continue;
+        for (let cc = Math.ceil((t.x - r) / CELL_SIZE) - this.c0; cc <= Math.floor((t.x + r) / CELL_SIZE) - this.c0; cc++) {
+          if (cc < 0 || cc >= this.cols) continue;
+          const d = Math.hypot((cc + this.c0) * CELL_SIZE - t.x, (rr + this.r0) * CELL_SIZE - t.z) / r;
+          if (d >= 1) continue;
+          const k = rr * this.cols + cc;
+          // Solid out to 60% of the radius, then a smooth edge.
+          const f = d <= 0.6 ? 1 : 1 - ((d - 0.6) / 0.4) ** 2;
+          // In 16 steps: finer is invisible and doubles the ground files.
+          this.canopy[k] = Math.max(this.canopy[k], 17 * Math.round(15 * f));
+        }
+      }
+    }
   }
 
   private set(c: number, r: number, id: number) {
@@ -139,11 +167,13 @@ export class GroundRaster {
   chunk(i: number, j: number): GroundSamples {
     const n = GROUND_SAMPLES;
     const classes = new Uint8Array(n * n);
+    const canopy = new Uint8Array(n * n);
     for (let r = 0; r < n; r++) {
       const src = (j * CELLS + r) * this.cols + i * CELLS;
       classes.set(this.classes.subarray(src, src + n), r * n);
+      canopy.set(this.canopy.subarray(src, src + n), r * n);
     }
-    return { n, classes };
+    return { n, classes, canopy };
   }
 }
 

@@ -60,6 +60,8 @@ export interface GameMap {
   sync(): void;
   /** Surface under a point ('road', 'footpath', 'grass', ...), null if unknown or not loaded. */
   surfaceAt?(x: number, z: number): string | null;
+  /** Tree canopy over a point, 0..1 (debug probe). */
+  canopyAt?(x: number, z: number): number | null;
   /**
    * Open water: a sea-level plane wherever the ground is lower. Outside the
    * map's bounds it's drawn only north of `seaSouth` (the harbour side).

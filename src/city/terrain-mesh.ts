@@ -55,6 +55,16 @@ const FLOWERS = [new THREE.Color(0xc4425e), new THREE.Color(0xe2b23c), new THREE
 const PAVING = new THREE.Color(0x9f9b93);
 const FOOTPATH = new THREE.Color(0x9d9b95);
 const ASPHALT = new THREE.Color(0x35383d);
+/**
+ * Under a crown at full detail (near, where the trees are drawn) the ground
+ * is darkened by up to this much: their shade. Coarse ground (far, where
+ * they aren't) is tinted towards CANOPY instead, by up to FAR_CANOPY, so
+ * parks and tree-lined streets still read as green from the air.
+ */
+const SHADE = 0.42;
+const CANOPY = new THREE.Color(0x3b6230);
+const FAR_CANOPY = 0.9;
+const FAR_BOOST = 1.6;
 
 /**
  * Vertices (chunk frame) and triangle lists. `far` draws the whole chunk
@@ -72,6 +82,11 @@ export interface TerrainParts {
    * their edges.
    */
   colPlain: Uint8Array;
+  /**
+   * Plain colours with canopy drawn as shade rather than as canopy, for
+   * when the trees themselves are drawn over it.
+   */
+  colShaded: Uint8Array;
   count: number;
   far: Uint32Array;
   tiles?: { ground: [Uint32Array, Uint32Array]; skirts: [Uint32Array[], Uint32Array[]]; flat: boolean }[];
@@ -85,13 +100,14 @@ class Verts {
   nor: number[] = [];
   col: number[] = [];
   plain: number[] = [];
+  shaded: number[] = [];
   get count() {
     return this.pos.length / 3;
   }
-  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color): number {
+  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color, shaded: THREE.Color): number {
     this.pos.push(x, y, z);
     this.nor.push(Math.round(n.x * 127), Math.round(n.y * 127), Math.round(n.z * 127));
-    for (const [list, k] of [[this.col, c], [this.plain, plain]] as const) {
+    for (const [list, k] of [[this.col, c], [this.plain, plain], [this.shaded, shaded]] as const) {
       list.push(Math.round(Math.min(1, k.r) * 255), Math.round(Math.min(1, k.g) * 255), Math.round(Math.min(1, k.b) * 255));
     }
     return this.count - 1;
@@ -102,6 +118,7 @@ class Verts {
     this.nor.push(this.nor[k * 3], this.nor[k * 3 + 1], this.nor[k * 3 + 2]);
     this.col.push(...[0, 1, 2].map((a) => Math.round(this.col[k * 3 + a] * shade)));
     this.plain.push(...[0, 1, 2].map((a) => Math.round(this.plain[k * 3 + a] * shade)));
+    this.shaded.push(...[0, 1, 2].map((a) => Math.round(this.shaded[k * 3 + a] * shade)));
     return this.count - 1;
   }
 }
@@ -158,14 +175,20 @@ export function buildTerrainParts(
   const normal = new THREE.Vector3();
   const colour = new THREE.Color();
   const plain = new THREE.Color();
+  const shaded = new THREE.Color();
   const lattice = (r: number, c: number, y: number, lodStep: number) => {
     // Central differences at 2 m, reaching into the apron at the edges, so
     // both chunks on a seam compute identical normals and colours there.
     normal.set(-(h(r, c + 1) - h(r, c - 1)) / (2 * cell), 1, -(h(r + 1, c) - h(r - 1, c)) / (2 * cell)).normalize();
     vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, colour);
-    if (lodStep > 1) vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, plain, true);
-    else plain.copy(colour);
-    return v.add(c * cell, y, r * cell, normal, colour, plain);
+    if (lodStep > 1) {
+      vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, plain, true);
+      vertexColour(origin.x + c * cell, origin.z + r * cell, h(r, c), normal.y, seaShelf, ground, r, c, lodStep, shaded, true, true);
+    } else {
+      plain.copy(colour);
+      shaded.copy(colour);
+    }
+    return v.add(c * cell, y, r * cell, normal, colour, plain, shaded);
   };
 
   // Coarse grid, sunk under the drawn ground.
@@ -237,6 +260,7 @@ export function buildTerrainParts(
     nor: Int8Array.from(v.nor),
     col: Uint8Array.from(v.col),
     colPlain: Uint8Array.from(v.plain),
+    colShaded: Uint8Array.from(v.shaded),
     count: v.count,
     far: Uint32Array.from(far),
     tiles,
@@ -314,7 +338,7 @@ const _one = new THREE.Color();
  */
 function vertexColour(
   x: number, z: number, y: number, ny: number, seaShelf: number,
-  ground: GroundSamples | undefined, r: number, c: number, step: number, out: THREE.Color, plain = false,
+  ground: GroundSamples | undefined, r: number, c: number, step: number, out: THREE.Color, plain = false, shade = false,
 ): THREE.Color {
   if (!ground) return groundColour(x, z, y, ny, seaShelf, SURFACE_ID.grass, out);
   const at = (rr: number, cc: number) => ground.classes[(rr + GROUND_APRON) * ground.n + cc + GROUND_APRON];
@@ -327,12 +351,16 @@ function vertexColour(
     if (k >= SURFACE_ID.path) {
       for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) k = Math.min(k, at(r + dr, c + dc));
     }
-    return groundColour(x, z, y, ny, seaShelf, k, out);
+    groundColour(x, z, y, ny, seaShelf, k, out);
+    const shade = ground.canopy[(r + GROUND_APRON) * ground.n + c + GROUND_APRON];
+    return shade ? out.multiplyScalar(1 - (SHADE * shade) / 255) : out;
   }
   const half = Math.min(Math.floor(step / 2), GROUND_APRON);
   const counts = new Map<number, number>();
+  let canopy = 0;
   for (let dr = -half; dr <= half; dr++) {
     for (let dc = -half; dc <= half; dc++) {
+      canopy += ground.canopy[(r + dr + GROUND_APRON) * ground.n + c + dc + GROUND_APRON];
       // Plain: streets and park paths left out, for when the road strips are drawn over it.
       let k = at(r + dr, c + dc);
       if (plain && k >= SURFACE_ID.paving) k = SURFACE_ID.urban;
@@ -340,16 +368,24 @@ function vertexColour(
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
   }
-  if (counts.size === 1) return groundColour(x, z, y, ny, seaShelf, counts.keys().next().value!, out);
   const total = (2 * half + 1) ** 2;
-  _sum.setRGB(0, 0, 0);
-  for (const [k, n] of counts) {
-    groundColour(x, z, y, ny, seaShelf, k, _one);
-    _sum.r += (_one.r * n) / total;
-    _sum.g += (_one.g * n) / total;
-    _sum.b += (_one.b * n) / total;
+  if (counts.size === 1) groundColour(x, z, y, ny, seaShelf, counts.keys().next().value!, out);
+  else {
+    _sum.setRGB(0, 0, 0);
+    for (const [k, n] of counts) {
+      groundColour(x, z, y, ny, seaShelf, k, _one);
+      _sum.r += (_one.r * n) / total;
+      _sum.g += (_one.g * n) / total;
+      _sum.b += (_one.b * n) / total;
+    }
+    out.copy(_sum);
   }
-  return out.copy(_sum);
+  if (!canopy) return out;
+  if (shade) return out.multiplyScalar(1 - (SHADE * canopy) / (255 * total));
+  // Crowns lumpier than the ground's own patches, so a stand of trees doesn't read as lawn.
+  _one.copy(CANOPY).multiplyScalar(0.8 + 0.4 * valueNoise(x / 9, z / 9));
+  // A 10 m vertex averages 25 samples, which thins small crowns to nothing: boost the cover.
+  return out.lerp(_one, FAR_CANOPY * Math.min(1, (FAR_BOOST * canopy) / (255 * total)));
 }
 
 /**

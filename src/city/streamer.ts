@@ -50,9 +50,10 @@ const BUILDING_DETAIL = 250;
 /** ...and the finest (cornices and string courses, rooftop plant, eaves' soffits) only this close. */
 const BUILDING_FINE = 120;
 /**
- * Trees are drawn tile by tile (see BuildingMesh.groups) only this close,
- * m: there are thousands, and a whole chunk's worth would cost a street
- * view thousands of triangles for trees a few pixels across.
+ * Trees and park edges are drawn tile by tile (see BuildingMesh.groups)
+ * only this close, m: there are thousands, and a whole chunk's worth would
+ * cost a street view thousands of triangles for trees a few pixels across.
+ * Beyond it the ground draws the trees' canopy instead (TerrainParts.colShaded).
  */
 const TREE_DRAW = 200;
 /** A chunk asked for explicitly (teleport, debug probe) is kept this long even if out of range, ms. */
@@ -133,8 +134,8 @@ export class ChunkStreamer {
     return chunk ? chunk.heightAt(x, z) : NaN;
   }
 
-  /** Surface class under a point (nearest 2 m ground sample), null if that chunk isn't loaded. */
-  surfaceAt(x: number, z: number): Surface | null {
+  /** The ground samples and index of the nearest 2 m ground sample to a point, null if that chunk isn't loaded. */
+  private groundSample(x: number, z: number): { g: GroundSamples; k: number } | null {
     const slot = this.slotAt(x, z);
     const g = slot?.ground;
     if (!slot?.chunk || !g) return null;
@@ -142,7 +143,19 @@ export class ChunkStreamer {
     const cell = this.manifest.terrain.cellSize;
     const c = Math.round((x - o.x) / cell) + GROUND_APRON;
     const r = Math.round((z - o.z) / cell) + GROUND_APRON;
-    return SURFACES[g.classes[r * g.n + c]] ?? null;
+    return { g, k: r * g.n + c };
+  }
+
+  /** Surface class under a point (nearest 2 m ground sample), null if that chunk isn't loaded. */
+  surfaceAt(x: number, z: number): Surface | null {
+    const s = this.groundSample(x, z);
+    return s ? (SURFACES[s.g.classes[s.k]] ?? null) : null;
+  }
+
+  /** Tree canopy over a point, 0 (open sky) to 1 (under a crown's middle), null if that chunk isn't loaded. */
+  canopyAt(x: number, z: number): number | null {
+    const s = this.groundSample(x, z);
+    return s ? s.g.canopy[s.k] / 255 : null;
   }
 
   /**

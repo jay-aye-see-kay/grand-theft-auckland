@@ -26,6 +26,8 @@ export class ChunkMesh {
   private selection = NaN;
   /** Which tile groups are drawn, as a string of 0s and 1s. */
   private groupKey = '';
+  /** The terrain colour set in the buffer (see TerrainParts). */
+  private colours: Uint8Array | null = null;
 
   constructor(name: string, cx: number, cz: number, half: number, material: THREE.Material, roads?: BuildingChunk, buildings?: BuildingChunk) {
     this.roads = roads;
@@ -114,6 +116,7 @@ export class ChunkMesh {
     this.mesh.geometry.dispose();
     this.mesh.geometry = geo;
     this.selection = NaN;
+    this.colours = null;
   }
 
   /** Tiles per side of the buildings' grouped detail (trees), 0 if none. */
@@ -143,11 +146,13 @@ export class ChunkMesh {
     const groupKey = groups ? groups.join('') : '';
     if (selection === this.selection && groupKey === this.groupKey) return;
     this.groupKey = groupKey;
-    const hadRoads = ((this.selection >= 0 ? this.selection : -1 - this.selection) & 1) === 1;
-    if (Number.isNaN(this.selection) || hadRoads !== roads) {
-      // The coarse ground shows the streets only when the road strips aren't drawn.
+    // The coarse ground shows the streets only when the road strips aren't
+    // drawn, and the tree canopy only when the trees aren't (else their shade).
+    const colours = groups ? parts.colShaded : roads ? parts.colPlain : parts.col;
+    if (colours !== this.colours) {
+      this.colours = colours;
       const colour = this.mesh.geometry.getAttribute('color') as THREE.BufferAttribute;
-      (colour.array as Uint8Array).set(roads ? parts.colPlain : parts.col, this.terrainBase * 3);
+      (colour.array as Uint8Array).set(colours, this.terrainBase * 3);
       colour.needsUpdate = true;
     }
     this.selection = selection;

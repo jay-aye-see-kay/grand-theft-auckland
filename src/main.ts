@@ -799,6 +799,7 @@ async function main() {
           ray: hit ? 1000 - hit.timeOfImpact : null,
           top: top ? 1000 - top.timeOfImpact : null,
           surface: map.surfaceAt?.(x, z) ?? null,
+          canopy: map.canopyAt?.(x, z) ?? null,
         };
       },
       /** Put the player (on foot) at (x, z) on the ground, facing `heading`, with the camera behind. */

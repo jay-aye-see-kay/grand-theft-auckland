@@ -23,6 +23,7 @@ import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
 import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
+import { buildBarriers } from './barriers.ts';
 import { emitTrees, findTrees, treeTris } from './trees.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
@@ -105,6 +106,25 @@ emitTrees(forest.trees, grid, terrainSampler, (x, z) => {
   if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
   return mb;
 });
+ground.paintCanopy(forest.trees);
+const barriers = buildBarriers(data.osm, {
+  grid,
+  terrain: terrainSampler,
+  ground,
+  covers: blds.covers,
+  chunkAt: (x, z) => {
+    const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+    const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+    if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+    let mb = blds.chunks.get(`${i},${j}`);
+    if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
+    return mb;
+  },
+});
+console.log(
+  `Park edges: ${Object.entries(barriers.metres).map(([k, v]) => `${k} ${(v / 1000).toFixed(2)} km`).join(', ')}, ` +
+    `${barriers.tris.drawn} triangles (${barriers.tris.solid} solid)`,
+);
 console.log(
   `Trees: ${forest.trees.length} (${Object.entries(forest.counts).map(([k, v]) => `${v} ${k}`).join(', ')}), ` +
     `${treeTris.crowns} crown + ${treeTris.trunks} trunk triangles`,
