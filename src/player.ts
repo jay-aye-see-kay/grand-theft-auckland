@@ -80,8 +80,8 @@ export class Player {
     this.controller.setApplyImpulsesToDynamicBodies(true);
     this.controller.setCharacterMass(80);
 
+    // The model's origin is at its feet, and so is this.object (see syncPose).
     const model = buildPerson();
-    model.root.position.y = -CENTRE_Y;
     this.object.add(model.root);
     this.limbs = model;
 
@@ -220,6 +220,23 @@ export class Player {
     this.grounded = false;
     this.syncPose();
     this.prevPos.copy(this.currPos);
+  }
+
+  /**
+   * Someone else's player (multiplayer): move the capsule to where they are
+   * for the next step, instead of walking it under our own controls.
+   */
+  follow(x: number, y: number, z: number, heading: number, speed: number, grounded: boolean): void {
+    this.body.setNextKinematicTranslation({ x, y: y + CENTRE_Y, z });
+    this.heading = heading;
+    this.speed = speed;
+    this.grounded = grounded;
+  }
+
+  /** Remove from the physics world (someone else's player who left). */
+  dispose(world: RAPIER.World): void {
+    world.removeCharacterController(this.controller);
+    world.removeRigidBody(this.body);
   }
 
   /** Hide and disable collisions while driving. */

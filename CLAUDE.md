@@ -38,12 +38,18 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
 - `src/maps/`: `auckland.ts` (default) and `test-town.ts` (`?map=test`)
 - `src/missions/`: one file per mission (`defineMission`, picked up by `import.meta.glob`).
   `runtime/`: `mission.ts` (the script API), `runner.ts` (runs scripts in game time, solo
-  for now, shaped for a room host per #27), `places.ts` (the gazetteer: `places.json` ids,
+  solo even in a room for now; running them on the room's host is #27), `places.ts` (the gazetteer: `places.json` ids,
   typechecked, plus `nearest`/`random` by kind), `markers.ts` (start rings, goal beam),
   `hud.ts` (banner, timer, arrow). To add a mission: pick places from
   `public/city/cbd/places.json` or `__game.places('bar', { near: [x, z], within: 200 })`
   (pin a nicer id or name with `place` in the overrides), write the file, and play it
   through by teleporting in `scripts/smoke/areas/missions.mjs`.
+- `src/net/`: rooms (#26) over PeerJS (its free broker and TURN; `?turn=off` for STUN only). `room.ts`
+  (host/guest star: the host relays, poses at 15 Hz, host leaving dissolves the room), `remotes.ts` (others
+  drawn ~0.12 s behind, interpolated; a parked car someone else drives turns kinematic and follows them),
+  `panel.ts` (👥 / P: code, link, names, route and ping per player), `transport.ts` (PeerJS, or a
+  BroadcastChannel between tabs with `?net=local`, which `scripts/smoke/areas/rooms.mjs` uses).
+  Join with `?room=CODE`. `?debug`: `__game.room()`, `host()`, `join(code)`, `leaveRoom()`, `remoteCars()`.
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),
   terrain, buildings, facade atlas, skyline LOD, water
 - `src/city/road-graph.ts`: the drivable network (`roadgraph.json`) for routing, traffic and police:
