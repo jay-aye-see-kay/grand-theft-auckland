@@ -23,6 +23,7 @@ import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
 import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
+import { emitTrees, findTrees, treeTris } from './trees.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
 import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, markCapsule, markLattice, SAMPLES, SEA_SHELF, smoothCorridors, TerrainSampler, WATER_LEVEL } from './terrain.ts';
@@ -94,6 +95,20 @@ const walls = buildSeawalls(data.dem, grid, terrainSampler, (x, z) => {
 });
 console.log(`Sea walls: ${walls.km.toFixed(1)} km along ${walls.lines} coastlines`);
 const roads = buildRoads(grid, terrainSampler, ground, network, blds.covers, paths);
+// Trees after the roads have painted the ground, so mapped trees in a carriageway are left out.
+const forest = findTrees(data, { grid, ground, covers: blds.covers, deckAt: network.deckAt });
+emitTrees(forest.trees, grid, terrainSampler, (x, z) => {
+  const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+  const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+  if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+  let mb = blds.chunks.get(`${i},${j}`);
+  if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
+  return mb;
+});
+console.log(
+  `Trees: ${forest.trees.length} (${Object.entries(forest.counts).map(([k, v]) => `${v} ${k}`).join(', ')}), ` +
+    `${treeTris.crowns} crown + ${treeTris.trunks} trunk triangles`,
+);
 console.log(
   `Roads: ${roads.counts.ways} ways (${roads.counts.bridges} bridges), ` +
     Object.entries(roads.counts.km).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)} km`).join(', '),

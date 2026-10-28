@@ -179,6 +179,10 @@ export function decodeTerrain(bytes: Uint8Array): TerrainSamples {
 //      u8[n]   atlas tile (see facades.ts)
 //      u32     (flag bit 3) render indices before the near-only detail
 //      u32     (flag bit 4) render indices before the fine detail (nearer still)
+//      u16     (flag bit 5) side: the chunk is split into side x side tiles, and
+//      u32[side*side+1] the render indices from here on are grouped by tile
+//              (row-major, rows along z), each drawn only near the player:
+//              group t runs from offset t to offset t+1 (trees)
 //      u16|u32 render indices, then collider indices (zigzagged deltas)
 // Delta coding keeps neighbouring vertices of a building tiny for deflate.
 const BUILDINGS_MAGIC = 0x42415447; // 'GTAB'
@@ -207,6 +211,12 @@ export interface BuildingMesh {
   nearOnly?: number;
   /** Render indices from here on are fine detail (cornices, rooftop plant, eaves) drawn only very near. */
   fineFrom?: number;
+  /**
+   * Render indices at the end grouped by tile (side x side over the chunk,
+   * row-major along z), each drawn only when its tile is near the player:
+   * group t is indices from[t] to from[t + 1]; from[0] ends the rest.
+   */
+  groups?: { side: number; from: Uint32Array };
 }
 
 const zig = (d: number) => ((d << 1) ^ (d >> 31)) >>> 0;
@@ -220,12 +230,14 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
   const detailed = !!m.detail;
   const split = m.nearOnly !== undefined;
   const fine = m.fineFrom !== undefined;
-  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (m.indices.length + m.colliderIndices.length) * isz + (split ? 4 : 0) + (fine ? 4 : 0);
+  const grouped = !!m.groups;
+  const size = BUILDINGS_HEADER + n * 6 + n * 6 + (layered ? n : 0) + (detailed ? n * 6 : 0) + (m.indices.length + m.colliderIndices.length) * isz +
+    (split ? 4 : 0) + (fine ? 4 : 0) + (grouped ? 2 + m.groups!.from.length * 4 : 0);
   const out = new Uint8Array(size);
   const view = new DataView(out.buffer);
   view.setUint32(0, BUILDINGS_MAGIC, true);
   view.setUint16(4, BUILDINGS_VERSION, true);
-  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0) | (detailed ? 4 : 0) | (split ? 8 : 0) | (fine ? 16 : 0), true);
+  view.setUint16(6, (wide ? 1 : 0) | (layered ? 2 : 0) | (detailed ? 4 : 0) | (split ? 8 : 0) | (fine ? 16 : 0) | (grouped ? 32 : 0), true);
   view.setInt32(8, m.baseCm, true);
   view.setUint32(12, n, true);
   view.setUint32(16, m.indices.length, true);
@@ -277,8 +289,24 @@ export function encodeBuildings(m: BuildingMesh): Uint8Array {
       prev = v;
     }
   }
-  if (split) view.setUint32(o, m.nearOnly!, true);
-  if (fine) view.setUint32(o + (split ? 4 : 0), m.fineFrom!, true);
+  if (split) {
+    view.setUint32(o, m.nearOnly!, true);
+    o += 4;
+  }
+  if (fine) {
+    view.setUint32(o, m.fineFrom!, true);
+    o += 4;
+  }
+  if (grouped) {
+    const { side, from } = m.groups!;
+    if (from.length !== side * side + 1) throw new Error('encodeBuildings: one offset per group, plus the end');
+    view.setUint16(o, side, true);
+    o += 2;
+    for (const v of from) {
+      view.setUint32(o, v, true);
+      o += 4;
+    }
+  }
   return out;
 }
 
@@ -292,6 +320,7 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
   const detailed = (flags & 4) === 4;
   const split = (flags & 8) === 8;
   const fine = (flags & 16) === 16;
+  const grouped = (flags & 32) === 32;
   const baseCm = view.getInt32(8, true);
   const n = view.getUint32(12, true);
   const ni = view.getUint32(16, true);
@@ -345,9 +374,25 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
       o += isz;
     }
   }
-  const nearOnly = split ? view.getUint32(o, true) : undefined;
-  const fineFrom = fine ? view.getUint32(o + (split ? 4 : 0), true) : undefined;
-  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers, detail, nearOnly, fineFrom };
+  let nearOnly: number | undefined;
+  let fineFrom: number | undefined;
+  let groups: BuildingMesh['groups'];
+  if (split) {
+    nearOnly = view.getUint32(o, true);
+    o += 4;
+  }
+  if (fine) {
+    fineFrom = view.getUint32(o, true);
+    o += 4;
+  }
+  if (grouped) {
+    const side = view.getUint16(o, true);
+    o += 2;
+    const from = new Uint32Array(side * side + 1);
+    for (let t = 0; t < from.length; t++, o += 4) from[t] = view.getUint32(o, true);
+    groups = { side, from };
+  }
+  return { xCm: planes[0], zCm: planes[1], yCm: planes[2], baseCm, normals, colours, indices: lists[0], colliderIndices: lists[1], layers, detail, nearOnly, fineFrom, groups };
 }
 
 // Ground chunk file (land use under the terrain), before deflate:

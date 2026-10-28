@@ -28,6 +28,10 @@ export class BuildingChunk {
   readonly nearOnly: number;
   /** Indices from here on are fine detail, drawn nearer still (cornices, rooftop plant, eaves). */
   readonly fineFrom: number;
+  /** Indices from here on are grouped by tile (trees), each drawn only near the player; see BuildingMesh.groups. */
+  readonly groups: BuildingMesh['groups'];
+  /** Where the grouped indices start (the end of the rest). */
+  readonly groupsFrom: number;
   private collider: RAPIER.Collider | null = null;
   private readonly vertices: Float32Array;
   private readonly colliderIndices: Uint32Array;
@@ -48,8 +52,10 @@ export class BuildingChunk {
     this.layers = data.layers;
     this.detail = data.detail;
     this.indices = data.indices;
-    this.nearOnly = data.nearOnly ?? data.indices.length;
-    this.fineFrom = data.fineFrom ?? data.indices.length;
+    this.groups = data.groups;
+    this.groupsFrom = data.groups ? data.groups.from[0] : data.indices.length;
+    this.nearOnly = data.nearOnly ?? this.groupsFrom;
+    this.fineFrom = data.fineFrom ?? this.groupsFrom;
 
     // The collider lives on the shared fixed body, so it needs world positions.
     this.vertices = new Float32Array(pos);

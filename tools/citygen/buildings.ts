@@ -687,6 +687,10 @@ export class MeshBuilder {
   /** The finest detail, drawn nearer still (cornices, rooftop plant, eaves): after extras in the file. */
   readonly fineIdx: number[] = [];
   readonly colliderIdx: number[] = [];
+  /** Render triangles grouped by tile (trees; see BuildingMesh.groups), drawn only near the player: after fineIdx in the file. */
+  readonly groups = new Map<number, number[]>();
+  /** Tiles per chunk side for `groups`. */
+  groupSide = 0;
   /** Per-vertex draw layer (roads only; buildings leave it all 0 and the file omits it). */
   readonly lay: number[] = [];
   /** Per-vertex surface detail (see facades.ts): atlas tile, UVs in repeats, baked light. */
@@ -702,6 +706,19 @@ export class MeshBuilder {
   detail(emit: () => void, fine = false) {
     const core = this.idx;
     this.idx = fine ? this.fineIdx : this.extras;
+    try {
+      emit();
+    } finally {
+      this.idx = core;
+    }
+  }
+
+  /** Runs `emit` with its triangles going to tile t's group (of `side` x `side` over the chunk). */
+  group(t: number, side: number, emit: () => void) {
+    if (this.groupSide && this.groupSide !== side) throw new Error('MeshBuilder.group: one tiling per chunk');
+    this.groupSide = side;
+    const core = this.idx;
+    this.idx = this.groups.get(t) ?? this.groups.set(t, []).get(t)!;
     try {
       emit();
     } finally {
@@ -1233,10 +1250,22 @@ export class MeshBuilder {
           tile: Uint8Array.from(this.tile),
         }
       : undefined;
-    const indices = Uint32Array.from([...this.idx, ...this.extras, ...this.fineIdx]);
+    const list = [...this.idx, ...this.extras, ...this.fineIdx];
     const nearOnly = this.extras.length || this.fineIdx.length ? { nearOnly: this.idx.length } : {};
     const fine = this.fineIdx.length ? { fineFrom: this.idx.length + this.extras.length } : {};
-    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices, colliderIndices: Uint32Array.from(this.colliderIdx), layers, detail, ...nearOnly, ...fine };
+    let groups: BuildingMesh['groups'];
+    if (this.groups.size) {
+      const side = this.groupSide;
+      const from = new Uint32Array(side * side + 1);
+      for (let t = 0; t < side * side; t++) {
+        from[t] = list.length;
+        list.push(...(this.groups.get(t) ?? []));
+      }
+      from[side * side] = list.length;
+      groups = { side, from };
+    }
+    const indices = Uint32Array.from(list);
+    return { xCm, zCm, yCm, baseCm: base, normals, colours, indices, colliderIndices: Uint32Array.from(this.colliderIdx), layers, detail, ...nearOnly, ...fine, groups };
   }
 }
 

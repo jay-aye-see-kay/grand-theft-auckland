@@ -128,7 +128,7 @@
     {"i":5,"j":7,"minY":24.18,"maxY":65.11,"files":{"terrain":"terrain/5_7.bin","buildings":"buildings/5_7.bin","roads":"roads/5_7.bin","ground":"ground/5_7.bin"}},
     {"i":6,"j":7,"minY":8.15,"maxY":43.31,"files":{"terrain":"terrain/6_7.bin","buildings":"buildings/6_7.bin","roads":"roads/6_7.bin","ground":"ground/6_7.bin"}},
     {"i":7,"j":7,"minY":5.75,"maxY":32.42,"files":{"terrain":"terrain/7_7.bin","buildings":"buildings/7_7.bin","roads":"roads/7_7.bin","ground":"ground/7_7.bin"}},
-    {"i":8,"j":7,"minY":7.3,"maxY":45.26,"files":{"terrain":"terrain/8_7.bin","roads":"roads/8_7.bin","ground":"ground/8_7.bin"}},
+    {"i":8,"j":7,"minY":7.3,"maxY":45.26,"files":{"terrain":"terrain/8_7.bin","buildings":"buildings/8_7.bin","roads":"roads/8_7.bin","ground":"ground/8_7.bin"}},
     {"i":0,"j":8,"minY":29.13,"maxY":70.97,"files":{"terrain":"terrain/0_8.bin","buildings":"buildings/0_8.bin","roads":"roads/0_8.bin","ground":"ground/0_8.bin"}},
     {"i":1,"j":8,"minY":41.95,"maxY":68.73,"files":{"terrain":"terrain/1_8.bin","buildings":"buildings/1_8.bin","roads":"roads/1_8.bin","ground":"ground/1_8.bin"}},
     {"i":2,"j":8,"minY":52.14,"maxY":66.84,"files":{"terrain":"terrain/2_8.bin","buildings":"buildings/2_8.bin","roads":"roads/2_8.bin","ground":"ground/2_8.bin"}},

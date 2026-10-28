@@ -41,6 +41,7 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
   deterministic). Hand fixes in `overrides/cbd.json` keyed by OSM id (see `overrides/README.md`).
   Buildings: `roofs.ts` (pitched roofs fitted to the DSM), `rooftops.ts` (towers on podiums,
   rooftop plant), `eras.ts` (facade family, colours and cornices per architectural era).
+  Parks: `ground.ts` (land use, park paths), `trees.ts` (OSM trees plus LiDAR treetops on green ground).
 - `scripts/smoke/` (Playwright: `run.mjs`, one file per area), `scripts/sim-car.ts`
 
 ## Conventions
@@ -72,7 +73,9 @@ Street view is ~140k / ~45 today. Each chunk is one draw call: put new static
 geometry into `ChunkMesh` (vertex colours, shared materials/atlas), not new
 meshes. Small building detail goes in `MeshBuilder.detail()`: near-only
 (within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves).
-Bake multi-part models, instance repeated props, LOD by distance, blob
+Trees are grouped by 50 m tile in the building chunks
+(`MeshBuilder.group`) and drawn only within `TREE_DRAW` (200 m). Bake
+multi-part models, instance repeated props, LOD by distance, blob
 shadows only. 2 m ground within 90 m, 10 m beyond; colliders within ~300 m.
 
 ## Gotchas
