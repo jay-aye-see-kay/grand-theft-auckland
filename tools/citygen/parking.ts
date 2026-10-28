@@ -45,10 +45,31 @@ type Request = {
   paint: number;
 };
 
-/** The player's purple Corolla comes first; the rest are scattered round the CBD. */
+/**
+ * The player's purple Corolla comes first, on Queen St at Aotea Square;
+ * then a dozen round the square's two blocks, and the rest scattered
+ * round the CBD. Several on one way must be asked for ~8 m or more apart:
+ * spots aren't checked against each other.
+ */
 const REQUESTS: Request[] = [
+  // Queen St, northbound on the square's side, by the Waharoa.
+  { way: 1054950663, near: [-385, 880], paint: 0x7a3db8 },
+  // Round Aotea Square: Queen St both sides, from the Town Hall down past the old Metro Centre.
+  { way: 1054950663, near: [-392, 899], paint: 0xe9e9e4 },
+  { way: 1054950663, near: [-397, 913], paint: 0x2b4f7e },
+  { way: 1054950663, near: [-381, 882], reverse: true, paint: 0x9a9da1 },
+  { way: 1054950663, near: [-388, 901], reverse: true, paint: 0xd8c25a },
+  { way: 1192548092, near: [-374, 857], paint: 0x1b1b1d },
+  { way: 1192548092, near: [-369, 842], paint: 0x8c1d1d },
+  { way: 1192548092, near: [-367, 849], reverse: true, paint: 0x5d7a4a },
+  { way: 117903495, near: [-358, 808], paint: 0xc9c2b4 },
+  { way: 117903495, near: [-350, 790], reverse: true, paint: 0x3a6ea5 },
+  // Wakefield St round the corner, Airedale St across from the Town Hall, and Greys Ave behind it.
+  { way: 8138608, near: [-360, 891], paint: 0x6b4a8e },
+  { way: 667087756, near: [-403, 969], paint: 0xb7b9bb },
+  { way: 627890716, near: [-556, 1015], reverse: true, paint: 0x7b2e2a },
   // Galway St, on the plaza side outside Britomart station (Chief Post Office), facing east.
-  { way: 926609653, near: [-20, 20], reverse: true, paint: 0x7a3db8 },
+  { way: 926609653, near: [-20, 20], reverse: true, paint: 0x2f6d6a },
   // Commerce St, round the corner from Britomart.
   { way: 149508232, near: [8, 52], paint: 0xe9e9e4 },
   // Lower Queen St, just up from Customs St.
@@ -205,19 +226,19 @@ export function buildParking(data: CityData, terrain = new TerrainSampler(data.d
   }
 
   // On foot on the kerb side of the purple Corolla, level with its front
-  // door, looking along the street past the bonnet.
+  // door, looking across the square.
   const p = cars[0];
   const fx = Math.cos(p.heading);
   const fz = -Math.sin(p.heading);
   const sx = p.x + fz * 2.6 + fx * 0.6;
   const sz = p.z - fx * 2.6 + fz * 0.6;
-  const spawn = { x: r2(sx), y: r2(terrain.heightAt(sx, sz)), z: r2(sz), heading: r4(SPAWN_HEADING) };
+  const spawn = { x: r2(sx), y: r2(terrain.heightAt(sx, sz)), z: r2(sz), heading: r4(Math.atan2(-(SPAWN_LOOK.z - sz), SPAWN_LOOK.x - sx)) };
   if (inBuilding(sx, sz)) throw new Error(`parking: spawn (${sx}, ${sz}) is inside ${inBuilding(sx, sz)!.key}`);
   return { spawn, cars };
 }
 
-/** Which way the player faces at the start: west-north-west, at Britomart's Chief Post Office. */
-const SPAWN_HEADING = Math.atan2(0.35, -1);
+/** What the player looks at from the start: the Town Hall's clock tower, across the corner of the square. */
+const SPAWN_LOOK: Local = { x: -414.7, z: 908.8 };
 
 export function writeParking(parking: Parking, path: string) {
   const lines = parking.cars.map((c) => `    ${JSON.stringify(c)}`);

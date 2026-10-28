@@ -4,7 +4,7 @@ A GTA III–flavoured open-world driving game set in Auckland, running in the
 browser on phones and desktop. Three.js + Rapier physics + TypeScript + Vite.
 
 Drive and walk the real Auckland CBD, generated from OpenStreetMap and LINZ
-LiDAR. Spawn outside Britomart next to your purple '95. Plan:
+LiDAR. Spawn on Queen St at Aotea Square next to your purple '95. Plan:
 [docs/BRIEF.md](docs/BRIEF.md) and [issues](https://github.com/jay-aye-see-kay/grand-theft-auckland/issues).
 
 ## Play

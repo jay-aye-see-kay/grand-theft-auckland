@@ -24,7 +24,9 @@ export default {
       await step(n);
       await gStep(n);
     };
-    const guestName = (await g('room')).members[0].name;
+    // Members aren't listed in any fixed order: find the guest by its own id.
+    const groom = await g('room');
+    const guestName = groom.members.find((x) => x.id === groom.myId).name;
 
     // Milk run: the host on the marker waits for the guest, then it starts for both.
     const dairy = await place('k-road-dairy');
@@ -49,7 +51,7 @@ export default {
     await gStep(30);
     m = await missions();
     gm = await gMissions();
-    check(m.last?.id === 'milk-run' && m.last.result === 'passed' && m.last.message.startsWith(guestName), `the guest gets to Nan first: "${m.last?.message}"`, loose);
+    check(m.last?.id === 'milk-run' && m.last.result === 'passed' && m.last.message.startsWith(guestName), `the guest gets to Nan first: "${m.last?.message}" (the guest is ${guestName})`, loose);
     check(gm.last?.result === 'passed' && gm.banner?.kind === 'passed', `and the guest sees Mission passed ("${gm.last?.message}")`, loose);
 
     // Last Orders: two or more; the guest starts it, one to each bar, then both back.

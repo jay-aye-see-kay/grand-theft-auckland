@@ -19,13 +19,13 @@ export default {
     check(Math.abs(britomart - 3.6) < 0.4, `Britomart ground ${britomart.toFixed(2)} m (expect ~3.6)`);
     check(Math.abs(s.player[1] - s.ground) < 0.3, `spawns at ground height (feet ${s.player[1].toFixed(2)} m, ground ${s.ground.toFixed(2)})`);
 
-    // Spawn: outside Britomart (the Chief Post Office), in the open (no roof
+    // Spawn: on Queen St on the Aotea Square side, in the open (no roof
     // overhead) and off the carriageway, with the purple Corolla parked
     // beside it at the left kerb.
     const sp = await game('probe', s.player[0], s.player[2]);
     const open = sp.top === null || sp.top - sp.ground < 0.5;
-    check(open && sp.surface !== 'road' && Math.hypot(s.player[0] + 40, s.player[2]) < 60,
-      `spawns in the open outside Britomart (${s.player[0].toFixed(0)}, ${s.player[2].toFixed(0)}, ${sp.surface}, roof ${sp.top === null ? 'none' : (sp.top - sp.ground).toFixed(1) + ' m'})`);
+    check(open && sp.surface !== 'road' && Math.hypot(s.player[0] + 395, s.player[2] - 880) < 30,
+      `spawns in the open on Queen St at Aotea Square (${s.player[0].toFixed(0)}, ${s.player[2].toFixed(0)}, ${sp.surface}, roof ${sp.top === null ? 'none' : (sp.top - sp.ground).toFixed(1) + ' m'})`);
     s = await state();
     check(dist(s.player, s.cars[0]) < 3.6, `purple Corolla parked beside the spawn (${dist(s.player, s.cars[0]).toFixed(1)} m)`);
 

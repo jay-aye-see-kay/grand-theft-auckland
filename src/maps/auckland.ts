@@ -78,7 +78,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
     skyline?.update((key) => terrain.drawn(key));
   };
 
-  // On foot outside Britomart, next to the purple Corolla. Cars elsewhere
+  // On foot on Queen St at Aotea Square, next to the purple Corolla. Cars elsewhere
   // stay frozen (see main.ts) until the ground under them streams in.
   const s0 = parked.spawn;
   await terrain.ensureAround(s0.x, s0.z, PRELOAD_RADIUS);
@@ -122,7 +122,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
     nearest: (x, z, maxDist, ok) => terrain.nearest(x, z, maxDist, ok),
     // Performance budgets (CLAUDE.md) are measured from these three views.
     views: {
-      // Street level at the spawn outside Britomart, looking west along Customs St.
+      // Street level outside Britomart (where the game used to start), looking west along Customs St.
       spawn: { from: [-8, 2.5, 22], at: [-120, 3, 12] },
       // Halfway up Queen St, looking uphill towards Wellesley St.
       'queen-st': { from: [-170, 2.5, 220], at: [-245, 6, 494] },

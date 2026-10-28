@@ -44,16 +44,21 @@ export default {
     check(bad.length === 0, `all ${used.length} mission places are on open ground${bad.length ? ': ' + bad.join(', ') : ''}`);
     await game('reset');
 
-    // At the spawn: the nearest mission's marker is right in front of you.
+    // At the spawn on Queen St, the Sky Tower sprint up the road is the nearest mission.
     let m = await missions();
     const solo = m.missions.filter((x) => x.id !== 'last-orders');
     check(solo.length >= 3 && m.starts.length === solo.length, `${m.missions.length} missions, a start marker for each but Last Orders (two or more) when alone: ${m.starts.map((x) => x.id).join(', ')}`);
-    check(m.nearest?.id === 'pavlova' && !m.active, `nearest to the spawn is ${m.nearest?.id}, nothing running`);
-    check(/Handle With Care/.test(m.hint), `the hint at the spawn names it ("${m.hint}")`);
-    await shot('20-mission-marker-at-spawn');
+    check(m.nearest?.id === 'sky-tower-sprint' && !m.active, `nearest to the spawn is ${m.nearest?.id}, nothing running`);
+
+    // Near a marker, the hint names its mission.
+    const pav = await place('britomart-plaza');
+    await game('placePlayer', pav.x + 12, pav.z, Math.PI);
+    await step(2);
+    m = await missions();
+    check(m.nearest?.id === 'pavlova' && /Handle With Care/.test(m.hint), `the hint by the pavlova's marker names it ("${m.hint}")`);
+    await shot('20-mission-marker');
 
     // Pavlova: walk into the marker, get in, crack it on a wall, deliver it.
-    const pav = await place('britomart-plaza');
     await game('placePlayer', pav.x + 5, pav.z, Math.PI);
     await run({ keys: ['KeyW'], max: 150 });
     m = await missions();

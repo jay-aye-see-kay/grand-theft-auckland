@@ -36,7 +36,7 @@ ferry terminal in 90 s), a wanted level and police chase, HUD and minimap.
 - **Landmarks, by priority:** Sky Tower, Ferry Building, Britomart / Chief
   Post Office, Civic Theatre (rooftop sign), Town Hall, Wynyard silos, Harbour
   Bridge (backdrop), Rangitoto (horizon).
-- **Spawn:** on foot outside Britomart, next to the purple '95 Corolla.
+- **Spawn:** on foot on Queen St at Aotea Square, next to the purple '95 Corolla.
 - **Rejected:** Google Photorealistic 3D Tiles (terms forbid it, no collision,
   melted at street level, too heavy for phones).
 - **Name:** a parody. Avoid Take-Two's logo font and trade dress; no real car
