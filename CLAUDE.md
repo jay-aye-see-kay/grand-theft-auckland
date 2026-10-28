@@ -20,6 +20,7 @@ npm run smoke   # after build: core checks in headless Chromium (~30 s)
 npm run smoke:full   # every area (a few min); `npm run smoke -- --only=harbour,fly`
 npm run dev     # dev server with --host, for phones on the LAN
 npm run citygen:build   # regenerate public/city/cbd/ (fetches OSM + LiDAR into .cache/)
+npm run citygen:places  # just the gazetteer (places.json), e.g. after editing names or overrides
 ```
 
 CI (`.github/workflows/deploy.yml`) only builds and deploys from the default
@@ -36,10 +37,12 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
 - `src/maps/`: `auckland.ts` (default) and `test-town.ts` (`?map=test`)
 - `src/missions/`: one file per mission (`defineMission`, picked up by `import.meta.glob`).
   `runtime/`: `mission.ts` (the script API), `runner.ts` (runs scripts in game time, solo
-  for now, shaped for a room host per #27), `places.ts` (named spots, hand-picked until the
-  gazetteer #28), `markers.ts` (start rings, goal beam), `hud.ts` (banner, timer, arrow).
-  To add a mission: pick places (`__game.probe(x, z)` finds open ground), write the file,
-  and play it through by teleporting in `scripts/smoke/areas/missions.mjs`.
+  for now, shaped for a room host per #27), `places.ts` (the gazetteer: `places.json` ids,
+  typechecked, plus `nearest`/`random` by kind), `markers.ts` (start rings, goal beam),
+  `hud.ts` (banner, timer, arrow). To add a mission: pick places from
+  `public/city/cbd/places.json` or `__game.places('bar', { near: [x, z], within: 200 })`
+  (pin a nicer id or name with `place` in the overrides), write the file, and play it
+  through by teleporting in `scripts/smoke/areas/missions.mjs`.
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),
   terrain, buildings, facade atlas, skyline LOD, water
 - `tools/citygen/`: offline generator. OSM + LINZ LiDAR → projected (origin Britomart) →
@@ -47,6 +50,8 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
   deterministic). Hand fixes in `overrides/cbd.json` keyed by OSM id (see `overrides/README.md`).
   Buildings: `roofs.ts` (pitched roofs fitted to the DSM), `rooftops.ts` (towers on podiums,
   rooftop plant), `eras.ts` (facade family, colours and cornices per architectural era).
+  Places: `places.ts` (OSM POIs → `places.json`, marker on the kerb outside), `names.ts` (parody
+  names: brand table, hand-written lists per kind, templates; no real business name may leak).
   Parks: `ground.ts` (land use, park paths, canopy cover: shade near, canopy tint far), `trees.ts` (OSM trees plus
   LiDAR treetops on green ground and tree-shaped ones over footpaths), `barriers.ts` (park edges: walls, fences,
   hedges, retaining walls, and a default low hedge where a park meets a footpath).

@@ -31,7 +31,7 @@ the driver's door, which is on the right (they're NZ cars).
 **Missions:** walk (or drive) into a gold marker to start one. The gold
 arrow points to the nearest; once one is running, the pink arrow and beam
 show where to go. So far: *Handle With Care* (outside Britomart, where you
-start), *Milk Run* (K Road) and *Sky Tower Sprint* (bring a car).
+start), *Milk Run* (K Road) and *High Tower Sprint* (bring a car).
 
 ## Develop
 

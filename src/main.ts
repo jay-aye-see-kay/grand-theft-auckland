@@ -16,7 +16,6 @@ import { loadMap } from './maps/index.ts';
 import { MISSIONS } from './missions/index.ts';
 import { MissionHud } from './missions/runtime/hud.ts';
 import { MissionMarkers } from './missions/runtime/markers.ts';
-import { PLACES } from './missions/runtime/places.ts';
 import { MissionRunner } from './missions/runtime/runner.ts';
 import './style.css';
 
@@ -131,7 +130,7 @@ async function main() {
   const skids = new SkidMarks();
   scene.add(skids.mesh);
 
-  // Missions: Auckland only, since their places are real streets.
+  // Missions: Auckland only, since their places are real streets (the map's gazetteer).
   const storage = (() => {
     try {
       return localStorage;
@@ -139,7 +138,7 @@ async function main() {
       return null; // blocked (some private modes): best times just aren't kept
     }
   })();
-  const missions = map.name === 'auckland' ? new MissionRunner(MISSIONS, (x, z) => map.heightAt(x, z), storage) : null;
+  const missions = map.places ? new MissionRunner(MISSIONS, map.places, (x, z) => map.heightAt(x, z), storage) : null;
   const markers = new MissionMarkers();
   scene.add(markers.group);
   const missionHud = new MissionHud(hud);
@@ -826,8 +825,14 @@ async function main() {
       missions: () => missions?.debugState() ?? null,
       /** Start a mission by id where the player is, abandoning any running one. */
       startMission: (id: string) => missions?.start(id),
-      /** Named places missions use: id -> name, x, z. */
-      places: () => PLACES,
+      /**
+       * The gazetteer: places of a kind (or all), nearest first with `near`, e.g.
+       * places('bar', { near: [x, z], within: 200 }). Mission authors find ids here.
+       */
+      places: (kind?: string, q: { near?: [number, number]; within?: number } = {}) =>
+        map.places?.find(kind, { near: q.near && { x: q.near[0], z: q.near[1] }, within: q.within }) ?? [],
+      /** One place by id. */
+      place: (id: string) => map.places?.get(id) ?? null,
       step,
       /** Manual mode: draw a frame (for a screenshot); resolves once it's on screen. */
       draw: async () => {

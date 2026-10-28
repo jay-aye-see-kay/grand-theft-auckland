@@ -1,5 +1,4 @@
 import { defineMission } from './runtime/mission.ts';
-import { place } from './runtime/places.ts';
 
 // Deliver Aunty's pavlova to the Town Hall. Three knocks and it's an Eton
 // mess; get out of the car and the seagulls have it.
@@ -14,7 +13,7 @@ export default defineMission({
   id: 'pavlova',
   title: 'Handle With Care',
   blurb: "Aunty's pavlova. The Town Hall. Don't you dare crack it.",
-  start: place('britomart-plaza'),
+  start: 'britomart-plaza',
 
   async run(m) {
     await m.waitFor(() => m.player.driving, 'Get in a car. Gently.');
@@ -31,7 +30,7 @@ export default defineMission({
       m.objective(`Get the pav to the Town Hall (${'🍰'.repeat(CRACKS - cracks)} left)`);
     });
     m.timer(150, 'The Town Hall do started without dessert.');
-    await m.goTo(place('town-hall'), { radius: 10, inCar: true, label: `Get the pav to the Town Hall (${'🍰'.repeat(CRACKS)} left)` });
+    await m.goTo('town-hall', { radius: 10, inCar: true, label: `Get the pav to the Town Hall (${'🍰'.repeat(CRACKS)} left)` });
     m.succeed(cracks ? `Only ${cracks === 1 ? 'one crack' : 'two cracks'}. Nobody will notice under the cream.` : 'Not a crack on it. Aunty is speechless.');
   },
 });

@@ -1,4 +1,4 @@
-import type { Place } from './places.ts';
+import type { Place, PlaceId, PlaceKind, PlaceQuery } from './places.ts';
 
 // The mission format: one file per mission in src/missions/, each exporting
 // `defineMission({...})` as default. A mission's `run` is an async script
@@ -52,10 +52,19 @@ export interface MissionApi {
   say(text: string, seconds?: number): void;
   /** The objective line under the timer; '' clears it. */
   objective(text: string): void;
+  /** A place from the gazetteer by id ('k-road-dairy'). */
+  place(id: PlaceId): Place;
+  /** The nearest place of a kind to `near` (default: the player), or null. */
+  nearest(kind: PlaceKind, near?: { x: number; z: number }, query?: Omit<PlaceQuery, 'near'>): Place | null;
+  /**
+   * Any place of a kind, or null: within `query.within` of the player unless
+   * `query.near` says otherwise. Seeded per run, so a replay picks the same.
+   */
+  random(kind: PlaceKind, query?: PlaceQuery): Place | null;
   /** Marks `place` (beam, arrow, objective line) and resolves when someone gets there. */
-  goTo(place: Place, options?: GoToOptions): Promise<MissionPlayer>;
+  goTo(place: Place | PlaceId, options?: GoToOptions): Promise<MissionPlayer>;
   /** goTo against the clock: who got there first, or null if time ran out. */
-  race(players: readonly MissionPlayer[], place: Place, options: GoToOptions & { seconds: number }): Promise<MissionPlayer | null>;
+  race(players: readonly MissionPlayer[], place: Place | PlaceId, options: GoToOptions & { seconds: number }): Promise<MissionPlayer | null>;
   /** Resolves on the first tick `test` is true, with `label` as the objective meanwhile. */
   waitFor(test: () => boolean, label?: string): Promise<void>;
   /** Game seconds. */
@@ -85,8 +94,8 @@ export interface Mission {
   readonly players?: { min: number; max: number };
   /** Whether its start marker shows (default: always). */
   available?(ctx: MissionContext): boolean;
-  /** Where its start marker is: walk (or drive) into it to start. */
-  readonly start: Place;
+  /** Where its start marker is (a place id): walk (or drive) into it to start. */
+  readonly start: PlaceId;
   /** Only starts when you drive into the marker. */
   readonly needsCar?: boolean;
   run(m: MissionApi): Promise<void>;

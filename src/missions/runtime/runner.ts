@@ -1,5 +1,5 @@
 import type { Clock, GoToOptions, Mission, MissionApi, MissionPlayer } from './mission.ts';
-import type { Place } from './places.ts';
+import type { Gazetteer, Place } from './places.ts';
 
 // Runs mission scripts against the game, a tick at a time in game time, so
 // the smoke test's stepped clock plays them back exactly. Owns no DOM or
@@ -85,6 +85,9 @@ interface Run {
 
 export class MissionRunner {
   readonly missions: readonly Mission[];
+  private readonly places: Gazetteer;
+  /** Mission id -> its start marker's place. */
+  private readonly starts: Map<string, Place>;
   private readonly storage: Storage | null;
   private run: Run | null = null;
   private now = 0;
@@ -103,8 +106,11 @@ export class MissionRunner {
   /** Ground height at a point, NaN where unknown. */
   private readonly groundAt: (x: number, z: number) => number;
 
-  constructor(missions: readonly Mission[], groundAt: (x: number, z: number) => number, storage: Storage | null) {
+  constructor(missions: readonly Mission[], places: Gazetteer, groundAt: (x: number, z: number) => number, storage: Storage | null) {
     this.missions = missions;
+    this.places = places;
+    // Unknown ids throw here, at start-up, rather than when someone walks past.
+    this.starts = new Map(missions.map((m) => [m.id, places.get(m.start)]));
     this.groundAt = groundAt;
     this.storage = storage;
   }
@@ -166,7 +172,7 @@ export class MissionRunner {
 
   view(): MissionView {
     const run = this.run;
-    const starts = run ? [] : this.missions.filter((m) => this.available(m)).map((m) => ({ id: m.id, title: m.title, x: m.start.x, z: m.start.z }));
+    const starts = run ? [] : this.missions.filter((m) => this.available(m)).map((m) => ({ id: m.id, title: m.title, x: this.startOf(m).x, z: this.startOf(m).z }));
     let nearest: MissionView['nearest'] = null;
     let best = Infinity;
     for (const s of starts) {
@@ -188,7 +194,11 @@ export class MissionRunner {
 
   /** ?debug: the view plus how the last mission went and everything said. */
   debugState() {
-    return { ...this.view(), last: this.last, said: [...this.said], missions: this.missions.map((m) => ({ id: m.id, title: m.title, start: m.start })) };
+    return { ...this.view(), last: this.last, said: [...this.said], missions: this.missions.map((m) => ({ id: m.id, title: m.title, start: this.startOf(m) })) };
+  }
+
+  private startOf(m: Mission): Place {
+    return this.starts.get(m.id)!;
   }
 
   private available(m: Mission): boolean {
@@ -201,7 +211,8 @@ export class MissionRunner {
     this.hint = '';
     for (const m of this.missions) {
       if (!this.available(m)) continue;
-      const d = Math.hypot(m.start.x - s.x, m.start.z - s.z);
+      const start = this.startOf(m);
+      const d = Math.hypot(start.x - s.x, start.z - s.z);
       const radius = s.driving ? START_RADIUS.car : START_RADIUS.foot;
       if (d > radius + REARM) this.armed.set(m.id, true);
       if (d < HINT_RADIUS && !this.hint) {
@@ -264,6 +275,9 @@ export class MissionRunner {
       live();
       return new Promise((resolve, reject) => run.pending.push({ test, resolve, reject }));
     };
+    const resolve = (place: Place | string): Place => (typeof place === 'string' ? this.places.get(place) : place);
+    // Repeatable per run: the same mission started at the same game time picks the same places.
+    const rng = seeded(`${run.mission.id}@${run.started.toFixed(3)}`);
     const reached = (place: Place, o: GoToOptions = {}) => {
       const me = this.me;
       return Math.hypot(place.x - me.x, place.z - me.z) < (o.radius ?? DEFAULT_RADIUS) && (!o.inCar || me.driving) && this.grounded(me);
@@ -312,14 +326,19 @@ export class MissionRunner {
         live();
         run.objective = text;
       },
-      goTo: async (place, o = {}) => {
+      place: (id) => this.places.get(id),
+      nearest: (kind, near, q) => this.places.nearest(kind, near ?? this.me, q),
+      random: (kind, q = {}) => this.places.random(kind, rng, { near: this.me, ...q }),
+      goTo: async (target, o = {}) => {
+        const place = resolve(target);
         mark(place, o);
         await wait(() => reached(place, o));
         unmark(place);
         this.cues.push('reached');
         return this.me;
       },
-      race: async (_players, place, o) => {
+      race: async (_players, target, o) => {
+        const place = resolve(target);
         mark(place, o);
         const at = this.now + o.seconds;
         let late = false;
@@ -392,4 +411,18 @@ export class MissionRunner {
     const g = this.groundAt(p.x, p.z);
     return Number.isNaN(g) || Math.abs(p.y - g) < REACH_Y;
   }
+}
+
+/** A small seeded PRNG (mulberry32 over an FNV-1a hash of `key`), 0..1. */
+function seeded(key: string): () => number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193);
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

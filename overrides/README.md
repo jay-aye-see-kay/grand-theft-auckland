@@ -29,6 +29,7 @@ buildings wrong); use an override for one-offs.
 | `landmark` | buildings | Id like `"sky-tower"`: listed in `manifest.json` (`landmarks`: footprint, base, top) for hand-made models (T9). The OSM shape is still drawn unless `hide` is set. Several elements may share an id. |
 | `hide` | buildings | Leave it (and its parts) out of the mesh. Its collider stays unless `block` is `false`. |
 | `block` | areas, lines | An invisible collider. An area (closed way or multipolygon) becomes a solid prism from the ground; a line becomes a 0.5 m wall along it (a road block, a bollard line). `true` = 2 m high, a number = that height. |
+| `place` | nodes, ways, relations | The gazetteer (`places.json`, `tools/citygen/places.ts`): `{ "id", "name", "kind", "at": [x, z] }`, all optional. `id` is what missions use (`'k-road-dairy'`); `name` replaces the generated parody (businesses) or the real name (`"the Ferry Building"`); `kind` defaults to `landmark` for pinned places; `at` puts it at a point (a spot along a street, with the street way as the key). `false` leaves it out. The only field that takes a `node/123` key, along with `tags` and `delete`. |
 
 Heights in the CBD are best checked against the LiDAR: the median of DSM
 minus DEM inside a footprint (`tools/citygen` has the rasters cached in

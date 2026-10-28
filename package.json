@@ -14,6 +14,7 @@
     "citygen:fetch": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types tools/citygen/fetch.ts",
     "citygen:stats": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types tools/citygen/stats.ts",
     "citygen:parking": "node --experimental-strip-types tools/citygen/parking.ts",
+    "citygen:places": "node --experimental-strip-types tools/citygen/places.ts",
     "citygen:build": "NODE_USE_ENV_PROXY=1 node --experimental-strip-types tools/citygen/build.ts"
   },
   "dependencies": {

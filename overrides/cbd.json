@@ -14,16 +14,24 @@
   "way/119020515": { "deck": [53.3, 53.0, 52.7, 52.3, 51.6, 50.9], "note": "CMJ flyover ramp, continuing the one above" },
 
   "// landmarks": "recorded in manifest.json for the hand-made models (T9); add \"hide\": true once a model replaces the OSM shape",
-  "relation/19745928": { "landmark": "sky-tower", "hide": true, "block": false, "note": "hand-made model (src/landmarks/sky-tower.ts) with its own colliders: the OSM outline is the pod's 20 m circle, far too wide at the foot" },
-  "way/23904427": { "landmark": "ferry-building", "hide": true, "note": "hand-made model: src/landmarks/ferry-building.ts" },
-  "way/23904390": { "landmark": "britomart", "hide": true, "note": "hand-made model: src/landmarks/chief-post-office.ts" },
+  "relation/19745928": { "place": { "id": "sky-tower", "name": "the High Tower", "at": [-515, 418] }, "landmark": "sky-tower", "hide": true, "block": false, "note": "hand-made model (src/landmarks/sky-tower.ts) with its own colliders: the OSM outline is the pod's 20 m circle, far too wide at the foot" },
+  "way/23904427": { "place": { "id": "ferry-building", "name": "the Ferry Building" }, "landmark": "ferry-building", "hide": true, "note": "hand-made model: src/landmarks/ferry-building.ts" },
+  "way/23904390": { "place": { "id": "britomart-plaza", "name": "Britomart", "at": [-32, 10] }, "landmark": "britomart", "hide": true, "note": "hand-made model: src/landmarks/chief-post-office.ts" },
   "way/23906749": { "landmark": "civic-theatre", "hide": true, "note": "hand-made model: src/landmarks/civic-theatre.ts" },
-  "way/23904006": { "landmark": "town-hall" },
+  "way/23904006": { "place": { "id": "town-hall", "name": "the Town Hall", "at": [-407, 950] }, "landmark": "town-hall" },
   "way/158614640": { "landmark": "wynyard-silos" },
   "way/403963164": { "landmark": "wynyard-silos" },
   "way/1137191819": { "landmark": "wynyard-silos" },
   "way/1137191820": { "landmark": "wynyard-silos" },
   "way/1137191821": { "landmark": "wynyard-silos" },
   "way/1137191822": { "landmark": "wynyard-silos" },
-  "way/1137191823": { "landmark": "wynyard-silos" }
+  "way/1137191823": { "landmark": "wynyard-silos" },
+
+  "// places": "the gazetteer (tools/citygen/places.ts): ids missions use, hand-picked parody names, spots along streets",
+  "node/4753906352": { "place": { "id": "k-road-dairy", "name": "Open 25 Hours", "kind": "dairy" }, "note": "the milk run's dairy, 135 K Road" },
+  "node/5750728713": { "place": { "id": "casino", "name": "High City Casino", "kind": "casino" }, "note": "next to the High Tower" },
+  "node/807733392": { "place": { "id": "sharona", "name": "Sharona", "kind": "bar" }, "note": "K Road cafe and bar" },
+  "way/624534623": { "place": { "id": "albert-st", "name": "Albert St", "kind": "street", "at": [-284, 114] }, "note": "kerbside, climbing from Customs St" },
+  "way/1060960693": { "place": { "id": "lower-queen-st", "name": "lower Queen St", "kind": "street", "at": [-136, 78] }, "note": "bottom of Queen St, by Customs St" },
+  "way/52729793": { "place": { "id": "mid-queen-st", "name": "Queen St", "kind": "street", "at": [-229, 421] }, "note": "halfway up the hill" }
 }
