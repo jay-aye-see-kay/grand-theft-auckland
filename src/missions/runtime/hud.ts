@@ -4,7 +4,7 @@ import type { MissionView } from './runner.ts';
 
 // The mission HUD, drawn in the DOM over the game: title cards and MISSION
 // PASSED banners, subtitles, the timer and objective line, and an arrow to
-// the goal (pink), or while idle to the nearest mission (gold). The arrow
+// the nearest goal (pink), or while idle to the nearest mission (gold). The arrow
 // sits over the goal when it's on screen and clings to the screen edge,
 // pointing the way, when it isn't. Stands in for a minimap until #14.
 

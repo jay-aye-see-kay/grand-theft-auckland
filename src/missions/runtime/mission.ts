@@ -5,10 +5,13 @@ import type { Place, PlaceId, PlaceKind, PlaceQuery } from './places.ts';
 // against the small API below, so jokes can have logic and `npm run build`
 // typechecks them. Grow the API as missions need it (see issue #27).
 //
-// Solo for now, but shaped for rooms (#26): scripts talk about `players`,
-// and only the host will run them.
+// In a room (#26), a mission for more than one (`players.max > 1`) runs on
+// the host for everyone there: `players` is the whole room, and guests see
+// what the host's script shows. A solo mission runs for whoever starts it.
 
 export interface MissionPlayer {
+  /** Their id in the room (the host is 0). */
+  readonly id: number;
   readonly name: string;
   /** Where they are: feet on foot, the car's centre while driving. */
   readonly x: number;
@@ -32,6 +35,11 @@ export interface GoToOptions {
   label?: string;
   /** Only counts while driving. */
   inCar?: boolean;
+  /**
+   * Wait until all of these (those still in the room) are there at once,
+   * rather than anyone; resolves with the last to arrive.
+   */
+  everyone?: readonly MissionPlayer[];
 }
 
 /** A countdown or stopwatch shown at the top of the screen. */
@@ -43,8 +51,9 @@ export interface Clock {
 }
 
 export interface MissionApi {
+  /** Who's playing: the whole room in a mission for more than one, else just you. */
   readonly players: readonly MissionPlayer[];
-  /** The local player (solo: the only one). */
+  /** The player running the script (in a room, the host). */
   readonly player: MissionPlayer;
   /** Game seconds since the mission started. */
   readonly elapsed: number;
@@ -61,7 +70,10 @@ export interface MissionApi {
    * `query.near` says otherwise. Seeded per run, so a replay picks the same.
    */
   random(kind: PlaceKind, query?: PlaceQuery): Place | null;
-  /** Marks `place` (beam, arrow, objective line) and resolves when someone gets there. */
+  /**
+   * Marks `place` (beam, arrow, objective line) and resolves with whoever
+   * gets there first. Several at once (Promise.all) mark several places.
+   */
   goTo(place: Place | PlaceId, options?: GoToOptions): Promise<MissionPlayer>;
   /** goTo against the clock: who got there first, or null if time ran out. */
   race(players: readonly MissionPlayer[], place: Place | PlaceId, options: GoToOptions & { seconds: number }): Promise<MissionPlayer | null>;
@@ -75,7 +87,7 @@ export interface MissionApi {
   stopwatch(): Clock;
   /** Fails the mission with `message` on any tick `test` is true, from now until it ends. */
   failIf(test: () => boolean, message: string): void;
-  /** Called on each knock to the car you're driving, with how hard (sudden change of speed, m/s). */
+  /** Called on each knock to the car `player` is driving, with how hard (sudden change of speed, m/s). */
   onCrash(fn: (strength: number) => void): void;
   /** Saves a best (lowest) time on this device, s. Whether this one beat it, and the best now. */
   record(seconds: number): { best: number; isNew: boolean };
@@ -91,6 +103,7 @@ export interface Mission {
   readonly title: string;
   /** Shown under the title when it starts. */
   readonly blurb: string;
+  /** How many can play (default 1 to 1). Over one, it's shared with the room, which gathers at the marker to start it. */
   readonly players?: { min: number; max: number };
   /** Whether its start marker shows (default: always). */
   available?(ctx: MissionContext): boolean;

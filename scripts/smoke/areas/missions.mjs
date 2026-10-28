@@ -34,7 +34,7 @@ export default {
     check(tower.name === 'the High Tower' && (await place('casino')).name === 'High City Casino', `${tower.name}, and ${(await place('casino')).name} next door`);
 
     // Places the missions use, and the hand-picked ones beside them, sit on open ground: not inside or on a building.
-    const used = ['britomart-plaza', 'town-hall', 'lower-queen-st', 'k-road-dairy', 'ferry-building', 'sky-tower', 'albert-st', 'mid-queen-st', 'sharona', 'casino'];
+    const used = ['britomart-plaza', 'town-hall', 'lower-queen-st', 'k-road-dairy', 'ferry-building', 'sky-tower', 'albert-st', 'mid-queen-st', 'sharona', 'casino', 'shouts-on-you', 'the-salty-sheep', 'the-tipsy-weka'];
     const bad = [];
     for (const id of used) {
       const p = await place(id);
@@ -46,7 +46,8 @@ export default {
 
     // At the spawn: the nearest mission's marker is right in front of you.
     let m = await missions();
-    check(m.missions.length >= 3 && m.starts.length === m.missions.length, `${m.missions.length} missions, each with a start marker (${m.missions.map((x) => x.id).join(', ')})`);
+    const solo = m.missions.filter((x) => x.id !== 'last-orders');
+    check(solo.length >= 3 && m.starts.length === solo.length, `${m.missions.length} missions, a start marker for each but Last Orders (two or more) when alone: ${m.starts.map((x) => x.id).join(', ')}`);
     check(m.nearest?.id === 'pavlova' && !m.active, `nearest to the spawn is ${m.nearest?.id}, nothing running`);
     check(/Handle With Care/.test(m.hint), `the hint at the spawn names it ("${m.hint}")`);
     await shot('20-mission-marker-at-spawn');

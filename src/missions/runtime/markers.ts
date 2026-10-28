@@ -75,27 +75,32 @@ class Beacon {
 
 export class MissionMarkers {
   readonly group = new THREE.Group();
-  private readonly goal: Beacon;
+  /** One per goal showing (a mission can mark a few places at once). */
+  private readonly goals: Beacon[] = [];
   private readonly starts = new Map<string, Beacon>();
   private readonly startGeometry = beaconGeometry(START.radius, START.height);
+  private readonly goalGeometry = beaconGeometry(GOAL.radius, GOAL.height);
   /** Ground under goals once it has streamed in: it may stream out again behind you. */
   private readonly heights = new Map<string, number>();
 
   constructor() {
     this.group.name = 'markers';
-    this.goal = new Beacon('marker goal', GOAL, beaconGeometry(GOAL.radius, GOAL.height));
-    this.group.add(this.goal.mesh);
   }
 
   update(view: MissionView, heightAt: (x: number, z: number) => number, from: THREE.Vector3, clock: number): void {
-    if (view.target) {
-      const { x, z } = view.target;
+    for (const [i, { x, z }] of view.targets.entries()) {
+      let goal = this.goals[i];
+      if (!goal) {
+        goal = this.goals[i] = new Beacon(`marker goal ${i}`, GOAL, this.goalGeometry);
+        this.group.add(goal.mesh);
+      }
       const key = `${x},${z}`;
       const h = heightAt(x, z);
       if (!Number.isNaN(h)) this.heights.set(key, h);
       const ground = this.heights.get(key) ?? from.y - UNKNOWN_GROUND;
-      this.goal.show(x, z, ground, clock, Math.max(1, Math.hypot(x - from.x, z - from.z) / GOAL_WIDEN));
-    } else this.goal.mesh.visible = false;
+      goal.show(x, z, ground, clock, Math.max(1, Math.hypot(x - from.x, z - from.z) / GOAL_WIDEN));
+    }
+    for (const goal of this.goals.slice(view.targets.length)) goal.mesh.visible = false;
     for (const b of this.starts.values()) b.mesh.visible = false;
     for (const s of view.starts) {
       if (Math.hypot(s.x - from.x, s.z - from.z) > START.draw) continue;

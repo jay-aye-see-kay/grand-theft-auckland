@@ -1,10 +1,9 @@
 // Rooms (#26): a second tab joins this one's room and each sees the other
-// move, on foot and in a car. Over a BroadcastChannel between the tabs
-// (?net=local), not PeerJS: the public broker is no place for a test.
+// move, on foot and in a car (over a BroadcastChannel: see openGuest).
 // Poses arrive between steps on the other page's clock, so these readings
 // aren't exactly repeatable.
 
-import { openGame } from '../game.mjs';
+import { openGuest } from '../game.mjs';
 
 const loose = { stable: false };
 
@@ -13,26 +12,10 @@ export default {
   core: false,
   page: 'auckland',
   async run({ page, context, check, game, state, step, run, getIn, getOut, dist }) {
-    const code = await game('host', true);
+    const guest = await openGuest(context, page);
+    const { code, joined, g, step: gStep } = guest;
     check(/^[A-Z2-9]{4}$/.test(code), `hosts a room with a four-letter code (${code})`, loose);
-
-    const url = new URL(page.url());
-    url.search = `?debug&net=local&room=${code}`;
-    const guest = await openGame(context, url.toString());
-    const g = (fn, ...args) => guest.page.evaluate(([f, a]) => window.__game[f](...a), [fn, args]);
-    const gStep = (n) => guest.page.evaluate(async (k) => {
-      await window.__game.step(k);
-      return window.__game.state();
-    }, n);
-    await gStep(1); // paused: two pages drawing in software starve each other
-    await guest.page.keyboard.press('KeyX');
-    let joined = false;
-    for (let i = 0; i < 40 && !joined; i++) {
-      await gStep(6);
-      joined = (await g('room')).role === 'guest';
-    }
     check(joined, 'a second tab joins by the room code');
-    await gStep(30); // spawning waits for the ground there to stream in
 
     const host = await game('room');
     check(host.members.length === 2 && host.role === 'host', 'the host sees two players');

@@ -1,5 +1,6 @@
 import { MAX_PLAYERS, PROTOCOL, type Member, type Msg, type Pose } from './protocol.ts';
 import { LocalTransport, NetError, PeerTransport, type Link, type LinkStats, type Transport } from './transport.ts';
+import type { SharedMission } from '../missions/runtime/runner.ts';
 
 // Rooms (#26). Every game is a room: solo is a room of one that nobody has
 // the code for yet. Star topology: guests connect only to the host, which
@@ -18,6 +19,10 @@ export interface RoomEvents {
   renamed(m: Member): void;
   pose(id: number, pose: Pose): void;
   left(id: number): void;
+  /** Guest: the host's shared mission. */
+  mission(state: SharedMission): void;
+  /** Host: a guest asks to start a shared mission. */
+  missionRequest(id: string): void;
   /** Something worth telling the player ("Sam joined"). */
   toast(text: string): void;
   /** Role, code or members changed (for the panel). */
@@ -80,6 +85,9 @@ export class Room {
   private nextId = 1;
   private seq = 0;
   private lastSent = -Infinity;
+  private missionSeq = 0;
+  /** Guest: the newest shared mission state heard. */
+  private heardMission = 0;
   /** Bumped on every role change, so stale callbacks from an old transport do nothing. */
   private epoch = 0;
   /** Getting back into the same room after losing it: don't teleport to the host again. */
@@ -220,6 +228,16 @@ export class Room {
     else if (this.myId > 0) this.hostLink?.send({ k: 'pose', id: this.myId, pose });
   }
 
+  /** Host: the shared mission, to every guest. */
+  sendMission(st: SharedMission): void {
+    if (this.role === 'host') this.broadcast({ k: 'mission', s: ++this.missionSeq, st });
+  }
+
+  /** Guest: ask the host to start a shared mission. */
+  requestMission(id: string): void {
+    if (this.role === 'guest') this.hostLink?.send({ k: 'mstart', id });
+  }
+
   /** Who's here, us first, with link health for the panel. */
   list(): MemberInfo[] {
     const host = this.role === 'guest' ? 0 : this.myId;
@@ -271,7 +289,8 @@ export class Room {
       this.broadcast({ k: 'name', id, name: m.name }, id);
       this.events.renamed({ id, name: m.name });
       this.changed();
-    } else if (msg.k === 'leave') this.drop(id);
+    } else if (msg.k === 'mstart') this.events.missionRequest(msg.id);
+    else if (msg.k === 'leave') this.drop(id);
   }
 
   private broadcast(msg: Msg, except = -1): void {
@@ -288,6 +307,7 @@ export class Room {
       this.role = 'guest';
       this.busy = false;
       this.myId = msg.id;
+      this.heardMission = 0;
       for (const id of [...this.members.keys()]) this.drop(id, true);
       for (const m of msg.members) this.add(m);
       const host = msg.members.find((m) => m.id === 0)?.name ?? 'the host';
@@ -306,6 +326,10 @@ export class Room {
       m.count++;
       m.heard = this.hostHeard;
       this.events.pose(msg.id, msg.pose);
+    } else if (msg.k === 'mission') {
+      if (msg.s <= this.heardMission) return;
+      this.heardMission = msg.s;
+      this.events.mission(msg.st);
     } else if (msg.k === 'join') {
       this.add(msg.m);
       this.events.toast(`${msg.m.name} joined`);

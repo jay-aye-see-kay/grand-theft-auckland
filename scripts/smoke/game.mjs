@@ -73,3 +73,30 @@ export function toolkit(page, check, shots, prefix = '') {
   };
   return { page, check, game, state, step, run, press, shot, getIn, getOut, dist };
 }
+
+/**
+ * Hosts a room on `page` and opens a second tab that joins it, over a
+ * BroadcastChannel (?net=local), not PeerJS: the public broker is no place
+ * for a test. The guest is paused (two pages drawing in software starve
+ * each other) and stepped with `step`; `g` calls its __game hooks.
+ */
+export async function openGuest(context, page) {
+  const code = await page.evaluate(() => window.__game.host(true));
+  const url = new URL(page.url());
+  url.search = `?debug&net=local&room=${code}`;
+  const guest = await openGame(context, url.toString());
+  const g = (fn, ...args) => guest.page.evaluate(([f, a]) => window.__game[f](...a), [fn, args]);
+  const step = (n) => guest.page.evaluate(async (k) => {
+    await window.__game.step(k);
+    return window.__game.state();
+  }, n);
+  await step(1);
+  await guest.page.keyboard.press('KeyX');
+  let joined = false;
+  for (let i = 0; i < 40 && !joined; i++) {
+    await step(6);
+    joined = (await g('room')).role === 'guest';
+  }
+  await step(30); // spawning waits for the ground there to stream in
+  return { ...guest, code, joined, g, step };
+}

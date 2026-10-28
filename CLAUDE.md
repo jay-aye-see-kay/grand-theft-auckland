@@ -37,13 +37,14 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
 - `src/sky.ts`, `src/sun.ts`, `src/splash.ts` (title screen with data credits)
 - `src/maps/`: `auckland.ts` (default) and `test-town.ts` (`?map=test`)
 - `src/missions/`: one file per mission (`defineMission`, picked up by `import.meta.glob`).
-  `runtime/`: `mission.ts` (the script API), `runner.ts` (runs scripts in game time, solo
-  solo even in a room for now; running them on the room's host is #27), `places.ts` (the gazetteer: `places.json` ids,
+  `runtime/`: `mission.ts` (the script API), `runner.ts` (runs scripts in game time; a mission
+  with `players.max > 1` is shared: the room gathers at its marker, the host runs it with everyone as `players`,
+  and guests mirror its `share()` state; solo ones run wherever they're started), `places.ts` (the gazetteer: `places.json` ids,
   typechecked, plus `nearest`/`random` by kind), `markers.ts` (start rings, goal beam),
   `hud.ts` (banner, timer, arrow). To add a mission: pick places from
   `public/city/cbd/places.json` or `__game.places('bar', { near: [x, z], within: 200 })`
   (pin a nicer id or name with `place` in the overrides), write the file, and play it
-  through by teleporting in `scripts/smoke/areas/missions.mjs`.
+  through by teleporting in `scripts/smoke/areas/missions.mjs` (shared ones in `coop.mjs`, two tabs).
 - `src/net/`: rooms (#26) over PeerJS (its free broker and TURN; `?turn=off` for STUN only). `room.ts`
   (host/guest star: the host relays, poses at 15 Hz, host leaving dissolves the room), `remotes.ts` (others
   drawn ~0.12 s behind, interpolated; a parked car someone else drives turns kinematic and follows them),

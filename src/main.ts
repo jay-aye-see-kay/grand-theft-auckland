@@ -30,6 +30,8 @@ const STEP_BATCH = 60;
 /** step(): promise hops a mission script gets to run between ticks. */
 const SCRIPT_HOPS = 8;
 const ENTER_RANGE = 3.6; // m from the car's centre
+/** Send the shared mission to guests this often, s (the channel drops some; each is complete). */
+const SHARE_EVERY = 0.2;
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
 /** Cars that fall this far below sea level (off the map edge) get put back. */
@@ -171,6 +173,8 @@ async function main() {
       renamed: (m) => remotes.rename(m.id, m.name),
       pose: (id, pose) => remotes.receive(id, pose, clock),
       left: (id) => remotes.remove(id),
+      mission: (st) => missions?.mirror(st),
+      missionRequest: (id) => missions?.request(id),
       toast: (text) => roomPanel.toast(text),
       changed: () => {
         roomPanel.refresh();
@@ -191,6 +195,8 @@ async function main() {
 
   let driving: Car | null = null;
   let exitRequested = false;
+  /** When the shared mission last went to the guests, game s. */
+  let lastShared = -Infinity;
   let upsideDownTime = 0;
 
   const nearestCar = (): Car | null => {
@@ -680,8 +686,20 @@ async function main() {
     // Missions run on physics poses, not interpolated ones, so stepped tests replay exactly.
     if (missions && started) {
       const at = driving ? driving.body.translation() : player.body.translation();
-      missions.tick({ clock, x: at.x, y: at.y, z: at.z, driving: !!driving, speedKmh: driving ? Math.abs(driving.forwardSpeed()) * 3.6 : 0, crash });
+      const alone = room.role === 'solo';
+      missions.tick({
+        clock, x: at.x, y: at.y, z: at.z, driving: !!driving, speedKmh: driving ? Math.abs(driving.forwardSpeed()) * 3.6 : 0, crash,
+        id: room.myId, name: alone ? 'You' : room.name, others: alone ? [] : remotes.players(), guest: room.role === 'guest',
+      });
       for (const cue of missions.takeCues()) audio.cue(cue);
+      for (const id of missions.takeRequests()) room.requestMission(id);
+      // The shared mission to the guests, a few times a second (game time, so stepped tests send it too).
+      if (clock < lastShared) lastShared = -Infinity;
+      if (room.role === 'host' && clock - lastShared >= SHARE_EVERY) {
+        lastShared = clock;
+        const st = missions.share();
+        if (st) room.sendMission(st);
+      }
     }
     // On foot the camera is always close; this only hides them from far debug views.
     player.object.visible = !driving && player.position.distanceTo(camera.position) < CAR_DETAIL;

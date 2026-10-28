@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { Car, DriveControls } from '../car.ts';
 import { Player } from '../player.ts';
+import type { MissionPlayer } from '../missions/runtime/mission.ts';
 import type { Pose } from './protocol.ts';
 
 // Other players in the room, as we see them: a little behind real time
@@ -42,6 +43,9 @@ interface Remote {
   at: THREE.Vector3;
   /** Has anything to show yet. */
   seen: boolean;
+  /** As drawn: in a car, and how fast, km/h (for missions). */
+  driving: boolean;
+  speedKmh: number;
 }
 
 const _q = new THREE.Quaternion();
@@ -82,7 +86,7 @@ export class Remotes {
     this.tags.appendChild(tag);
     this.remotes.set(id, {
       id, name, poses: [], seq: -1, gaps: [], offset: 0, puppet, car: -1,
-      controls: { steer: 0, throttle: 0, brake: 0, handbrake: false }, tag, at: new THREE.Vector3(), seen: false,
+      controls: { steer: 0, throttle: 0, brake: 0, handbrake: false }, tag, at: new THREE.Vector3(), seen: false, driving: false, speedKmh: 0,
     });
   }
 
@@ -149,6 +153,8 @@ export class Remotes {
       }
       const [x, y, z] = pose.p;
       r.at.set(x, y, z);
+      r.driving = pose.c >= 0;
+      r.speedKmh = Math.hypot(...pose.v) * 3.6;
       if (r.car >= 0 && pose.q) {
         const body = this.cars[r.car].body;
         body.setNextKinematicTranslation({ x, y, z });
@@ -194,6 +200,15 @@ export class Remotes {
       if (r.tag.textContent !== text) r.tag.textContent = text;
       r.tag.style.transform = `translate(${(((_v.x + 1) / 2) * w).toFixed(0)}px, ${(((1 - _v.y) / 2) * h).toFixed(0)}px) translate(-50%, -100%)`;
     }
+  }
+
+  /** Everyone else, where we draw them, for the missions the host runs (only those we've seen). */
+  players(): MissionPlayer[] {
+    const out: MissionPlayer[] = [];
+    for (const r of this.remotes.values()) {
+      if (r.seen) out.push({ id: r.id, name: r.name, x: r.at.x, y: r.at.y, z: r.at.z, driving: r.driving, speedKmh: r.speedKmh });
+    }
+    return out;
   }
 
   /** For ?debug: where each remote player is, and which car they're in. */

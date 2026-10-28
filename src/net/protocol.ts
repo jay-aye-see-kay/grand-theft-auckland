@@ -1,8 +1,10 @@
 // What players send each other. Small JSON messages: poses at ~15 Hz,
 // everything else rare. Guests talk only to the host, which relays (#26).
 
+import type { SharedMission } from '../missions/runtime/runner.ts';
+
 /** Bump when messages change shape, so old tabs get "please reload" instead of nonsense. */
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 /** Including the host. */
 export const MAX_PLAYERS = 6;
 
@@ -47,6 +49,10 @@ export type Msg =
   | { k: 'name'; id: number; name: string }
   /** A player's pose (the host stamps `id` when relaying). */
   | { k: 'pose'; id: number; pose: Pose }
+  /** Host → guests, a few times a second: the shared mission (numbered: the channel is unordered). */
+  | { k: 'mission'; s: number; st: SharedMission }
+  /** Guest → host: I'm in this shared mission's marker, start it. */
+  | { k: 'mstart'; id: string }
   /** Keeps a quiet link alive (a background tab draws no frames, so sends no poses). */
   | { k: 'hb' };
 
