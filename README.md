@@ -28,6 +28,11 @@ performance overlay, `?map=test` for the old test town).
 Getting out at speed brakes to a stop first, like GTA III. You step out of
 the driver's door, which is on the right (they're NZ cars).
 
+**Missions:** walk (or drive) into a gold marker to start one. The gold
+arrow points to the nearest; once one is running, the pink arrow and beam
+show where to go. So far: *Handle With Care* (outside Britomart, where you
+start), *Milk Run* (K Road) and *Sky Tower Sprint* (bring a car).
+
 ## Develop
 
 ```sh
@@ -45,7 +50,7 @@ Run it before and after touching the numbers in `TUNING` in `src/car.ts`.
 `npm run smoke` (after `npm run build`, about 30 s) starts on foot, walks,
 jumps, gets in, drives, handbrakes, gets out and rams a building.
 `npm run smoke:full` (a few minutes) adds the city data, driving the hills,
-the harbour, the fly cheat, the test town, touch controls on a phone-sized
+the harbour, the fly cheat, every mission, the test town, touch controls on a phone-sized
 screen and the triangle/draw-call budgets. Both fail on any console error.
 Pick areas with `npm run smoke -- --only=harbour,fly`. The game is stepped a
 fixed tick at a time, so results repeat exactly: `--repeat=3` checks that.

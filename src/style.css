@@ -279,10 +279,148 @@ canvas {
 #prompt {
   position: absolute;
   left: 50%;
-  top: 22%;
+  top: calc(max(10px, env(safe-area-inset-top)) + 116px);
   transform: translateX(-50%);
   font-weight: 800;
   font-size: 18px;
   text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
+}
+
+/* Missions (src/missions/runtime/hud.ts) */
+.mission {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.6);
+}
+
+.mission-banner {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translateX(-50%);
+  width: min(90vw, 640px);
+  text-align: center;
+}
+
+.mission-banner-title {
+  font-size: clamp(26px, min(6vw, 10vh), 56px);
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+  color: #c79bff;
+  -webkit-text-stroke: 1.5px #000;
+}
+
+.mission-banner[data-kind='passed'] .mission-banner-title {
+  color: #ffc23d;
+}
+
+.mission-banner[data-kind='failed'] .mission-banner-title {
+  color: #ff4a4a;
+}
+
+.mission-banner-text {
+  margin-top: 6px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.mission-clock {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 40px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 34px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.mission-clock.urgent {
+  color: #ff4a4a;
+}
+
+.mission-objective {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + 84px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(70vw, 560px);
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffd98a;
+}
+
+.mission-subtitle {
+  position: absolute;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 34px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(56vw, 560px);
+  text-align: center;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+/* The arrow's box is centred on the point it's translated to. */
+.mission-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  color: #ff5fc8;
+}
+
+.mission-arrow[data-kind='start'] {
+  color: #ffc23d;
+}
+
+.mission-arrow-head {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  left: -15px;
+  top: -15px;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.6));
+}
+
+.mission-arrow-label {
+  position: absolute;
+  top: 18px;
+  left: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+/* Short (landscape phone) screens: smaller mission text, clear of the touch controls. */
+@media (max-height: 500px) {
+  .mission-clock {
+    top: calc(max(8px, env(safe-area-inset-top)) + 34px);
+    font-size: 26px;
+  }
+
+  .mission-objective {
+    top: calc(max(8px, env(safe-area-inset-top)) + 66px);
+    font-size: 14px;
+  }
+
+  #prompt {
+    top: calc(max(8px, env(safe-area-inset-top)) + 90px);
+    font-size: 15px;
+  }
+
+  .mission-banner-text,
+  .mission-subtitle {
+    font-size: 15px;
+  }
+
+  .mission-subtitle {
+    width: min(48vw, 440px);
+  }
 }
