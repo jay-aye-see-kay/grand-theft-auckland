@@ -18,14 +18,15 @@ import { buildBuildings, MeshBuilder } from './buildings.ts';
 import { Frontages } from './frontage.ts';
 import { buildParking, writeParking } from './parking.ts';
 import { loadCityData } from './fetch.ts';
-import { GroundRaster, GROUND_SAMPLES, paintLandUse } from './ground.ts';
+import { GroundRaster, GROUND_SAMPLES, paintLandUse, paintPaths } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
 import { Overrides } from './overrides.ts';
 import { loadWikidata } from './wikidata.ts';
 import { layPiers } from './piers.ts';
+import { emitTrees, findTrees, treeTris } from './trees.ts';
 import { buildSeawalls } from './seawalls.ts';
 import { buildRoads, collectRoads, corridorRadius, roadNetwork, roadTris as roadTrisByKind } from './roads.ts';
-import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, markCapsule, SAMPLES, SEA_SHELF, smoothCorridors, TerrainSampler, WATER_LEVEL } from './terrain.ts';
+import { APRON, buildTerrainChunk, CELL_SIZE, CHUNK_SIZE, chunkGrid, markCapsule, markLattice, SAMPLES, SEA_SHELF, smoothCorridors, TerrainSampler, WATER_LEVEL } from './terrain.ts';
 
 const AREA = 'cbd';
 const OUT = fileURLToPath(new URL(`../../public/city/${AREA}/`, import.meta.url));
@@ -56,7 +57,16 @@ for (const r of collectRoads(data.osm)) {
   if (r.bridge) continue;
   for (let k = 0; k + 1 < r.pts.length; k++) markCapsule(corridors, r.pts[k], r.pts[k + 1], corridorRadius(r) + CORRIDOR_MARGIN);
 }
-console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points under streets`);
+// Land use first: paths through parks are smoothed too (real ones are
+// graded), a sample past the painted line, so their strips lie flat on lawn.
+const ground = new GroundRaster(grid);
+const landUse = paintLandUse(data.osm, ground);
+console.log(`Land use: ${Object.entries(landUse).map(([k, n]) => `${n} ${k}`).join(', ')} polygons`);
+const paths = paintPaths(data.osm, ground);
+ground.each('path', (c, r) => {
+  for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) markLattice(corridors, c + dc, r + dr);
+});
+console.log(`Smoothed ${smoothCorridors(data.dem, corridors)} lattice points under streets and park paths`);
 const terrainSampler = new TerrainSampler(data.dem);
 const network = roadNetwork(data, terrainSampler, overrides);
 const frontages = new Frontages(data.osm);
@@ -84,10 +94,21 @@ const walls = buildSeawalls(data.dem, grid, terrainSampler, (x, z) => {
   return mb;
 });
 console.log(`Sea walls: ${walls.km.toFixed(1)} km along ${walls.lines} coastlines`);
-const ground = new GroundRaster(grid);
-const landUse = paintLandUse(data.osm, ground);
-console.log(`Land use: ${Object.entries(landUse).map(([k, n]) => `${n} ${k}`).join(', ')} polygons`);
-const roads = buildRoads(grid, terrainSampler, ground, network, blds.covers);
+const roads = buildRoads(grid, terrainSampler, ground, network, blds.covers, paths);
+// Trees after the roads have painted the ground, so mapped trees in a carriageway are left out.
+const forest = findTrees(data, { grid, ground, covers: blds.covers, deckAt: network.deckAt });
+emitTrees(forest.trees, grid, terrainSampler, (x, z) => {
+  const i = Math.floor((x - grid.x0) / CHUNK_SIZE);
+  const j = Math.floor((z - grid.z0) / CHUNK_SIZE);
+  if (i < 0 || j < 0 || i >= grid.nx || j >= grid.nz) return null;
+  let mb = blds.chunks.get(`${i},${j}`);
+  if (!mb) blds.chunks.set(`${i},${j}`, (mb = new MeshBuilder()));
+  return mb;
+});
+console.log(
+  `Trees: ${forest.trees.length} (${Object.entries(forest.counts).map(([k, v]) => `${v} ${k}`).join(', ')}), ` +
+    `${treeTris.crowns} crown + ${treeTris.trunks} trunk triangles`,
+);
 console.log(
   `Roads: ${roads.counts.ways} ways (${roads.counts.bridges} bridges), ` +
     Object.entries(roads.counts.km).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(1)} km`).join(', '),

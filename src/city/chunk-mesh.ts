@@ -24,6 +24,8 @@ export class ChunkMesh {
   private terrainBase = 0;
   /** What's drawn now, as a number (see update), NaN for nothing yet. */
   private selection = NaN;
+  /** Which tile groups are drawn, as a string of 0s and 1s. */
+  private groupKey = '';
 
   constructor(name: string, cx: number, cz: number, half: number, material: THREE.Material, roads?: BuildingChunk, buildings?: BuildingChunk) {
     this.roads = roads;
@@ -114,12 +116,18 @@ export class ChunkMesh {
     this.selection = NaN;
   }
 
+  /** Tiles per side of the buildings' grouped detail (trees), 0 if none. */
+  get groupSide(): number {
+    return this.buildings?.groups?.side ?? 0;
+  }
+
   /**
    * Picks what to draw: roads or not, buildings' detail (0 none, 1 near-only,
-   * 2 fine as well), and per tile 0 (2 m) or 1 (coarse); `tiles` null draws
-   * the far parts. Cheap when nothing changed.
+   * 2 fine as well), per tile 0 (2 m) or 1 (coarse) (`tiles` null draws the
+   * far parts), and which of the buildings' tile groups (trees) to draw
+   * (`groups[t]` set; null for none). Cheap when nothing changed.
    */
-  update(roads: boolean, tiles: Uint8Array | null, detail: 0 | 1 | 2 = 2): void {
+  update(roads: boolean, tiles: Uint8Array | null, detail: 0 | 1 | 2 = 2, groups: Uint8Array | null = null): void {
     const parts = this.parts;
     const index = this.index;
     if (!parts || !index) return;
@@ -132,7 +140,9 @@ export class ChunkMesh {
       selection = flags;
       for (let t = 0; t < near.length; t++) if (near[t]) selection += 2 ** (t + 3);
     }
-    if (selection === this.selection) return;
+    const groupKey = groups ? groups.join('') : '';
+    if (selection === this.selection && groupKey === this.groupKey) return;
+    this.groupKey = groupKey;
     const hadRoads = ((this.selection >= 0 ? this.selection : -1 - this.selection) & 1) === 1;
     if (Number.isNaN(this.selection) || hadRoads !== roads) {
       // The coarse ground shows the streets only when the road strips aren't drawn.
@@ -151,7 +161,12 @@ export class ChunkMesh {
     const nRoads = n;
     if (this.buildings) {
       const b = this.buildings;
-      put(b.indices.subarray(0, detail === 2 ? b.indices.length : detail === 1 ? b.fineFrom : b.nearOnly), this.roads?.count ?? 0);
+      const base = this.roads?.count ?? 0;
+      put(b.indices.subarray(0, detail === 2 ? b.groupsFrom : detail === 1 ? b.fineFrom : b.nearOnly), base);
+      if (groups && b.groups) {
+        const from = b.groups.from;
+        for (let t = 0; t < groups.length; t++) if (groups[t]) put(b.indices.subarray(from[t], from[t + 1]), base);
+      }
     }
     const nBuildings = n - nRoads;
     if (!near) put(parts.far, this.terrainBase);

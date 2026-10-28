@@ -49,6 +49,12 @@ const ROAD_DRAW = 500;
 const BUILDING_DETAIL = 250;
 /** ...and the finest (cornices and string courses, rooftop plant, eaves' soffits) only this close. */
 const BUILDING_FINE = 120;
+/**
+ * Trees are drawn tile by tile (see BuildingMesh.groups) only this close,
+ * m: there are thousands, and a whole chunk's worth would cost a street
+ * view thousands of triangles for trees a few pixels across.
+ */
+const TREE_DRAW = 200;
 /** A chunk asked for explicitly (teleport, debug probe) is kept this long even if out of range, ms. */
 const PIN_MS = 5000;
 
@@ -60,6 +66,8 @@ type Slot = {
   mesh?: ChunkMesh;
   /** Per 50 m tile: 0 = 2 m detail, 1 = coarse. */
   tiles?: Uint8Array;
+  /** Per tile of the buildings' grouped detail (trees): 1 = drawn. */
+  groups?: Uint8Array;
   ground?: GroundSamples;
   loading?: Promise<void>;
   waiters: (() => void)[];
@@ -227,7 +235,21 @@ export class ChunkStreamer {
         }
       }
     }
-    mesh.update(d < ROAD_DRAW, tiles, d < BUILDING_FINE ? 2 : d < BUILDING_DETAIL ? 1 : 0);
+    let groups: Uint8Array | null = null;
+    const gs = mesh.groupSide;
+    if (gs && d < TREE_DRAW) {
+      const size = this.manifest.chunkSize / gs;
+      groups = slot.groups ??= new Uint8Array(gs * gs);
+      for (let r = 0; r < gs; r++) {
+        for (let c = 0; c < gs; c++) {
+          const tx = chunk.x + c * size;
+          const tz = chunk.z + r * size;
+          const td = Math.hypot(Math.max(tx - this.focus.x, 0, this.focus.x - tx - size), Math.max(tz - this.focus.z, 0, this.focus.z - tz - size));
+          groups[r * gs + c] = td < TREE_DRAW ? 1 : 0;
+        }
+      }
+    }
+    mesh.update(d < ROAD_DRAW, tiles, d < BUILDING_FINE ? 2 : d < BUILDING_DETAIL ? 1 : 0, groups);
   }
 
   private addColliders(slot: Slot): void {
