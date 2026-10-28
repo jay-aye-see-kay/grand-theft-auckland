@@ -692,6 +692,11 @@ async function main() {
         drivingIndex: cars.findIndex((c) => c.car === driving),
         player: player.position.toArray(),
         playerGrounded: player.isGrounded,
+        /** Bottom and top of the drawn person, to check it stands on its feet. */
+        playerModelY: (() => {
+          const box = new THREE.Box3().setFromObject(player.object);
+          return [box.min.y, box.max.y];
+        })(),
         flying: player.flying,
         speedKmh: driving ? Math.abs(driving.forwardSpeed()) * 3.6 : 0,
         skid: driving?.skid ?? 0,

@@ -18,6 +18,9 @@ export async function coreActions(t, tag = '') {
   check(dist(p0, s.player) > 1.5, `walks (moved ${dist(p0, s.player).toFixed(1)} m)${tag}`);
   const above = s.player[1] - s.ground;
   check(s.playerGrounded && above > -0.1 && above < 0.4, `stays on the ground (y=${s.player[1].toFixed(2)}, ground ${s.ground.toFixed(2)})${tag}`);
+  const [bottom, top] = s.playerModelY;
+  check(Math.abs(bottom - s.player[1]) < 0.1 && top - bottom > 1.6 && top - bottom < 1.8,
+    `person stands on its feet (model ${(bottom - s.player[1]).toFixed(2)} to ${(top - s.player[1]).toFixed(2)} m)${tag}`);
   await shot('3-walked');
 
   // Jump: the peak over the next second, a tick at a time.

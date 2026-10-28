@@ -8,8 +8,11 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 // is forward, heading rotates about +y.
 
 const RADIUS = 0.3;
-const HALF_HEIGHT = 0.6; // capsule cylinder half-length; total height 1.8 m
+const HEIGHT = 1.72; // an average adult: any taller looks lanky next to the cars
+const HALF_HEIGHT = HEIGHT / 2 - RADIUS; // capsule cylinder half-length
 const CENTRE_Y = HALF_HEIGHT + RADIUS;
+/** buildPerson() is modelled 1.82 m tall (feet to top of hair). */
+const MODEL_HEIGHT = 1.82;
 
 const MOVE = {
   jog: 4.6, // m/s, full stick or keyboard
@@ -81,7 +84,8 @@ export class Player {
     this.controller.setCharacterMass(80);
 
     const model = buildPerson();
-    model.root.position.y = -CENTRE_Y;
+    // object sits at the feet (syncPose), and so does the model's origin.
+    model.root.scale.setScalar(HEIGHT / MODEL_HEIGHT);
     this.object.add(model.root);
     this.limbs = model;
 
