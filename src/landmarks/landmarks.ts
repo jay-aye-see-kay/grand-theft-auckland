@@ -1,6 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { BUILDING_GROUPS } from '../city/building-chunk.ts';
+import type { Cavity } from '../city/cavity.ts';
 import { cityMaterial } from '../city/city-material.ts';
 import type { CityManifest, LandmarkInfo } from '../city/format.ts';
 import { buildLandmarkAtlas, CUTOUT } from './atlas.ts';
@@ -30,6 +31,8 @@ export interface LandmarkModel {
   height: number;
   /** Writes the near (or far) model and, for the near one, its colliders. */
   build(b: Builder, far: boolean, records: LandmarkInfo[]): void;
+  /** Ground it digs out (an underground car park): see src/city/cavity.ts. */
+  cavity?(records: LandmarkInfo[]): Cavity;
 }
 
 export interface LandmarkState {
@@ -63,6 +66,8 @@ interface Entry {
 export class Landmarks {
   private readonly entries: Entry[] = [];
   private readonly time = { value: 0 };
+  /** Ground the landmarks dig out, for the terrain (ChunkStreamer.cavities). */
+  readonly cavities: Cavity[] = [];
 
   constructor(
     manifest: CityManifest,
@@ -97,6 +102,7 @@ export class Landmarks {
       const x = records.reduce((s, r) => s + r.x, 0) / records.length;
       const z = records.reduce((s, r) => s + r.z, 0) / records.length;
       this.entries.push({ model, records, mesh, near, far, x, z, lod: 'hidden', colliders });
+      if (model.cavity) this.cavities.push(model.cavity(records));
     }
   }
 
@@ -142,9 +148,11 @@ function colliderDesc(c: ColliderSpec): RAPIER.ColliderDesc {
       ? RAPIER.ColliderDesc.cuboid(c.half[0], c.half[1], c.half[2]).setRotation(
           new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), c.rotY),
         )
-      : RAPIER.ColliderDesc.cylinder(c.halfHeight, c.radius);
+      : c.kind === 'cylinder'
+        ? RAPIER.ColliderDesc.cylinder(c.halfHeight, c.radius)
+        : RAPIER.ColliderDesc.trimesh(Float32Array.from(c.vertices), Uint32Array.from(c.indices));
+  if (c.kind !== 'mesh') desc.setTranslation(c.centre[0], c.centre[1], c.centre[2]);
   return desc
-    .setTranslation(c.centre[0], c.centre[1], c.centre[2])
     .setCollisionGroups(BUILDING_GROUPS)
     .setFriction(0.5)
     .setRestitution(0.05);

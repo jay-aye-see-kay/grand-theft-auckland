@@ -52,7 +52,13 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
   BroadcastChannel between tabs with `?net=local`, which `scripts/smoke/areas/rooms.mjs` uses).
   Join with `?room=CODE`. `?debug`: `__game.room()`, `host()`, `join(code)`, `leaveRoom()`, `remoteCars()`.
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),
-  terrain, buildings, facade atlas, skyline LOD, water
+  terrain, buildings, facade atlas, skyline LOD, water. `cavity.ts`: ground dug out at run time
+  (the car park under Aotea Square): the heightfield is lowered to the floor, the original ground
+  becomes a trimesh roof, openings (on the 10 m grid) are drawn at the dug heights; pass `y` to
+  `heightAt(x, z, y)` to get the floor rather than the ground on top.
+- `src/landmarks/`: hand-made models placed from manifest `landmark` records (`overrides/cbd.json`),
+  one mesh each with its own atlas (`atlas.ts`): Sky Tower, Ferry Building, Chief Post Office, Civic,
+  Town Hall, Sky World ("High World": MINIMAX, the Hard Luck Café), Aotea Square (Waharoa, car park)
 - `src/city/road-graph.ts`: the drivable network (`roadgraph.json`) for routing, traffic and police:
   `nearest`, `route` (A*, one-ways respected), `lane` (a pose in a lane, driving on the left),
   `randomLane` (only where a car can always drive on: the main strongly connected part).

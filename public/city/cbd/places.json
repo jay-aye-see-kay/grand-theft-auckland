@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "kinds": {"artwork":76,"attraction":9,"bakery":25,"bank":15,"bar":112,"cafe":195,"casino":1,"church":18,"cinema":5,"civic":11,"dairy":82,"fuel":6,"gallery":14,"gym":34,"hotel":96,"landmark":4,"library":6,"liquor":27,"museum":2,"park":16,"pharmacy":11,"restaurant":344,"salon":129,"shop":312,"street":3,"supermarket":18,"takeaway":180,"theatre":17,"university":19,"wharf":29},
+  "kinds": {"artwork":76,"attraction":9,"bakery":25,"bank":15,"bar":112,"cafe":195,"casino":1,"church":18,"cinema":5,"civic":11,"dairy":82,"fuel":6,"gallery":14,"gym":34,"hotel":96,"landmark":5,"library":6,"liquor":27,"museum":2,"park":16,"pharmacy":11,"restaurant":345,"salon":129,"shop":312,"street":3,"supermarket":18,"takeaway":180,"theatre":17,"university":19,"wharf":29},
   "places": {
     "3degrees": {"name":"3degrees","kind":"shop","street":"Queen Street","x":-250.3,"z":426.1,"at":[-252.3,431.2],"osm":"node/12876539996"},
     "a-maori-figure-in-a-kaitaka-cloak": {"name":"A Māori Figure in a Kaitaka Cloak","kind":"artwork","street":"Quay Street","x":-77.5,"z":-112,"at":[-79.7,-105.4],"osm":"node/9748235842"},
@@ -282,6 +282,7 @@
     "chips-and-dip-superette": {"name":"Chips & Dip Superette","kind":"dairy","street":"Queen Street","x":-276.3,"z":595.9,"at":[-259.6,602.5],"osm":"node/11380736463"},
     "chur-bar": {"name":"Chur Bar","kind":"bar","street":"Mayoral Drive","x":-413.1,"z":1059.3,"at":[-416.2,1050.1],"osm":"node/11214365588"},
     "city-unfitness": {"name":"City Unfitness","kind":"gym","street":"Queen Street","x":-371.2,"z":607.5,"at":[-334.8,622.3],"osm":"node/8723706175"},
+    "civic-car-park": {"name":"the Civic car park","kind":"landmark","street":"Greys Avenue","x":-506.6,"z":963,"at":[-509,961],"osm":"way/431328785"},
     "clobber": {"name":"Clobber","kind":"shop","street":"Lower Albert Street","x":-204.3,"z":-111.9,"at":[-217,-116.4],"osm":"node/10892579306"},
     "cloud-nine-vapes": {"name":"Cloud Nine Vapes","kind":"shop","street":"Lower Albert Street","x":-191.3,"z":-118.1,"at":[-178.7,-113.6],"osm":"node/10892579509"},
     "clowne-plaza-auckland": {"name":"Clowne Plaza Auckland","kind":"hotel","street":"Albert Street","x":-453.5,"z":594.1,"at":[-437.7,600],"osm":"way/331750515"},
@@ -563,6 +564,7 @@
     "hammers-n-snags": {"name":"Hammers 'n' Snags","kind":"shop","street":"High Street","x":-116.5,"z":304.7,"at":[-109.5,306.4],"osm":"node/11204122669"},
     "hard-case": {"name":"Hard Case","kind":"bar","street":"Lower Hobson Street","x":-377.1,"z":-139,"at":[-394.2,-145.1],"osm":"node/12125772203"},
     "hard-drive-thru": {"name":"Hard Drive Thru","kind":"shop","street":"Westhaven Drive","x":-1347.6,"z":-85.3,"at":[-1338.3,-82],"osm":"node/10564528522"},
+    "hard-luck-cafe": {"name":"the Hard Luck Café","kind":"restaurant","street":"Queen Street","x":-388.3,"z":843.8,"at":[-382,836],"osm":"way/23906758"},
     "heck-pizza": {"name":"Heck Pizza","kind":"takeaway","street":"Victoria Street West","x":-458,"z":435.5,"at":[-455,426.8],"osm":"node/11237561463"},
     "hem-and-haw": {"name":"Hem & Haw","kind":"shop","street":"Queen Street","x":-112.8,"z":16.4,"at":[-134.9,7.9],"osm":"node/5872763285"},
     "hemis-barber-bar": {"name":"Hemi's Barber Bar","kind":"salon","street":"Elliott Street","x":-387.9,"z":641.1,"at":[-393.3,638.9],"osm":"node/11258964236"},

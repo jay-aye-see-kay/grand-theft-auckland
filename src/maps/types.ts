@@ -45,8 +45,12 @@ export interface GameMap {
   readonly parking: ParkingSpot[];
   /** Where the player starts, on foot (feet position). */
   readonly spawn: { feet: THREE.Vector3; heading: number };
-  /** Ground (terrain) height at a point, NaN where nothing is loaded. */
-  heightAt(x: number, z: number): number;
+  /**
+   * Ground (terrain) height at a point, NaN where nothing is loaded. Under
+   * ground that's been dug out (an underground car park), give `y` to get
+   * the floor down there when y is below the ground on top.
+   */
+  heightAt(x: number, z: number, y?: number): number;
   /**
    * False while the ground under this point is still streaming in. Bodies
    * there are frozen so they don't fall through the world.

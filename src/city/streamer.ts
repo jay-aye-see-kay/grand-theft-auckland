@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { BuildingChunk } from './building-chunk.ts';
+import type { Cavity } from './cavity.ts';
 import { cityMaterial } from './city-material.ts';
 import { ChunkMesh } from './chunk-mesh.ts';
 import {
@@ -89,6 +90,8 @@ export class ChunkStreamer {
   private readonly wanted: Slot[] = [];
   /** Count of chunk fetches that failed (shown in ?debug). */
   failures = 0;
+  /** Dug out under the ground (cavity.ts); set before anything loads. */
+  cavities: Cavity[] = [];
 
   constructor(base: URL, manifest: CityManifest, scene: THREE.Scene, world: RAPIER.World, body: RAPIER.RigidBody, atlas: THREE.Texture) {
     this.material = cityMaterial(atlas);
@@ -128,10 +131,14 @@ export class ChunkStreamer {
     return x >= b.minX && x < b.maxX && z >= b.minZ && z < b.maxZ;
   }
 
-  /** Collision height at a point, NaN if that chunk isn't loaded. */
-  heightAt(x: number, z: number): number {
+  /**
+   * Ground height at a point, NaN if that chunk isn't loaded. Over a cavity
+   * that's the ground on top, unless `y` is given and well below it (see
+   * TerrainChunk.heightAt).
+   */
+  heightAt(x: number, z: number, y?: number): number {
     const chunk = this.slotAt(x, z)?.chunk;
-    return chunk ? chunk.heightAt(x, z) : NaN;
+    return chunk ? chunk.heightAt(x, z, y) : NaN;
   }
 
   /** The ground samples and index of the nearest 2 m ground sample to a point, null if that chunk isn't loaded. */
@@ -327,7 +334,7 @@ export class ChunkStreamer {
         if (this.distance(slot.info, this.focus.x, this.focus.z) > UNLOAD_RADIUS && !slot.waiters.length) return;
         const o = this.origin(slot.info);
         const half = this.manifest.chunkSize / 2;
-        const chunk = new TerrainChunk(slot.info.i, slot.info.j, o.x, o.z, samples, this.layout, ground ?? undefined);
+        const chunk = new TerrainChunk(slot.info.i, slot.info.j, o.x, o.z, samples, this.layout, ground ?? undefined, this.cavities);
         slot.ground = ground ?? undefined;
         slot.chunk = chunk;
         slot.buildings = buildings ? new BuildingChunk(buildings, o.x + half, o.z + half) : undefined;

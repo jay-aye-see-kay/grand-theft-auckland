@@ -68,8 +68,10 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
     skyline = new Skyline(bytes, manifest, atlas, haze);
     scene.add(skyline.mesh);
   }
-  // Hand-made landmarks (the Sky Tower, Ferry Building, Chief Post Office, Civic), one mesh each.
+  // Hand-made landmarks (the Sky Tower, Ferry Building, Chief Post Office, Civic...), one mesh each,
+  // and the ground they dig out (the car park under Aotea Square) before any of it loads.
   const landmarks = new Landmarks(manifest, LANDMARK_MODELS, scene, world, ground, haze, maxAnisotropy);
+  terrain.cavities = landmarks.cavities;
   const update = (x: number, z: number) => {
     terrain.update(x, z);
     landmarks.update(x, z);
@@ -82,7 +84,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   await terrain.ensureAround(s0.x, s0.z, PRELOAD_RADIUS);
   update(s0.x, s0.z);
 
-  const heightAt = (x: number, z: number) => terrain.heightAt(x, z);
+  const heightAt = (x: number, z: number, y?: number) => terrain.heightAt(x, z, y);
   const ensureLoaded = async (x: number, z: number) => {
     await terrain.ensureLoaded(x, z);
     update(x, z);

@@ -29,7 +29,8 @@ export interface Mat {
 /** A static collider, in world coordinates. */
 export type ColliderSpec =
   | { kind: 'box'; centre: V3; half: V3; rotY: number }
-  | { kind: 'cylinder'; centre: V3; halfHeight: number; radius: number };
+  | { kind: 'cylinder'; centre: V3; halfHeight: number; radius: number }
+  | { kind: 'mesh'; vertices: number[]; indices: number[] };
 
 const _c = new THREE.Color();
 
@@ -295,6 +296,12 @@ export class Builder {
 
   collideCylinder(cx: number, cz: number, y0: number, y1: number, radius: number): void {
     this.colliders.push({ kind: 'cylinder', centre: [cx, (y0 + y1) / 2, cz], halfHeight: (y1 - y0) / 2, radius });
+  }
+
+  /** A flat polygon at height y as a (two-sided) collider: a ceiling the camera can't see past. */
+  collideFlat(ring: V2[], y: number): void {
+    const tris = THREE.ShapeUtils.triangulateShape(ring.map(([x, z]) => new THREE.Vector2(x, z)), []);
+    this.colliders.push({ kind: 'mesh', vertices: ring.flatMap(([x, z]) => [x, y, z]), indices: tris.flat() });
   }
 
   /** The geometry, in the city's attribute layout (cityMaterial with the landmark option). */

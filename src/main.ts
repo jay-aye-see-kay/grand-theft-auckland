@@ -257,7 +257,7 @@ async function main() {
         break;
       }
     }
-    const ground = map.heightAt(spot.x, spot.z);
+    const ground = map.heightAt(spot.x, spot.z, spot.y);
     spot.y = Math.max(spot.y - 0.6, (Number.isNaN(ground) ? 0 : ground) + 0.05);
     player.place(spot, heading);
     player.setActive(true);
@@ -270,7 +270,7 @@ async function main() {
   /** Back on its wheels where it is, never below the ground. */
   const resetCar = (car: Car) => {
     const t = car.body.translation();
-    const ground = map.heightAt(t.x, t.z);
+    const ground = map.heightAt(t.x, t.z, t.y);
     car.reset(Number.isNaN(ground) ? 0 : ground);
   };
 
@@ -279,7 +279,7 @@ async function main() {
     if (p.y < FALL_LIMIT) return true;
     const c = map.clamp(p.x, p.z);
     if (Math.hypot(c.x - p.x, c.z - p.z) > OUT_OF_BOUNDS) return true;
-    const ground = map.heightAt(p.x, p.z);
+    const ground = map.heightAt(p.x, p.z, p.y);
     return !Number.isNaN(ground) && p.y < ground - UNDERGROUND;
   };
 
@@ -414,7 +414,7 @@ async function main() {
       spot = new THREE.Vector3(x + dir.x * reach, y, z + dir.z * reach);
       break;
     }
-    const ground = map.heightAt(spot.x, spot.z);
+    const ground = map.heightAt(spot.x, spot.z, spot.y);
     spot.y = Number.isNaN(ground) ? spot.y + 0.5 : ground + 0.05;
     player.place(spot, heading);
     chase.snap(heading);
@@ -588,7 +588,7 @@ async function main() {
     // Flying outruns the streaming sometimes, and there's no ground to fall through.
     const playerFrozen = !driving && !player.flying && !map.hasGround(player.position.x, player.position.z);
     // Fly over the harbour, not along its floor.
-    const floor = player.flying ? Math.max(map.heightAt(feet.x, feet.z), water ? water.level : -Infinity) : NaN;
+    const floor = player.flying ? Math.max(map.heightAt(feet.x, feet.z, feet.y), water ? water.level : -Infinity) : NaN;
 
     accumulator += frameDt;
     const tPhys = performance.now();
@@ -845,7 +845,7 @@ async function main() {
         /** Ground height under the player, or under the car being driven. */
         ground: (() => {
           const p = driving ? driving.object.position : player.position;
-          return map.heightAt(p.x, p.z);
+          return map.heightAt(p.x, p.z, p.y);
         })(),
         /** Surface under the player, or under the car being driven. */
         surface: (() => {
@@ -1049,11 +1049,14 @@ async function main() {
         chase.snap(map.spawn.heading);
         await step(2); // and stays paused: what follows is stepped from here
       },
-      /** Move a car (default: the purple one) to (x, z) on the ground, facing `heading`. */
-      teleportCar: async (index: number, x: number, z: number, heading: number) => {
+      /**
+       * Move a car (default: the purple one) to (x, z) on the ground, facing
+       * `heading`; give `y` to put it on a floor under the ground (a car park).
+       */
+      teleportCar: async (index: number, x: number, z: number, heading: number, y?: number) => {
         await map.ensureLoaded(x, z);
         const car = cars[index].car;
-        car.place(new THREE.Vector3(x, map.heightAt(x, z) + 0.9, z), heading);
+        car.place(new THREE.Vector3(x, map.heightAt(x, z, y) + 0.9, z), heading);
         if (car === driving) chase.snap();
       },
     };

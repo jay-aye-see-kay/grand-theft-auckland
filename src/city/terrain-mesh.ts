@@ -94,6 +94,21 @@ export interface TerrainParts {
   tilesPerSide: number;
 }
 
+/**
+ * A cavity dug under the chunk (cavity.ts, terrain-chunk.ts). The ground is
+ * still drawn at its own heights, except in the openings, which are drawn
+ * at the carved heights in one colour (a ramp's asphalt); skirts are left
+ * off where the ground over them is dug out, or they'd hang into it.
+ */
+export interface TerrainCarve {
+  /** Collision heights, the same layout as the samples. */
+  heights: Float32Array;
+  /** Whether the point (local metres) is inside an opening. */
+  open(x: number, z: number): boolean;
+  /** sRGB hex. */
+  colour: number;
+}
+
 /** Collects vertices in compact attribute formats. */
 class Verts {
   pos: number[] = [];
@@ -127,12 +142,13 @@ class Verts {
  * Skirt along a run of top vertices (in order along the edge), facing
  * `out` (the edge's outward direction on the ground, [dx, dz]).
  */
-function skirt(v: Verts, tops: number[], out: [number, number]): Uint32Array {
+function skirt(v: Verts, tops: number[], out: [number, number], keep?: (t0: number, t1: number) => boolean): Uint32Array {
   const bottoms = tops.map((t) => v.copy(t, -SKIRT_DEPTH, 0.8));
   const tris: number[] = [];
   for (let k = 0; k + 1 < tops.length; k++) {
     const t0 = tops[k];
     const t1 = tops[k + 1];
+    if (keep && !keep(t0, t1)) continue;
     const b0 = bottoms[k];
     const b1 = bottoms[k + 1];
     // Triangle (t0, t1, b0) faces (dz, 0, -dx) for an edge running along (dx, dz).
@@ -154,6 +170,7 @@ export function buildTerrainParts(
   origin: { x: number; z: number },
   ground: GroundSamples | undefined,
   near: boolean,
+  carve?: TerrainCarve,
 ): TerrainParts {
   const { cell, cells, apron, seaShelf } = layout;
   const { n, heights } = samples;
@@ -198,10 +215,13 @@ export function buildTerrainParts(
   for (let gz = 0; gz < sideC; gz++) for (let gx = 0; gx < sideC; gx++) coarse[gz * sideC + gx] = lattice(gz * step, gx * step, hd(gz * step, gx * step) - sink[gz * sideC + gx], step);
   const at = (grid: Int32Array, w: number, gx: number, gz: number) => grid[gz * w + gx];
   /** Quads of a grid (side w, spacing `per` cells) over cells [r0, r1) x [c0, c1). */
+  /** Whether the cell of side `per` samples with its north-west corner at sample (r, c) is a cavity's opening. */
+  const open = (r: number, c: number, per: number) => !!carve && carve.open(origin.x + (c + per / 2) * cell, origin.z + (r + per / 2) * cell);
   const quads = (grid: Int32Array, w: number, per: number, r0: number, r1: number, c0: number, c1: number) => {
     const tris: number[] = [];
     for (let gz = r0 / per; gz < r1 / per; gz++) {
       for (let gx = c0 / per; gx < c1 / per; gx++) {
+        if (open(gz * per, gx * per, per)) continue;
         const p00 = at(grid, w, gx, gz);
         const p10 = at(grid, w, gx + 1, gz);
         const p01 = at(grid, w, gx, gz + 1);
@@ -220,8 +240,39 @@ export function buildTerrainParts(
   };
   const OUT: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
 
+  // A cavity: its openings at the carved heights, and no skirts hanging into it.
+  const hc = carve ? (r: number, c: number) => carve.heights[(r + apron) * n + c + apron] : h;
+  const lowered = (r: number, c: number) => hc(r, c) < h(r, c) - 0.01;
+  const keep = carve
+    ? (t0: number, t1: number) => {
+        const at = (t: number) => lowered(Math.round(v.pos[t * 3 + 2] / cell), Math.round(v.pos[t * 3] / cell));
+        return !at(t0) || !at(t1);
+      }
+    : undefined;
+  const openColour = new THREE.Color(carve?.colour ?? 0);
+  const openings = (per: number, r0: number, r1: number, c0: number, c1: number) => {
+    const tris: number[] = [];
+    if (!carve) return tris;
+    const corner = (r: number, c: number) => {
+      normal.set(-(hc(r, c + 1) - hc(r, c - 1)) / (2 * cell), 1, -(hc(r + 1, c) - hc(r - 1, c)) / (2 * cell)).normalize();
+      return v.add(c * cell, hc(r, c), r * cell, normal, openColour, openColour, openColour);
+    };
+    for (let r = r0; r < r1; r += per) {
+      for (let c = c0; c < c1; c += per) {
+        if (!open(r, c, per)) continue;
+        const p00 = corner(r, c);
+        const p10 = corner(r, c + per);
+        const p01 = corner(r + per, c);
+        const p11 = corner(r + per, c + per);
+        tris.push(p00, p01, p10, p10, p01, p11);
+      }
+    }
+    return tris;
+  };
+
   const far: number[] = quads(coarse, sideC, step, 0, cells, 0, cells);
-  for (let e = 0; e < 4; e++) far.push(...skirt(v, edge(coarse, sideC, step, e, 0, cells, 0, cells), OUT[e]));
+  far.push(...openings(step, 0, cells, 0, cells));
+  for (let e = 0; e < 4; e++) far.push(...skirt(v, edge(coarse, sideC, step, e, 0, cells, 0, cells), OUT[e], keep));
 
   let tiles: TerrainParts['tiles'];
   if (near) {
@@ -235,8 +286,8 @@ export function buildTerrainParts(
         const r1 = r0 + tileCells;
         const c1 = c0 + tileCells;
         const lods = [[fine, side1, 1], [coarse, sideC, step]] as const;
-        const ground = lods.map(([g, w, per]) => Uint32Array.from(quads(g, w, per, r0, r1, c0, c1))) as [Uint32Array, Uint32Array];
-        const skirts = lods.map(([g, w, per]) => OUT.map((o, e) => skirt(v, edge(g, w, per, e, r0, r1, c0, c1), o))) as [Uint32Array[], Uint32Array[]];
+        const ground = lods.map(([g, w, per]) => Uint32Array.from([...quads(g, w, per, r0, r1, c0, c1), ...openings(per, r0, r1, c0, c1)])) as [Uint32Array, Uint32Array];
+        const skirts = lods.map(([g, w, per]) => OUT.map((o, e) => skirt(v, edge(g, w, per, e, r0, r1, c0, c1), o, keep))) as [Uint32Array[], Uint32Array[]];
         // The coarse grid's height anywhere in the tile is linear over each
         // coarse triangle; compare it with every 2 m sample.
         let flat = true;

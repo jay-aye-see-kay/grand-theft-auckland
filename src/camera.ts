@@ -25,6 +25,9 @@ const _desired = new THREE.Vector3();
 const _look = new THREE.Vector3();
 const _from = new THREE.Vector3();
 const _toCam = new THREE.Vector3();
+const _up = { x: 0, y: 1, z: 0 };
+/** How far under a ceiling the camera keeps, m (well past the near plane). */
+const CEILING_GAP = 0.6;
 
 export class ChaseCamera {
   private yawAngle: number | null = null;
@@ -74,6 +77,11 @@ export class ChaseCamera {
 
     // Pull in if a building is between the target and the camera.
     _from.set(target.x, target.y + profile.lookHeight, target.z);
+    // Under a low ceiling (the car park under Aotea Square), stay well below
+    // it: pulled in along a near-level ray, the camera would sit just under
+    // it, closer than the near plane, and see through.
+    const up = this.world.castRay(new RAPIER.Ray(_from, _up), height + 1, true, undefined, undefined, ignore);
+    if (up) _desired.y = Math.min(_desired.y, _from.y + Math.max(up.timeOfImpact - CEILING_GAP, 0));
     _toCam.copy(_desired).sub(_from);
     const len = _toCam.length();
     _toCam.divideScalar(len);

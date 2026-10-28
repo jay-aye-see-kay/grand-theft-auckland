@@ -28,10 +28,22 @@ export const L = {
   lattice: 12, // cut-out: steel lattice panel, 2 x 2 m
   balustrade: 13, // cut-out: stone balusters and rail, 2 x 1.2 m
   civicGround: 14, // Civic ground floor: entrance doors and poster cases, 6 x 4 m
+  signs: 15, // cut-out: lettered signs, one per 64 px row (see SIGN)
+  roundel: 16, // cut-out: the Hard Luck Café's round logo
+  townHall: 17, // Town Hall upper floors: Oamaru stone bay, two arched windows over a balcony, 5 x 9 m
 } as const;
 
 /** Layers whose alpha is coverage (cityMaterial's `cutout` bits). */
-export const CUTOUT = (1 << L.decal) | (1 << L.lattice) | (1 << L.balustrade);
+export const CUTOUT = (1 << L.decal) | (1 << L.lattice) | (1 << L.balustrade) | (1 << L.signs) | (1 << L.roundel);
+
+/** Rows of the signs layer, as [u0, v0, u1, v1] (v up): each 4:1. */
+const signRow = (row: number): [number, number, number, number] => [0, 1 - (row + 1) / 4, 1, 1 - row / 4];
+export const SIGN = {
+  minimax: signRow(0),
+  aotea: signRow(1),
+  carPark: signRow(2),
+  highWorld: signRow(3),
+} as const;
 
 /**
  * Cells of the decal layer, as [u0, v0, u1, v1] (v up). The layer is a 4 x 4
@@ -50,6 +62,8 @@ export const DECAL = {
   louvre: cellUv(3, 2),
   cartouche: cellUv(0, 3),
   oculus: cellUv(1, 3),
+  parking: cellUv(2, 3),
+  guitar: cellUv(3, 3),
 } as const;
 
 function fill(c: Ctx, m: Ctx, x: number, y: number, w: number, h: number, colour: string, mask: number) {
@@ -494,6 +508,44 @@ const PAINTERS: Painter[] = [
       c.lineTo(x, y + 19);
       c.stroke();
     }
+    // Parking sign: a white P on a blue square with a white border.
+    {
+      const x0 = 128;
+      const y0 = 192;
+      for (const [ctx, colour] of [[c, '#ffffff'], [m, '#ffffff']] as const) {
+        ctx.fillStyle = colour;
+        ctx.fillRect(x0 + 2, y0 + 2, 60, 60);
+      }
+      c.fillStyle = '#1d4fa3';
+      c.fillRect(x0 + 6, y0 + 6, 52, 52);
+      c.fillStyle = '#ffffff';
+      c.font = 'bold 50px Arial, Helvetica, sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText('P', x0 + 32, y0 + 35);
+    }
+    // An electric guitar, body down, for the café's wall.
+    {
+      const x0 = 192 + 32;
+      const y0 = 192;
+      const guitar = (ctx: Ctx, body: string, neck: string) => {
+        ctx.fillStyle = neck;
+        ctx.fillRect(x0 - 3, y0 + 4, 6, 34);
+        ctx.fillRect(x0 - 5, y0 + 2, 10, 7);
+        ctx.fillStyle = body;
+        ctx.beginPath();
+        ctx.ellipse(x0 - 6, y0 + 46, 12, 13, -0.3, 0, Math.PI * 2);
+        ctx.ellipse(x0 + 5, y0 + 50, 13, 11, 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      };
+      guitar(m, '#ffffff', '#ffffff');
+      guitar(c, '#c0281e', '#4a2f1d');
+      c.fillStyle = '#f2f2f2';
+      c.fillRect(x0 - 8, y0 + 44, 16, 3);
+      c.fillRect(x0 - 8, y0 + 50, 16, 3);
+      c.fillStyle = '#e8e2d6';
+      c.fillRect(x0 - 0.5, y0 + 6, 1, 42);
+    }
   },
   // cpoBase: Coromandel granite, rusticated, round-arched window
   (c, m, rnd) => {
@@ -818,6 +870,140 @@ const PAINTERS: Painter[] = [
     fill(c, m, 0, 20, R, 34, '#2c2a28', 0);
     c.fillStyle = 'rgba(255,236,190,0.85)';
     for (let x = 20; x < R - 20; x += 14) c.fillRect(x, 30, 8, 14);
+  },
+  // signs: one lettered sign per 64 px row, cut out round the letters
+  (c, m) => {
+    c.clearRect(0, 0, R, R);
+    m.fillStyle = '#000';
+    m.fillRect(0, 0, R, R);
+    /** Words centred in a row, squeezed to fit, outlined so they read against anything. */
+    const word = (row: number, text: string, fillColour: string, edge: string, px: number, font = 'Arial Black, Arial, Helvetica, sans-serif') => {
+      const y = row * 64 + 34;
+      for (const ctx of [c, m]) {
+        ctx.save();
+        ctx.font = `900 ${px}px ${font}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        const w = ctx.measureText(text).width;
+        const squeeze = Math.min(1, (R - 12) / w);
+        ctx.translate(R / 2, y);
+        ctx.scale(squeeze, 1);
+        ctx.lineWidth = 7;
+        ctx.strokeStyle = ctx === m ? '#fff' : edge;
+        ctx.strokeText(text, 0, 0);
+        ctx.fillStyle = ctx === m ? '#fff' : fillColour;
+        ctx.fillText(text, 0, 0);
+        ctx.restore();
+      }
+    };
+    word(0, 'MINIMAX', '#eaf4ff', '#1b5fd1', 52);
+    word(1, 'AOTEA CENTRE', '#ffffff', '#3a3a3a', 34);
+    word(2, 'CIVIC CAR PARK', '#ffffff', '#1d4fa3', 32);
+    word(3, 'HIGH WORLD', '#ffd23a', '#7a1fa8', 44);
+  },
+  // roundel: the Hard Luck Café's round logo (a parody), cut out
+  (c, m) => {
+    c.clearRect(0, 0, R, R);
+    m.fillStyle = '#000';
+    m.fillRect(0, 0, R, R);
+    const cx = R / 2;
+    const cy = R / 2;
+    m.fillStyle = '#fff';
+    m.beginPath();
+    m.arc(cx, cy, 124, 0, Math.PI * 2);
+    m.fill();
+    m.fillRect(0, cy - 30, R, 60);
+    const disc = (r: number, colour: string) => {
+      c.fillStyle = colour;
+      c.beginPath();
+      c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.fill();
+    };
+    disc(124, '#f2c230');
+    disc(116, '#c8202a');
+    disc(100, '#f6e7c1');
+    // Lettering round the top and bottom of the ring.
+    const arc = (text: string, start: number, bottom: boolean) => {
+      c.save();
+      c.font = '900 26px Arial Black, Arial, Helvetica, sans-serif';
+      c.fillStyle = '#f6e7c1';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      const step = 0.2;
+      for (let k = 0; k < text.length; k++) {
+        const a = start + (bottom ? -1 : 1) * (k - (text.length - 1) / 2) * step;
+        c.save();
+        c.translate(cx + Math.cos(a) * 108, cy + Math.sin(a) * 108);
+        c.rotate(a + (bottom ? -Math.PI / 2 : Math.PI / 2));
+        c.fillText(text[k], 0, 1);
+        c.restore();
+      }
+      c.restore();
+    };
+    arc('HARD LUCK', -Math.PI / 2, false);
+    arc('AUCKLAND', Math.PI / 2, true);
+    // The banner across the middle.
+    c.fillStyle = '#c8202a';
+    c.fillRect(0, cy - 30, R, 60);
+    c.fillStyle = '#f2c230';
+    c.fillRect(0, cy - 30, R, 4);
+    c.fillRect(0, cy + 26, R, 4);
+    c.save();
+    c.font = 'italic 900 50px Georgia, Times New Roman, serif';
+    c.fillStyle = '#ffffff';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText('Café', cx, cy + 2);
+    c.restore();
+    // A star over the middle, under the top lettering.
+    c.fillStyle = '#c8202a';
+    c.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const a = -Math.PI / 2 + (k * Math.PI) / 5;
+      const r = k % 2 ? 9 : 22;
+      c.lineTo(cx + Math.cos(a) * r, cy - 62 + Math.sin(a) * r);
+    }
+    c.fill();
+  },
+  // townHall: Oamaru stone bay with a pair of round-arched windows over a balustraded balcony, 5 x 9 m
+  (c, m, rnd) => {
+    fill(c, m, 0, 0, R, R, grey(TINT_GREY), 1);
+    grain(c, rnd, 5000, 0.1);
+    ashlar(c, rnd, 0, 0, R, R, 14, 60, 0.08);
+    // Pilasters at the bay edges with simple capitals.
+    for (const x0 of [0, R - 22]) {
+      fill(c, m, x0, 0, 22, R, grey(238), 1);
+      c.fillStyle = 'rgba(0,0,0,0.16)';
+      c.fillRect(x0 === 0 ? 21 : x0, 0, 1.5, R);
+      fill(c, m, x0 - 3, 14, 28, 8, grey(246), 1);
+      shadowBelow(c, x0 - 3, 22, 28, 5, 0.25);
+    }
+    // Entablature band at the top.
+    band(c, m, 0, 12, grey(244), 1);
+    shadowBelow(c, 0, 12, R, 6, 0.3);
+    // Two arched windows with keystones.
+    for (const x0 of [50, 136]) {
+      const w = 70;
+      const spring = 92;
+      voussoirs(c, m, x0 + w / 2, spring, w / 2, 10, grey(242), 1, 9);
+      c.save();
+      m.save();
+      for (const ctx of [c, m]) {
+        archPath(ctx, x0, w, spring, 200);
+        ctx.clip();
+      }
+      pane(c, m, rnd, x0, spring - w / 2, w, 200 - spring + w / 2, 0.05);
+      c.restore();
+      m.restore();
+      sashes(c, x0, spring, w, 108, 2, 3, '#ece6da', 2.5);
+      fill(c, m, x0 + w / 2 - 6, spring - w / 2 - 8, 12, 14, grey(248), 1);
+    }
+    // Balcony: a rail and balusters across the bay at the sill.
+    fill(c, m, 30, 200, R - 60, 7, grey(246), 1);
+    for (let x = 36; x < R - 36; x += 11) fill(c, m, x, 207, 5, 30, grey(236), 1);
+    fill(c, m, 30, 236, R - 60, 8, grey(244), 1);
+    shadowBelow(c, 30, 244, R - 60, 8, 0.35);
   },
 ];
 
