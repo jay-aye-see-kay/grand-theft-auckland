@@ -11,7 +11,8 @@
 // junctions, way ends and traffic signals; edges run between them. Each edge
 // stores its lanes each way (0 one way for one-way streets, whose geometry
 // always runs in the allowed direction), so the game can put cars in a lane
-// on the left without knowing about OSM's oneway=-1.
+// on the left without knowing about OSM's oneway=-1, and where the junction
+// at each end starts (roads.ts's junction mouths): the stop line.
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadCityData } from './fetch.ts';
@@ -139,6 +140,8 @@ export function buildRoadGraph(osm: OsmData, net: RoadNetwork, terrain: TerrainS
       let ks = [...Array(k - start + 1).keys()].map((q) => start + q);
       let a = nodeOf(r, start);
       let b = nodeOf(r, k);
+      // Stop lines: where the junction at each end starts (its mouth), m from that end.
+      let stops = [r1(net.mouth(r, start, 1)), r1(net.mouth(r, k, -1))];
       const len = r.s[k] - r.s[start];
       start = k;
       if (len < 0.05) continue;
@@ -147,6 +150,7 @@ export function buildRoadGraph(osm: OsmData, net: RoadNetwork, terrain: TerrainS
       if (f === 0) {
         ks = ks.reverse();
         [a, b, f, w] = [b, a, w, f];
+        stops = stops.reverse();
       }
       // Heights every few metres, so a hill's curve between OSM nodes survives (decks are straight between nodes).
       const pts: Local[] = [];
@@ -169,7 +173,7 @@ export function buildRoadGraph(osm: OsmData, net: RoadNetwork, terrain: TerrainS
       }
       const pos: number[] = [];
       for (const q of simplify(pts, ys, SIMPLIFY, SIMPLIFY_Y)) pos.push(r1(pts[q].x), r1(pts[q].z), r1(ys[q]));
-      edges.push([a, b, cls.get(r.highway)!, nameOf(t.name), f, w, r1(r.width), flags, r1(len), r.id, pos]);
+      edges.push([a, b, cls.get(r.highway)!, nameOf(t.name), f, w, r1(r.width), flags, r1(len), r.id, stops[0], stops[1], pos]);
       km += len / 1000;
     }
   }

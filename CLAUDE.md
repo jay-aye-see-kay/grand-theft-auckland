@@ -89,7 +89,7 @@ Measured at `__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`
 | Street (`spawn`, `queen-st`) | < 150k | < 60 |
 | Aerial | < 300k | < 100 |
 
-Street view is ~146k / ~52 today (a visible mission marker is one call). Each chunk is one draw call: put new static
+Street view is ~148k / ~52 today (a visible mission marker is one call). Each chunk is one draw call: put new static
 geometry into `ChunkMesh` (vertex colours, shared materials/atlas), not new
 meshes. Small building detail goes in `MeshBuilder.detail()`: near-only
 (within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves).

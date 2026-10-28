@@ -31,10 +31,11 @@ export const RESTRICTED = 4;
 /** [x, z, y, flags]: map metres (origin Britomart, x east, z south, y above sea level). */
 export type RoadGraphNodeRow = [number, number, number, number];
 /**
- * [a, b, class, name, fw lanes, bw lanes, carriageway width m, flags, length m, OSM way id, [x, z, y, ...]]:
- * name indexes `names` (-1 for none); the points run from a to b, both included.
+ * [a, b, class, name, fw lanes, bw lanes, carriageway width m, flags, length m, OSM way id, stop a, stop b, [x, z, y, ...]]:
+ * name indexes `names` (-1 for none); stops are how far the junction at each end reaches (0 for none), m;
+ * the points run from a to b, both included.
  */
-export type RoadGraphEdgeRow = [number, number, number, number, number, number, number, number, number, number, number[]];
+export type RoadGraphEdgeRow = [number, number, number, number, number, number, number, number, number, number, number, number, number[]];
 export interface RoadGraphFile {
   format: number;
   classes: readonly string[];
@@ -75,6 +76,13 @@ export interface RoadEdge {
   readonly restricted: boolean;
   readonly length: number;
   readonly osm: number;
+  /**
+   * Stop lines: how far the junction at each end reaches into the edge, m
+   * from that end (0 where there's no junction). Cars arriving at b wait at
+   * length - stopB; the limit line is painted there at traffic signals.
+   */
+  readonly stopA: number;
+  readonly stopB: number;
   /** Centreline points x, z, y from a to b, and the distance along at each. */
   readonly pts: Float32Array;
   readonly s: Float32Array;
@@ -140,7 +148,7 @@ export class RoadGraph {
   constructor(file: RoadGraphFile) {
     if (file.format !== ROADGRAPH_FORMAT) throw new Error(`road graph format ${file.format}, expected ${ROADGRAPH_FORMAT}`);
     const out: { edge: RoadEdge; dir: Dir; to: number }[][] = file.nodes.map(() => []);
-    const edges: RoadEdge[] = file.edges.map(([a, b, cls, name, fw, bw, width, flags, length, osm, p], index) => {
+    const edges: RoadEdge[] = file.edges.map(([a, b, cls, name, fw, bw, width, flags, length, osm, stopA, stopB, p], index) => {
       const pts = new Float32Array(p);
       const s = new Float32Array(p.length / 3);
       for (let k = 1; k < s.length; k++) s[k] = s[k - 1] + Math.hypot(p[3 * k] - p[3 * k - 3], p[3 * k + 1] - p[3 * k - 2]);
@@ -148,7 +156,7 @@ export class RoadGraph {
         index, a, b, highway: (file.classes[cls] ?? 'service') as RoadClass, name: file.names[name] ?? '', fw, bw, width,
         bridge: !!(flags & BRIDGE), roundabout: !!(flags & ROUNDABOUT), restricted: !!(flags & RESTRICTED),
         // The simplified centreline is a few cm shorter than the OSM one; use its own length so s stays on it.
-        length: s[s.length - 1] || length, osm, pts, s, main: false,
+        length: s[s.length - 1] || length, osm, stopA, stopB, pts, s, main: false,
       };
     });
     for (const e of edges) {

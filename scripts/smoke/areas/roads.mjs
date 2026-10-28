@@ -2,6 +2,7 @@
 // the drivable network that routing, traffic and police use. Routes between
 // far-apart places exist, only ever drive one-ways the right way, run along
 // the asphalt, and carry heights that match the ground (and the decks).
+// Edges know their junction mouths (citygen's roads.ts): the stop lines.
 
 export default {
   name: 'roads',
@@ -15,6 +16,12 @@ export default {
     // Lower Queen St: the nearest road, and its lanes.
     const queen = await game('roadAt', -170, 220);
     check(queen?.name === 'Queen Street' && queen.fw + queen.bw >= 2 && queen.main, `nearest road on lower Queen St: ${queen?.name} (${queen?.highway}, ${queen?.fw}+${queen?.bw} lanes, ${queen?.dist.toFixed(1)} m off)`);
+
+    // Junction mouths: lower Queen St's carriageway stops short of Customs St
+    // (behind the crossing), which is where traffic waits and the lane lines end.
+    const arm = await game('roadAt', -128, 50);
+    const stop = Math.max(...(arm?.stops ?? [0]));
+    check(arm?.name === 'Queen Street' && stop > 8 && stop < 25, `Queen St's stop line at Customs St is ${stop.toFixed(1)} m back from the middle of the junction`);
 
     // The milk run, both ways: one-ways make the two routes differ.
     const dairy = await game('place', 'k-road-dairy');

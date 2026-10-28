@@ -840,7 +840,7 @@ async function main() {
         const r = map.roads?.nearest(x, z, { within, open: false });
         if (!r) return null;
         const { edge: e, ...at } = r;
-        return { ...at, edge: e.index, name: e.name, highway: e.highway, fw: e.fw, bw: e.bw, width: e.width, length: e.length, main: e.main, restricted: e.restricted };
+        return { ...at, edge: e.index, name: e.name, highway: e.highway, fw: e.fw, bw: e.bw, width: e.width, length: e.length, stops: [e.stopA, e.stopB], main: e.main, restricted: e.restricted };
       },
       /**
        * The shortest legal drive between two points: metres, the centreline,
