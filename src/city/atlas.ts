@@ -88,9 +88,10 @@ export function wallBase(c: Ctx, m: Ctx, rnd: () => number, v = TINT_GREY) {
 export function glass(c: Ctx, m: Ctx, rnd: () => number, x: number, y: number, w: number, h: number, mask: number, dark = 0) {
   const k = 0.85 + rnd() * 0.3 - dark;
   const g = c.createLinearGradient(x, y, x + w * 0.3, y + h);
-  g.addColorStop(0, rgb(150 * k, 178 * k, 198 * k));
-  g.addColorStop(0.45, rgb(92 * k, 120 * k, 142 * k));
-  g.addColorStop(1, rgb(52 * k, 70 * k, 88 * k));
+  // Grey-green rather than navy: Auckland's towers are mostly tinted or silvered glass.
+  g.addColorStop(0, rgb(158 * k, 180 * k, 190 * k));
+  g.addColorStop(0.45, rgb(98 * k, 118 * k, 124 * k));
+  g.addColorStop(1, rgb(58 * k, 72 * k, 78 * k));
   c.fillStyle = g;
   c.fillRect(x, y, w, h);
   // A diagonal sheen.

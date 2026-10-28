@@ -47,14 +47,14 @@ const SEABED = new THREE.Color(0x24363a);
 const SEAWALL = new THREE.Color(0x5d5a54);
 // Land use (see SURFACES in format.ts). Roads, footpaths and paving match the
 // roads layer's colours, so coarse terrain far away still shows the streets.
-const PAVED = new THREE.Color(0x8e8b84);
+const PAVED = new THREE.Color(0x807f7a);
 const TREES = new THREE.Color(0x456b36);
 /** Bark mulch, with flowers in the beds' colours dotted over it. */
 const MULCH = new THREE.Color(0x5e4632);
 const FLOWERS = [new THREE.Color(0xc4425e), new THREE.Color(0xe2b23c), new THREE.Color(0xe8e4dc), new THREE.Color(0x8a5bb0)];
-const PAVING = new THREE.Color(0x9f9b93);
-const FOOTPATH = new THREE.Color(0x9d9b95);
-const ASPHALT = new THREE.Color(0x35383d);
+const PAVING = new THREE.Color(0x8f8c85);
+const FOOTPATH = new THREE.Color(0x82827e);
+const ASPHALT = new THREE.Color(0x424346);
 /**
  * Under a crown at full detail (near, where the trees are drawn) the ground
  * is darkened by up to this much: their shade. Coarse ground (far, where

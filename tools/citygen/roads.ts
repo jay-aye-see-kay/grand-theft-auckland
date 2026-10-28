@@ -98,9 +98,9 @@ type RGB = [number, number, number];
 type Level = { lift: number; layer: number; colour: RGB; tile: number };
 /** Lift above the terrain (m), draw layer, colour and texture (see facades.ts) of each surface. */
 const LEVELS = {
-  paving: { lift: 0.014, layer: 1, colour: rgb(0x9f9b93), tile: tileOf('paving') },
-  footpath: { lift: 0.05, layer: 2, colour: rgb(0x9d9b95), tile: tileOf('paving') },
-  road: { lift: 0.086, layer: 3, colour: rgb(0x35383d), tile: tileOf('asphalt') },
+  paving: { lift: 0.014, layer: 1, colour: rgb(0x8f8c85), tile: tileOf('paving') },
+  footpath: { lift: 0.05, layer: 2, colour: rgb(0x82827e), tile: tileOf('paving') },
+  road: { lift: 0.086, layer: 3, colour: rgb(0x424346), tile: tileOf('asphalt') },
   kerb: { lift: 0.122, layer: 4, colour: rgb(0xdedbd2), tile: tileOf('concrete') },
 } satisfies Record<string, Level>;
 /** Crossing paint: a few cm over the carriageway (inside its draping band), on its own draw layer. */
