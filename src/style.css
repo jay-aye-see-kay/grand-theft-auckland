@@ -34,21 +34,24 @@ canvas {
   display: none !important;
 }
 
+/* One column, so nothing overlaps however short the screen (Safari's bars
+   leave a landscape iPhone ~285 px): hint at the top, credits at the
+   bottom, the title block centred in what's left. */
 #splash {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   text-align: center;
+  padding: max(10px, env(safe-area-inset-top)) 16px max(10px, env(safe-area-inset-bottom));
   background: linear-gradient(180deg, rgba(40, 20, 50, 0.55), rgba(20, 10, 10, 0.85));
   cursor: pointer;
 }
 
 #splash h1 {
-  margin: 0;
-  font-size: clamp(36px, 9vw, 84px);
+  margin: auto 0 0;
+  font-size: clamp(28px, min(9vw, 15vh), 84px);
   line-height: 0.95;
   font-weight: 900;
   letter-spacing: -0.02em;
@@ -62,39 +65,46 @@ canvas {
 
 #splash .sub {
   opacity: 0.75;
-  margin: 16px 0 28px;
+  margin: min(16px, 3vh) 0 min(28px, 5vh);
 }
 
 #status {
+  margin: 0 0 auto;
   font-weight: 700;
   padding: 10px 22px;
   border: 2px solid #fff;
   border-radius: 999px;
 }
 
-/* Top edge: the credits own the bottom, and landscape phones have no room in between. */
 #splash .install {
-  position: absolute;
-  top: max(10px, env(safe-area-inset-top));
-  left: 0;
-  right: 0;
   margin: 0;
-  padding: 0 16px;
   font-size: 13px;
   opacity: 0.85;
 }
 
 /* Data credits (OSM ODbL, LINZ CC BY 4.0): required on the title screen. */
 #splash .credits {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: max(12px, env(safe-area-inset-bottom));
-  margin: 0;
-  padding: 0 16px;
+  margin: 8px 0 0;
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.8;
+}
+
+@media (max-height: 400px) {
+  #splash .sub,
+  #status {
+    font-size: 14px;
+  }
+
+  #status {
+    padding: 6px 18px;
+  }
+
+  #splash .install,
+  #splash .credits {
+    font-size: 11px;
+    line-height: 1.35;
+  }
 }
 
 #splash .credits a {
