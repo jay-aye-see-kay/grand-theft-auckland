@@ -27,14 +27,24 @@ export type TreeKind = 'broadleaf' | 'palm' | 'conifer';
 export type Tree = { x: number; z: number; height: number; crown: number; kind: TreeKind };
 
 /** Canopy above the ground (m) that can be a tree top: below is shrubs and parked cars, above is buildings and cranes. */
-const MIN_TOP = 4;
+const MIN_TOP = 5;
 const MAX_TOP = 32;
 /** A top is the highest canopy pixel within this many pixels (1 m) around it. */
 const TOP_WINDOW = 3;
 /** The crown's edge: where the canopy falls below this fraction of the top's height. */
 const CROWN_EDGE = 0.6;
 const MIN_CROWN = 1.5;
-const MAX_CROWN = 9;
+/** How far out a crown's edge is looked for, m. In continuous bush the canopy never falls away, so many crowns read this wide. */
+const CROWN_SEARCH = 9;
+/**
+ * The widest crown drawn, m, and the widest for a tree's height: a crown
+ * read off the canopy is often several trees' worth, and drawn at full
+ * size those blobs crowd every street view.
+ */
+const MAX_CROWN = 6;
+const CROWN_PER_HEIGHT = 0.45;
+/** LiDAR-only trees stand at least this many of the wider crown's radii apart (and 5 m), so bush reads as trees, not a wall. */
+const LIDAR_SPACING = 1.6;
 /** How far from an OSM tree a LiDAR top may be and still be that tree, m. */
 const MATCH = 4;
 /** OSM trees with no LiDAR top beside them: young street trees. */
@@ -94,15 +104,16 @@ function lidarTops(dem: Raster, dsm: Raster, grid: Grid): Tree[] {
       let sum = 0;
       for (const [dx, dz] of dirs) {
         let d = 1;
-        for (; d <= MAX_CROWN; d++) {
+        for (; d <= CROWN_SEARCH; d++) {
           const rr = Math.round(r + dz * d);
           const cc = Math.round(c + dx * d);
           if (rr < 0 || cc < 0 || rr >= h || cc >= w || chm[rr * w + cc] < top * CROWN_EDGE) break;
         }
         sum += d;
       }
-      const crown = Math.min(MAX_CROWN, Math.max(MIN_CROWN, sum / 8));
-      tops.push({ x, z, height: top, crown, kind: crown < top * 0.2 && top > 12 ? 'conifer' : 'broadleaf' });
+      const measured = sum / 8;
+      const crown = Math.max(MIN_CROWN, Math.min(measured, MAX_CROWN, top * CROWN_PER_HEIGHT));
+      tops.push({ x, z, height: top, crown, kind: measured < top * 0.2 && top > 12 ? 'conifer' : 'broadleaf' });
     }
   }
   return tops;
@@ -155,7 +166,7 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
     }
     const height = tagged > 1 && tagged < 40 ? tagged : top ? top.height : DEFAULT_HEIGHT;
     const crown = crownTag > 0.5 && crownTag < 15 ? crownTag : top ? top.crown : DEFAULT_CROWN;
-    trees.push({ x: p.x, z: p.z, height, crown: Math.min(crown, height * 0.6), kind: kindOf(t) });
+    trees.push({ x: p.x, z: p.z, height, crown: Math.min(crown, MAX_CROWN, height * 0.6), kind: kindOf(t) });
     return true;
   };
   // In id order, so the output doesn't depend on how the cache was read.
@@ -194,7 +205,7 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
   const clash = (t: Tree) => {
     for (let i = Math.floor(t.x / 10) - 1; i <= Math.floor(t.x / 10) + 1; i++) {
       for (let j = Math.floor(t.z / 10) - 1; j <= Math.floor(t.z / 10) + 1; j++) {
-        for (const o of placed.get(`${i},${j}`) ?? []) if (Math.hypot(o.x - t.x, o.z - t.z) < Math.max(2, 0.7 * Math.max(o.crown, t.crown))) return true;
+        for (const o of placed.get(`${i},${j}`) ?? []) if (Math.hypot(o.x - t.x, o.z - t.z) < Math.max(5, LIDAR_SPACING * Math.max(o.crown, t.crown))) return true;
       }
     }
     return false;
@@ -321,7 +332,7 @@ export function emitTree(mb: MeshBuilder, t: Tree, y: number) {
   }
   // Broadleaf: a round crown on a trunk, its foot clear of head height.
   const r = t.crown;
-  const depth = Math.min(h - 2, Math.max(r * 1.4, h * 0.55));
+  const depth = Math.min(h - 2.5, Math.max(r * 1.3, h * 0.5));
   const bottom = y + h - depth;
   trunk(mb, t.x, y, t.z, bottom + depth * 0.3, 0.18 + 0.012 * h + 0.02 * r, BARK, rot);
   blob(mb, t.x, t.z, bottom, y + h, r, [[0.2, 0.85], [0.6, 1]], 5, leaf, rot, lumps);
