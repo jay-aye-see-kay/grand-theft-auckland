@@ -147,6 +147,11 @@ export function smoothCorridors(dem: Raster, mask: Set<number>): number {
 }
 
 /** Lattice points (keys for smoothCorridors) within `radius` of the segment a-b. */
+/** Adds lattice point (c, r) to a smoothing mask. */
+export function markLattice(mask: Set<number>, c: number, r: number) {
+  mask.add(latticeKey(c, r));
+}
+
 export function markCapsule(mask: Set<number>, a: { x: number; z: number }, b: { x: number; z: number }, radius: number) {
   const c0 = Math.floor((Math.min(a.x, b.x) - radius) / CELL_SIZE);
   const c1 = Math.ceil((Math.max(a.x, b.x) + radius) / CELL_SIZE);

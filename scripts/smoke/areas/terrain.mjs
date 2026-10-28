@@ -108,5 +108,21 @@ export default {
     }
     const park = (await game('probe', 221, 283)).surface;
     check(park === 'grass', `Emily Place Reserve is grass (${park})`);
+
+    // Parks: a path across Albert Park is painted on the ground and drawn as
+    // a strip a few cm over it; its flowerbeds are their own surface.
+    {
+      const [x, z] = [-0.1, 648.0];
+      await game('lookFrom', [x - 20, 60, z - 20], [x, 50, z]);
+      await run({ max: 30 });
+      const { surface, ground } = await game('probe', x, z);
+      const hit = await game('renderHit', [x, ground + 1, z], [0, -1, 0], 2);
+      const lift = hit === null ? null : 1 - hit;
+      await game('lookFrom', null, [0, 0, 0]);
+      check(surface === 'path' && lift !== null && lift > 0.005 && lift < 0.12,
+        `Albert Park path is a strip over the lawn (${surface}, ${lift === null ? 'nothing drawn' : `${(lift * 100).toFixed(0)} cm up`})`);
+      const bed = (await game('probe', 32, 672)).surface;
+      check(bed === 'flowerbed', `Albert Park's flowerbeds are flowerbed (${bed})`);
+    }
   },
 };

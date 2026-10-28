@@ -80,8 +80,8 @@ shadows only. 2 m ground within 90 m, 10 m beyond; colliders within ~300 m.
 - **Ground collision:** never one giant thin cuboid (the character controller
   sinks). Use heightfields or tiles ≤ 120 m.
 - **Draped geometry** must sit ~1 cm above the collision surface. Roads are
-  safe: citygen smooths ground under streets and the game draws the fine
-  (2 m grid) ground `PAVED_SINK` (5 cm) lower under road strips.
+  safe: citygen smooths ground under streets and park paths, and the game
+  draws the fine (2 m grid) ground `PAVED_SINK` (5 cm) lower under road strips.
 - **Skid marks** are double-sided (strips laid sliding backwards face down).
 - **Smoke:** headless Chromium renders in software (~10–20 fps), so checks
   never wait on the clock: `__game.step(n)` pauses real time and runs n fixed

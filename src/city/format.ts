@@ -358,13 +358,17 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
 // The terrain mesh tints its vertices by class, and the debug probe reports
 // the class under a point.
 const GROUND_MAGIC = 0x47415447; // 'GTAG'
-const GROUND_VERSION = 1;
+const GROUND_VERSION = 2;
 const GROUND_HEADER = 8;
 /** Extra lattice points stored beyond each chunk edge, so coarse LODs can average across seams. */
 export const GROUND_APRON = 2;
 
-/** Surface classes, in paint order: later ones win where they overlap. */
-export const SURFACES = ['urban', 'grass', 'trees', 'sand', 'paving', 'footpath', 'road'] as const;
+/**
+ * Surface classes, in paint order: later ones win where they overlap. Paths
+ * (through parks and bush) stay below paving: only paving and up are covered
+ * by draped road strips.
+ */
+export const SURFACES = ['urban', 'grass', 'flowerbed', 'trees', 'sand', 'path', 'paving', 'footpath', 'road'] as const;
 export type Surface = (typeof SURFACES)[number];
 export const SURFACE_ID = Object.fromEntries(SURFACES.map((s, k) => [s, k])) as Record<Surface, number>;
 

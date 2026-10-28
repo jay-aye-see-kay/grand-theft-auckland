@@ -1,16 +1,16 @@
 // Land use on the terrain lattice: which surface each 2 m ground sample is
-// (paved city, grass, trees, sand, paving, footpath, road). The game tints
+// (paved city, grass, flowerbeds, trees, sand, paths, paving, footpath, road). The game tints
 // the terrain's vertex colours by it, so the CBD reads as paved city with
 // green only where OSM maps parks, gardens and bush, and the debug probe
 // reports it as "the surface under a point".
 //
 // Classes are painted in SURFACES order (later wins): land-use polygons
-// first, then pedestrian areas, then footpaths and carriageways from
-// roads.ts. Anything unmapped stays 'urban'.
+// first, then pedestrian areas, then paths through parks and bush, then
+// footpaths and carriageways from roads.ts. Anything unmapped stays 'urban'.
 import { GROUND_APRON, SURFACE_ID, type GroundSamples, type Surface } from '../../src/city/format.ts';
-import { assembleRings, nodesLocal } from './buildings.ts';
+import { assembleRings, nodesLocal, parseLength } from './buildings.ts';
 import type { OsmData, OsmWay, Tags } from './osm.ts';
-import type { Local } from './project.ts';
+import { lonLatToLocal, type Local } from './project.ts';
 import { CELL_SIZE, CHUNK_SIZE, type Grid } from './terrain.ts';
 
 const CELLS = CHUNK_SIZE / CELL_SIZE;
@@ -24,10 +24,11 @@ export function landSurface(t: Tags): Surface | null {
   const na = t.natural;
   if (na === 'wood' || na === 'scrub' || lu === 'forest' || na === 'wetland') return 'trees';
   if (na === 'beach' || na === 'sand') return 'sand';
+  if (lu === 'flowerbed') return 'flowerbed';
   if (
     le === 'park' || le === 'garden' || le === 'pitch' || le === 'golf_course' || le === 'common' || le === 'dog_park' ||
     lu === 'grass' || lu === 'recreation_ground' || lu === 'village_green' || lu === 'meadow' || lu === 'cemetery' ||
-    lu === 'flowerbed' || lu === 'allotments' || lu === 'plant_nursery' || na === 'grassland' || na === 'grass' || na === 'heath'
+    lu === 'allotments' || lu === 'plant_nursery' || na === 'grassland' || na === 'grass' || na === 'heath'
   ) {
     // Artificial turf and hard courts are still green from above; paved plazas tagged as parks are rare enough.
     return 'grass';
@@ -74,6 +75,14 @@ export class GroundRaster {
     return this.classes[rr * this.cols + cc];
   }
 
+  /** Calls `fn` with the global lattice point (c, r) of every sample of `surface`. */
+  each(surface: Surface, fn: (c: number, r: number) => void) {
+    const id = SURFACE_ID[surface];
+    for (let rr = 0; rr < this.rows; rr++) {
+      for (let cc = 0; cc < this.cols; cc++) if (this.classes[rr * this.cols + cc] === id) fn(cc + this.c0, rr + this.r0);
+    }
+  }
+
   at(x: number, z: number): number {
     const cc = Math.round(x / CELL_SIZE) - this.c0;
     const rr = Math.round(z / CELL_SIZE) - this.r0;
@@ -105,8 +114,8 @@ export class GroundRaster {
     }
   }
 
-  /** Paints lattice points within `radius` of the segment a-b. */
-  fillCapsule(a: Local, b: Local, radius: number, surface: Surface) {
+  /** Paints lattice points within `radius` of the segment a-b (not over 'urban' ones if `greenOnly`). */
+  fillCapsule(a: Local, b: Local, radius: number, surface: Surface, greenOnly = false) {
     const id = SURFACE_ID[surface];
     const dx = b.x - a.x;
     const dz = b.z - a.z;
@@ -120,7 +129,8 @@ export class GroundRaster {
         const x = c * CELL_SIZE;
         const z = r * CELL_SIZE;
         const t = len2 > 0 ? Math.min(1, Math.max(0, ((x - a.x) * dx + (z - a.z) * dz) / len2)) : 0;
-        if (Math.hypot(x - a.x - t * dx, z - a.z - t * dz) <= radius) this.set(c, r, id);
+        if (Math.hypot(x - a.x - t * dx, z - a.z - t * dz) > radius) continue;
+        if (!greenOnly || this.lattice(c, r) !== SURFACE_ID.urban) this.set(c, r, id);
       }
     }
   }
@@ -169,4 +179,48 @@ export function paintLandUse(osm: OsmData, ground: GroundRaster): Record<string,
     counts[job.surface] = (counts[job.surface] ?? 0) + 1;
   }
   return counts;
+}
+
+/** Default widths of paths by highway class, m. */
+const PATH_WIDTH: Record<string, number> = { footway: 2, path: 1.5, steps: 2, cycleway: 2.5, bridleway: 2, track: 3 };
+/**
+ * Half the lattice spacing and a little: the narrowest strip that always
+ * covers a lattice point, so a path on the 2 m grid never breaks up.
+ */
+const MIN_PATH_RADIUS = 1.05;
+
+/** A path's centreline and half-width, m. */
+export type PathLine = { pts: Local[]; half: number };
+
+/**
+ * Paints paths and steps where they cross parks, gardens, bush and beaches,
+ * so a park reads as one from its paths. Over the paved city they'd add
+ * nothing (and paved footpaths along streets come from roads.ts), so
+ * they're left out there. The tint shows the paths from afar; near the
+ * player roads.ts drapes the returned lines as crisp strips over it.
+ */
+export function paintPaths(osm: OsmData, ground: GroundRaster): PathLine[] {
+  const lines: PathLine[] = [];
+  for (const way of osm.ways.values()) {
+    const t = way.tags;
+    const base = PATH_WIDTH[t.highway];
+    if (!base || t.area === 'yes') continue;
+    // Not over or under anything: footbridges, underpasses, paths inside buildings.
+    if ((t.bridge && t.bridge !== 'no') || (t.tunnel && t.tunnel !== 'no') || t.indoor === 'yes' || t.covered === 'yes') continue;
+    if (t.layer && Number(t.layer) !== 0) continue;
+    const w = parseLength(t.width);
+    const half = Math.max(MIN_PATH_RADIUS, (w > 0.5 && w < 10 ? w : base) / 2);
+    const pts: Local[] = [];
+    for (const ref of way.nodes) {
+      const n = osm.nodes.get(ref);
+      if (!n) continue;
+      const p = lonLatToLocal(n.lon, n.lat);
+      const last = pts[pts.length - 1];
+      if (last && Math.hypot(p.x - last.x, p.z - last.z) < 0.05) continue;
+      if (last) ground.fillCapsule(last, p, half, 'path', true);
+      pts.push(p);
+    }
+    if (pts.length >= 2) lines.push({ pts, half });
+  }
+  return lines;
 }

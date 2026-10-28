@@ -49,6 +49,9 @@ const SEAWALL = new THREE.Color(0x5d5a54);
 // roads layer's colours, so coarse terrain far away still shows the streets.
 const PAVED = new THREE.Color(0x8e8b84);
 const TREES = new THREE.Color(0x456b36);
+/** Bark mulch, with flowers in the beds' colours dotted over it. */
+const MULCH = new THREE.Color(0x5e4632);
+const FLOWERS = [new THREE.Color(0xc4425e), new THREE.Color(0xe2b23c), new THREE.Color(0xe8e4dc), new THREE.Color(0x8a5bb0)];
 const PAVING = new THREE.Color(0x9f9b93);
 const FOOTPATH = new THREE.Color(0x9d9b95);
 const ASPHALT = new THREE.Color(0x35383d);
@@ -319,8 +322,9 @@ function vertexColour(
     // Full detail sits under the road meshes. Vertex colours blend over a
     // whole 2 m cell, so a street's tint would bleed past the mesh's crisp
     // edge; eroding paved surfaces by one sample keeps the tint underneath.
+    // Park paths are only a sample or two wide, so they erode away entirely.
     let k = at(r, c);
-    if (k >= SURFACE_ID.paving) {
+    if (k >= SURFACE_ID.path) {
       for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) k = Math.min(k, at(r + dr, c + dc));
     }
     return groundColour(x, z, y, ny, seaShelf, k, out);
@@ -329,8 +333,10 @@ function vertexColour(
   const counts = new Map<number, number>();
   for (let dr = -half; dr <= half; dr++) {
     for (let dc = -half; dc <= half; dc++) {
-      // Plain: streets left out, for when the road strips are drawn over it.
-      const k = plain && at(r + dr, c + dc) >= SURFACE_ID.paving ? SURFACE_ID.urban : at(r + dr, c + dc);
+      // Plain: streets and park paths left out, for when the road strips are drawn over it.
+      let k = at(r + dr, c + dc);
+      if (plain && k >= SURFACE_ID.paving) k = SURFACE_ID.urban;
+      else if (plain && k === SURFACE_ID.path) k = SURFACE_ID.grass; // paths are only painted over green
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
   }
@@ -349,9 +355,10 @@ function vertexColour(
 /**
  * Stylised ground colour by land use: paved grey in the city (going green
  * on steep banks, which are planted or overgrown), green in parks and
- * gardens (browner as it steepens, sandy at the waterline), dark green bush,
- * and the road surfaces. Stone for sea walls, dark for the harbour floor. Low-frequency noise
- * anchored to world position breaks up large areas and matches across seams.
+ * gardens (browner as it steepens, sandy at the waterline), flowerbeds, dark
+ * green bush, pale park paths and the road surfaces. Stone for sea walls,
+ * dark for the harbour floor. Low-frequency noise anchored to world position
+ * breaks up large areas and matches across seams.
  */
 function groundColour(x: number, z: number, y: number, ny: number, seaShelf: number, surface: number, out: THREE.Color): THREE.Color {
   if (y <= seaShelf + 0.01) return out.copy(SEABED).multiplyScalar(0.94 + 0.12 * valueNoise(x / 60, z / 60));
@@ -374,6 +381,15 @@ function groundColour(x: number, z: number, y: number, ny: number, seaShelf: num
       return out.multiplyScalar(0.8 + 0.35 * patch);
     case SURFACE_ID.sand:
       return out.copy(SAND).multiplyScalar(0.92 + 0.12 * patch);
+    case SURFACE_ID.path:
+      return out.copy(PAVING); // park paths are drawn as paving strips near the player
+    case SURFACE_ID.flowerbed: {
+      // One bed is mostly one colour (planted in drifts), with mulch showing between.
+      const ix = Math.round(x / 2);
+      const iz = Math.round(z / 2);
+      const flower = FLOWERS[Math.floor(hash(Math.floor(x / 12), Math.floor(z / 12)) * FLOWERS.length)];
+      return out.copy(MULCH).lerp(flower, hash(ix, iz) < 0.55 ? 0.6 : 0.12);
+    }
     case SURFACE_ID.urban: {
       // Banks too steep to build on are planted, so they stay green.
       const bank = THREE.MathUtils.smoothstep(1 - ny, 0.1, 0.25);

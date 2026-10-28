@@ -33,10 +33,10 @@
 // Footpaths are not clamped against buildings: where OSM puts a footprint
 // right against a centreline the footpath just runs inside the building,
 // where it can't be seen.
-import { PAVED_SINK, underPaving } from '../../src/city/format.ts';
+import { PAVED_SINK, SURFACE_ID, underPaving } from '../../src/city/format.ts';
 import { MeshBuilder, parseLength, rgb } from './buildings.ts';
 import { roadMarking, tileOf } from '../../src/city/facades.ts';
-import type { GroundRaster } from './ground.ts';
+import type { GroundRaster, PathLine } from './ground.ts';
 import { DRIVEABLE_HIGHWAYS, type OsmData, type Tags } from './osm.ts';
 import type { Overrides } from './overrides.ts';
 import { lonLatToLocal, type Local } from './project.ts';
@@ -204,13 +204,105 @@ export function collectRoads(osm: OsmData): Road[] {
   return roads;
 }
 
+// ---------------------------------------------------------------- park paths
+
+/** Point b moved d further along the line from a. */
+function extend(a: Local, b: Local, d: number): Local {
+  const len = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+  return { x: b.x + ((b.x - a.x) * d) / len, z: b.z + ((b.z - a.z) * d) / len };
+}
+
+/** How far a park path's strip carries on past the green it crosses (under a footpath, or to the edge of a plaza), m. */
+const PATH_OVERRUN = 1.5;
+
+/**
+ * Splits a path into runs over ground painted 'path' (where it crosses
+ * green; see paintPaths), each carried on PATH_OVERRUN beyond its ends. The
+ * runs keep the way's own vertices, plus their cut points.
+ */
+function pathRuns(pts: Local[], ground: GroundRaster): Local[][] {
+  // Any of the four lattice points round it: the painted line is only ~2 m wide.
+  const onPath = (x: number, z: number) => {
+    const c = Math.floor(x / CELL_SIZE);
+    const r = Math.floor(z / CELL_SIZE);
+    return [[c, r], [c + 1, r], [c, r + 1], [c + 1, r + 1]].some(([cc, rr]) => ground.lattice(cc, rr) === SURFACE_ID.path);
+  };
+  // Samples every metre or less, flagged if on the path and if they're one of the way's vertices.
+  const samples: { p: Local; on: boolean; vertex: boolean }[] = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const a = pts[k];
+    const b = pts[k + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z)));
+    for (let q = 0; q < n; q++) {
+      const p = { x: a.x + ((b.x - a.x) * q) / n, z: a.z + ((b.z - a.z) * q) / n };
+      samples.push({ p, on: onPath(p.x, p.z), vertex: q === 0 });
+    }
+  }
+  const last = pts[pts.length - 1];
+  samples.push({ p: last, on: onPath(last.x, last.z), vertex: true });
+  const over = Math.ceil(PATH_OVERRUN);
+  const keep = samples.map((_, i) => samples.slice(Math.max(0, i - over), i + over + 1).some((t) => t.on));
+  const runs: Local[][] = [];
+  for (let i = 0; i < samples.length;) {
+    if (!keep[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < samples.length && keep[j + 1]) j++;
+    const run = samples.slice(i, j + 1).filter((s, k, all) => s.vertex || k === 0 || k === all.length - 1).map((s) => s.p);
+    if (run.length >= 2) runs.push(run);
+    i = j + 1;
+  }
+  return runs;
+}
+
+/**
+ * Park paths: thin strips draped over the grass, like the streets'
+ * footpaths but without kerbs or junction caps (paths meet end to
+ * centreline, so the joins are covered). They're footpath, so where they
+ * overlap each other or a street's footpath they're indistinguishable, and
+ * its lift leaves room to follow the ground loosely (paving's would hold
+ * them within 2 mm, for several times the triangles). Returns the km drawn.
+ */
+function emitPaths(out: ChunkMeshes, paths: PathLine[], ground: GroundRaster, terrain: TerrainSampler, covered?: (x: number, z: number) => boolean): number {
+  const level = LEVELS.footpath;
+  // Loose all along: there are no junctions to keep in order.
+  const band: StripBand = {
+    down: () => Math.min(LOOSE_DOWN_MAX, Math.max(0.002, level.lift - CLEAR - LOOSE_LAT)),
+    up: () => LOOSE_UP,
+    lat: () => LOOSE_LAT,
+  };
+  const h: HeightFn = (st, o) => {
+    const p = offsetPoint(st, o);
+    return terrain.heightAt(p.x, p.z);
+  };
+  let m = 0;
+  for (const path of paths) {
+    // Carried on half a width past each end, which closes the wedge where two ways meet at an angle.
+    const pts0 = path.pts.slice();
+    const n = pts0.length;
+    pts0[0] = extend(pts0[1], pts0[0], path.half);
+    pts0[n - 1] = extend(pts0[n - 2], pts0[n - 1], path.half);
+    for (const pts of pathRuns(pts0, ground)) {
+      const s = [0];
+      for (let k = 1; k < pts.length; k++) s.push(s[k - 1] + Math.hypot(pts[k].x - pts[k - 1].x, pts[k].z - pts[k - 1].z));
+      m += s[s.length - 1];
+      for (const piece of drapeStrip(stations({ pts, s }), -path.half, path.half, h, band)) {
+        tally('park path', out, () => emitStrip(out, piece.sections, piece.cols, { level, collider: false, covered }));
+      }
+    }
+  }
+  return m / 1000;
+}
+
 // ---------------------------------------------------------------- stations
 
 /** A candidate cross-section: a point on the centreline with its (mitred) left normal. */
 type Station = { s: number; x: number; z: number; nx: number; nz: number; m: number; hard: boolean };
 
 /** Cross-sections at every vertex and at most SAMPLE apart in between. */
-function stations(r: Road): Station[] {
+function stations(r: Pick<Road, 'pts' | 's'>): Station[] {
   const { pts, s } = r;
   const normal = (k: number) => {
     const dx = pts[k + 1].x - pts[k].x;
@@ -1107,7 +1199,9 @@ export function roadNetwork(data: { osm: OsmData; dsm: Raster }, terrain: Terrai
   return { roads, at, byNode, deck, deckAt, crossings };
 }
 
-export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork, covered?: (x: number, z: number) => boolean): RoadsResult {
+export function buildRoads(
+  grid: Grid, terrain: TerrainSampler, ground: GroundRaster, net: RoadNetwork, covered?: (x: number, z: number) => boolean, paths: PathLine[] = [],
+): RoadsResult {
   const { roads, at, byNode, deck } = net;
   const out = new ChunkMeshes(grid);
   const drape = (x: number, z: number) => terrain.heightAt(x, z);
@@ -1274,6 +1368,7 @@ export function buildRoads(grid: Grid, terrain: TerrainSampler, ground: GroundRa
     painted++;
   }
   roadTris['crossings painted'] = painted;
+  km['park path'] = emitPaths(out, paths, ground, terrain, covered);
   const bridges = roads.filter((r) => r.bridge).length;
   return { chunks: out.chunks, counts: { ways: roads.length, bridges, km } };
 }
