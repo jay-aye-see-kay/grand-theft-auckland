@@ -1,9 +1,8 @@
 import * as THREE from 'three';
 import type { BuildingChunk } from './building-chunk.ts';
 import type { TerrainParts } from './terrain-mesh.ts';
-import { SHADE_ONE, tileOf } from './facades.ts';
+import { SHADE_ONE } from './facades.ts';
 
-const GROUND_TILE = tileOf('ground');
 
 // A chunk's static scenery (ground, roads and buildings) as one mesh: one
 // draw call per chunk however much is in it. They share one material (the
@@ -80,8 +79,8 @@ export class ChunkMesh {
       v += b.count;
     }
     this.terrainBase = v;
-    // The ground's grain, mapped from world x/z (no UVs needed).
-    tile.fill(GROUND_TILE, v);
+    // The ground's grain or pavers, mapped from world x/z (no UVs needed).
+    tile.set(parts.tile, v);
     for (let k = 0; k < parts.count; k++) {
       pos[(v + k) * 3] = parts.pos[k * 3] - this.half;
       pos[(v + k) * 3 + 1] = parts.pos[k * 3 + 1];

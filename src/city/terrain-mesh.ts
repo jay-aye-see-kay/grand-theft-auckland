@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { tileOf } from './facades.ts';
 import { GROUND_APRON, PAVED_SINK, SURFACE_ID, underPaving, type GroundSamples, type TerrainSamples } from './format.ts';
 
 // Render geometry for one terrain chunk, as parts for ChunkMesh to merge:
@@ -47,7 +48,11 @@ const SEABED = new THREE.Color(0x24363a);
 const SEAWALL = new THREE.Color(0x5d5a54);
 // Land use (see SURFACES in format.ts). Roads, footpaths and paving match the
 // roads layer's colours, so coarse terrain far away still shows the streets.
-const PAVED = new THREE.Color(0x807f7a);
+const PAVED = new THREE.Color(0x86857f);
+/** Urban ground flatter than this (normal's y) is drawn paved. */
+const URBAN_FLAT = 0.95;
+const GROUND_TILE = tileOf('ground');
+const PAVING_TILE = tileOf('paving');
 const TREES = new THREE.Color(0x456b36);
 /** Bark mulch, with flowers in the beds' colours dotted over it. */
 const MULCH = new THREE.Color(0x5e4632);
@@ -87,6 +92,8 @@ export interface TerrainParts {
    * when the trees themselves are drawn over it.
    */
   colShaded: Uint8Array;
+  /** Atlas tile per vertex (see facades.ts): paving where the ground is built-up, else its grain. */
+  tile: Uint8Array;
   count: number;
   far: Uint32Array;
   tiles?: { ground: [Uint32Array, Uint32Array]; skirts: [Uint32Array[], Uint32Array[]]; flat: boolean }[];
@@ -116,11 +123,14 @@ class Verts {
   col: number[] = [];
   plain: number[] = [];
   shaded: number[] = [];
+  /** Atlas tile per vertex: paving on built-up ground, else the ground's grain. */
+  tile: number[] = [];
   get count() {
     return this.pos.length / 3;
   }
-  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color, shaded: THREE.Color): number {
+  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color, shaded: THREE.Color, tile = GROUND_TILE): number {
     this.pos.push(x, y, z);
+    this.tile.push(tile);
     this.nor.push(Math.round(n.x * 127), Math.round(n.y * 127), Math.round(n.z * 127));
     for (const [list, k] of [[this.col, c], [this.plain, plain], [this.shaded, shaded]] as const) {
       list.push(Math.round(Math.min(1, k.r) * 255), Math.round(Math.min(1, k.g) * 255), Math.round(Math.min(1, k.b) * 255));
@@ -130,6 +140,7 @@ class Verts {
   /** A copy of vertex k, dropped by `dy` and shaded (skirts). */
   copy(k: number, dy: number, shade: number): number {
     this.pos.push(this.pos[k * 3], this.pos[k * 3 + 1] + dy, this.pos[k * 3 + 2]);
+    this.tile.push(this.tile[k]);
     this.nor.push(this.nor[k * 3], this.nor[k * 3 + 1], this.nor[k * 3 + 2]);
     this.col.push(...[0, 1, 2].map((a) => Math.round(this.col[k * 3 + a] * shade)));
     this.plain.push(...[0, 1, 2].map((a) => Math.round(this.plain[k * 3 + a] * shade)));
@@ -205,7 +216,12 @@ export function buildTerrainParts(
       plain.copy(colour);
       shaded.copy(colour);
     }
-    return v.add(c * cell, y, r * cell, normal, colour, plain, shaded);
+    // Built-up ground between the streets and the buildings (forecourts,
+    // plazas, the far side of wide footpaths) is paved, not bare: same
+    // pavers as the footpaths. Banks too steep to build on keep the grain.
+    const k = classAt?.(r, c) ?? SURFACE_ID.grass;
+    const paved = k >= SURFACE_ID.paving || (k === SURFACE_ID.urban && normal.y > URBAN_FLAT);
+    return v.add(c * cell, y, r * cell, normal, colour, plain, shaded, paved ? PAVING_TILE : GROUND_TILE);
   };
 
   // Coarse grid, sunk under the drawn ground.
@@ -312,6 +328,7 @@ export function buildTerrainParts(
     col: Uint8Array.from(v.col),
     colPlain: Uint8Array.from(v.plain),
     colShaded: Uint8Array.from(v.shaded),
+    tile: Uint8Array.from(v.tile),
     count: v.count,
     far: Uint32Array.from(far),
     tiles,
