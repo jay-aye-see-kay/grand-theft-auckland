@@ -6,7 +6,8 @@
 // parking all see the same corrected data. The rest are directives the
 // generator acts on itself: `delete` drops the element, `landmark` records
 // it in the manifest (and `hide` leaves it out of the mesh), `block` adds an
-// invisible collider in its shape, and `deck` pins bridge or pier heights.
+// invisible collider in its shape, `deck` pins bridge or pier heights, and
+// `place` names it in the gazetteer (places.ts).
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { OsmData, Tags } from './osm.ts';
@@ -42,9 +43,25 @@ export type Override = {
    * false to leave the pier out.
    */
   deck?: number | false | (number | null)[];
+  /**
+   * The gazetteer (places.ts): a mission-facing id and name for a POI or
+   * landmark (or a street, with `at`), or false to leave it out.
+   */
+  place?: PlaceOverride | false;
 };
 
-/** "way/123" or "relation/456". */
+export type PlaceOverride = {
+  /** Id missions use, e.g. "k-road-dairy". */
+  id?: string;
+  /** Shown in the HUD; a parody for businesses, real for public places ("the Ferry Building"). */
+  name?: string;
+  /** Kind for nearest() and random() queries ("dairy", "bar", "landmark"). */
+  kind?: string;
+  /** Where it is, local metres, if not the element's centre (a spot along a street). */
+  at?: [number, number];
+};
+
+/** "way/123", "relation/456" or (for `place` and tags only) "node/789". */
 export type OsmKey = string;
 
 export class Overrides {
@@ -55,7 +72,7 @@ export class Overrides {
     this.area = area;
     for (const [k, v] of Object.entries(entries)) {
       if (k.startsWith('//') || k.startsWith('$')) continue; // comments, $schema
-      if (!/^(way|relation)\/\d+$/.test(k)) throw new Error(`overrides/${area}.json: bad key "${k}" (want way/123 or relation/456)`);
+      if (!/^(node|way|relation)\/\d+$/.test(k)) throw new Error(`overrides/${area}.json: bad key "${k}" (want node/123, way/123 or relation/456)`);
       this.entries.set(k, v);
     }
   }
@@ -88,13 +105,14 @@ export class Overrides {
     for (const [key, o] of this.entries) {
       const [type, idStr] = key.split('/');
       const id = Number(idStr);
-      const el = type === 'way' ? osm.ways.get(id) : osm.relations.get(id);
+      const el = type === 'node' ? osm.nodes.get(id) : type === 'way' ? osm.ways.get(id) : osm.relations.get(id);
       if (!el) {
         warnings.push(`${key} is not in the OSM data any more${o.note ? ` (${o.note})` : ''}`);
         continue;
       }
       if (o.delete) {
-        if (type === 'way') osm.ways.delete(id);
+        if (type === 'node') osm.nodes.delete(id);
+        else if (type === 'way') osm.ways.delete(id);
         else osm.relations.delete(id);
         // A deleted way also leaves any relation it was part of, so a
         // multipolygon doesn't drop out for a missing member.
@@ -107,8 +125,9 @@ export class Overrides {
   }
 }
 
-/** "w123" -> "way/123", "r456" -> "relation/456"; long keys pass through. */
+/** "n7" -> "node/7", "w123" -> "way/123", "r456" -> "relation/456"; long keys pass through. */
 export function longKey(key: string): OsmKey {
+  if (key[0] === 'n' && /^n\d+$/.test(key)) return `node/${key.slice(1)}`;
   if (key[0] === 'w' && /^w\d+$/.test(key)) return `way/${key.slice(1)}`;
   if (key[0] === 'r' && /^r\d+$/.test(key)) return `relation/${key.slice(1)}`;
   return key;

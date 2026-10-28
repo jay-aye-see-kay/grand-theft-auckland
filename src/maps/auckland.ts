@@ -6,6 +6,7 @@ import { ChunkStreamer } from '../city/streamer.ts';
 import { Skyline } from '../city/skyline.ts';
 import { LANDMARK_MODELS } from '../landmarks/index.ts';
 import { Landmarks } from '../landmarks/landmarks.ts';
+import { Gazetteer } from '../missions/runtime/places.ts';
 import type { GameMap, ParkingSpot } from './types.ts';
 
 /** public/city/<area>/parking.json, written by tools/citygen/parking.ts. */
@@ -45,6 +46,8 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
   const pres = await fetch(new URL('parking.json', base));
   if (!pres.ok) throw new Error(`city parking: HTTP ${pres.status}`);
   const parked = (await pres.json()) as CityParking;
+  // Named places for missions (tools/citygen/places.ts).
+  const places = await Gazetteer.load(new URL('places.json', base));
 
   const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   // Facade, road and ground textures, painted on the spot (atlas.ts).
@@ -122,6 +125,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
       aerial: { from: [0, 250, -250], at: [-300, -4, 500] },
     },
     landmarks: () => landmarks.list(),
+    places,
     debugInfo: () => ({ ...terrain.stats(), atlasLayers: atlas.image.depth, skylineTris: skyline?.total ?? 0, skylineDrawn: skyline?.drawn ?? 0 }),
   };
 }

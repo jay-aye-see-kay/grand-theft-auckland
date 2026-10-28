@@ -4,6 +4,7 @@
 //   public/city/<area>/buildings/<i>_<j>.bin (chunks with buildings only)
 //   public/city/<area>/roads/<i>_<j>.bin     (chunks with roads only)
 //   public/city/<area>/ground/<i>_<j>.bin    (land use under the terrain)
+//   public/city/<area>/parking.json, places.json (spawn and parked cars; the gazetteer)
 //
 //   node --experimental-strip-types tools/citygen/build.ts
 //
@@ -17,6 +18,7 @@ import { chunkFile, CITY_FORMAT, encodeBuildings, encodeGround, encodeSkyline, e
 import { buildBuildings, MeshBuilder } from './buildings.ts';
 import { Frontages } from './frontage.ts';
 import { buildParking, writeParking } from './parking.ts';
+import { buildPlaces, writePlaces } from './places.ts';
 import { loadCityData } from './fetch.ts';
 import { GroundRaster, GROUND_SAMPLES, paintLandUse, paintPaths } from './ground.ts';
 import { CBD_BBOX, ORIGIN } from './project.ts';
@@ -228,6 +230,9 @@ writeFileSync(join(OUT, 'manifest.json'), `${headJson},\n  "chunks": [\n${list.m
 const parking = buildParking(data, terrainSampler);
 writeParking(parking, join(OUT, 'parking.json'));
 console.log(`Parking: ${parking.cars.length} cars, spawn (${parking.spawn.x}, ${parking.spawn.z})`);
+const places = buildPlaces(data.osm, overrides);
+writePlaces(places, join(OUT, 'places.json'));
+console.log(`Places: ${Object.keys(places.places).length} (${Object.entries(places.kinds).map(([k, v]) => `${v} ${k}`).join(', ')})`);
 
 const size = (dir: string): number =>
   readdirSync(dir).reduce((s, f) => {
