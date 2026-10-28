@@ -21,6 +21,7 @@ npm run smoke:full   # every area (a few min); `npm run smoke -- --only=harbour,
 npm run dev     # dev server with --host, for phones on the LAN
 npm run citygen:build   # regenerate public/city/cbd/ (fetches OSM + LiDAR into .cache/)
 npm run citygen:places  # just the gazetteer (places.json), e.g. after editing names or overrides
+npm run citygen:roadgraph  # just the road graph (roadgraph.json)
 ```
 
 CI (`.github/workflows/deploy.yml`) only builds and deploys from the default
@@ -45,11 +46,17 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
   through by teleporting in `scripts/smoke/areas/missions.mjs`.
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),
   terrain, buildings, facade atlas, skyline LOD, water
+- `src/city/road-graph.ts`: the drivable network (`roadgraph.json`) for routing, traffic and police:
+  `nearest`, `route` (A*, one-ways respected), `lane` (a pose in a lane, driving on the left),
+  `randomLane` (only where a car can always drive on: the main strongly connected part).
+  `?debug`: `__game.roadAt(x, z)`, `__game.route([x, z], [x, z])`, `__game.roadGraph()`.
 - `tools/citygen/`: offline generator. OSM + LINZ LiDAR → projected (origin Britomart) →
   terrain, buildings, roads, ground, piers, sea walls, parking → `public/city/cbd/` (committed,
   deterministic). Hand fixes in `overrides/cbd.json` keyed by OSM id (see `overrides/README.md`).
   Buildings: `roofs.ts` (pitched roofs fitted to the DSM), `rooftops.ts` (towers on podiums,
   rooftop plant), `eras.ts` (facade family, colours and cornices per architectural era).
+  Road graph: `roadgraph.ts` (junction-to-junction edges with lanes each way, heights from the
+  smoothed ground or the deck → `roadgraph.json`; `prepare.ts` is the ground smoothing it shares with `build.ts`).
   Places: `places.ts` (OSM POIs → `places.json`, marker on the kerb outside), `names.ts` (parody
   names: brand table, hand-written lists per kind, templates; no real business name may leak).
   Parks: `ground.ts` (land use, park paths, canopy cover: shade near, canopy tint far), `trees.ts` (OSM trees plus

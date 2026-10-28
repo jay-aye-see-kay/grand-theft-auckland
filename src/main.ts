@@ -833,6 +833,32 @@ async function main() {
         map.places?.find(kind, { near: q.near && { x: q.near[0], z: q.near[1] }, within: q.within }) ?? [],
       /** One place by id. */
       place: (id: string) => map.places?.get(id) ?? null,
+      /** The road graph's size: nodes, edges, km (and km where traffic can always drive on), one-ways, signals. */
+      roadGraph: () => map.roads?.stats() ?? null,
+      /** The nearest road to (x, z): its edge, how far along, which side, and the street's lanes. */
+      roadAt: (x: number, z: number, within?: number) => {
+        const r = map.roads?.nearest(x, z, { within, open: false });
+        if (!r) return null;
+        const { edge: e, ...at } = r;
+        return { ...at, edge: e.index, name: e.name, highway: e.highway, fw: e.fw, bw: e.bw, width: e.width, length: e.length, main: e.main, restricted: e.restricted };
+      },
+      /**
+       * The shortest legal drive between two points: metres, the centreline,
+       * and each leg (edge, direction, street, whether it was driven with the
+       * traffic, which is always true unless routing is broken, and its midpoint).
+       */
+      route: (from: [number, number], to: [number, number]) => {
+        const r = map.roads?.route({ x: from[0], z: from[1] }, { x: to[0], z: to[1] });
+        if (!r) return null;
+        return {
+          length: r.length,
+          points: r.points.map((p) => [p.x, p.z]),
+          legs: r.legs.map((l) => {
+            const mid = map.roads!.pointAt(l.edge, l.edge.length / 2);
+            return { edge: l.edge.index, dir: l.dir, name: l.edge.name, bridge: l.edge.bridge, legal: (l.dir > 0 ? l.edge.fw : l.edge.bw) > 0, mid: [mid.x, mid.y, mid.z] };
+          }),
+        };
+      },
       step,
       /** Manual mode: draw a frame (for a screenshot); resolves once it's on screen. */
       draw: async () => {
