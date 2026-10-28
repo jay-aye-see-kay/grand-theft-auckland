@@ -2,15 +2,17 @@
 // LiDAR (DSM minus DEM) over parks, gardens and bush, baked into each
 // chunk's building mesh as low-poly models with a trunk collider.
 //
-// LiDAR tops are only trusted on green ground: elsewhere a local maximum
-// of the canopy height is as likely a verandah, a bus shelter, a crane or a
-// ship. Street trees come from OSM instead, taking their height and crown
-// from a LiDAR top beside them where there is one (they're often young or
-// mapped after the 2024 survey otherwise).
+// LiDAR tops are trusted as they are only on green ground: elsewhere a
+// local maximum of the canopy height is as likely a verandah, a bus
+// shelter, a crane or a ship. Street trees come from OSM, taking their
+// height and crown from a LiDAR top beside them where there is one (they're
+// often young or mapped after the 2024 survey otherwise), plus LiDAR tops
+// over footpaths that are shaped like a tree (domed, wide, clear of
+// buildings) for the streets OSM hasn't mapped.
 //
 // Budget: each chunk's trees are grouped by 50 m tile (MeshBuilder.group),
-// and the game draws a tile's only when it's near the player; the ground's
-// 'trees' tint already shows bush from afar.
+// and the game draws a tile's only when it's near the player. Further out
+// the ground shows their crowns as canopy (GroundRaster.paintCanopy).
 import { SURFACE_ID } from '../../src/city/format.ts';
 import { MeshBuilder, parseLength, rgb } from './buildings.ts';
 import { hash } from './eras.ts';
@@ -55,6 +57,25 @@ const ROW_SPACING = 9;
 /** Ground classes a LiDAR top must stand on. */
 const GREEN = new Set([SURFACE_ID.grass, SURFACE_ID.flowerbed, SURFACE_ID.trees, SURFACE_ID.sand, SURFACE_ID.path]);
 
+/** Ground a LiDAR top may stand on as a street tree, if it's shaped like one (see findTrees). */
+const STREET = new Set([SURFACE_ID.footpath, SURFACE_ID.paving]);
+const STREET_MIN_TOP = 6;
+/** Narrower than this (m) is a pole: a lamp, a signal, a flagpole. */
+const STREET_MIN_CROWN = 2.5;
+/** A crown falls at least this far (m) 2 m out from its top; a verandah or shelter roof doesn't. */
+const STREET_DOME = 1;
+/** Building footprints this close (m) put a top under their verandah or awning. */
+const STREET_CLEARANCE = 2.5;
+
+/** Whether a building footprint is within STREET_CLEARANCE of a point, in eight directions. */
+function nearBuilding(p: Local, covers: (x: number, z: number) => boolean): boolean {
+  for (let k = 0; k < 8; k++) {
+    const a = (k * Math.PI) / 4;
+    if (covers(p.x + Math.cos(a) * STREET_CLEARANCE, p.z + Math.sin(a) * STREET_CLEARANCE)) return true;
+  }
+  return false;
+}
+
 type Sources = { osm: OsmData; dem: Raster; dsm: Raster };
 type Context = {
   grid: Grid;
@@ -65,8 +86,16 @@ type Context = {
   deckAt: (x: number, z: number) => number | null;
 };
 
+/**
+ * A LiDAR top, with what its shape says about it: how far the canopy
+ * reaches before falling away (m, before capping to a drawable crown), and
+ * how far it drops 2 m out from the top (m). A crown is domed; a verandah,
+ * shelter roof or awning is flat, and a lamp post has no width.
+ */
+type Top = Tree & { measured: number; dome: number };
+
 /** LiDAR tree tops in the grid: local maxima of the canopy height, with a crown radius from where it falls away. */
-function lidarTops(dem: Raster, dsm: Raster, grid: Grid): Tree[] {
+function lidarTops(dem: Raster, dsm: Raster, grid: Grid): Top[] {
   const { width: w, height: h } = dem;
   const chm = new Float32Array(w * h);
   for (let i = 0; i < chm.length; i++) {
@@ -76,7 +105,7 @@ function lidarTops(dem: Raster, dsm: Raster, grid: Grid): Tree[] {
   // Pixel centres in local metres (the projection is a plain offset; see project.ts).
   const x0 = dem.west + dem.res / 2 - ORIGIN_NZTM.e;
   const z0 = ORIGIN_NZTM.n - (dem.north - dem.res / 2);
-  const tops: Tree[] = [];
+  const tops: Top[] = [];
   const W = TOP_WINDOW;
   const dirs = Array.from({ length: 8 }, (_, k) => [Math.cos((k * Math.PI) / 4), Math.sin((k * Math.PI) / 4)]);
   for (let r = W; r < h - W; r++) {
@@ -113,7 +142,10 @@ function lidarTops(dem: Raster, dsm: Raster, grid: Grid): Tree[] {
       }
       const measured = sum / 8;
       const crown = Math.max(MIN_CROWN, Math.min(measured, MAX_CROWN, top * CROWN_PER_HEIGHT));
-      tops.push({ x, z, height: top, crown, kind: measured < top * 0.2 && top > 12 ? 'conifer' : 'broadleaf' });
+      let ring = 0;
+      for (const [dx, dz] of dirs) ring += chm[Math.round(r + (dz * 2) / dem.res) * w + Math.round(c + (dx * 2) / dem.res)];
+      const dome = top - ring / 8;
+      tops.push({ x, z, height: top, crown, kind: measured < top * 0.2 && top > 12 ? 'conifer' : 'broadleaf', measured, dome });
     }
   }
   return tops;
@@ -151,7 +183,7 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
   };
   const used = new Set<Tree>();
   const trees: Tree[] = [];
-  const counts = { osm: 0, 'osm sized by LiDAR': 0, row: 0, lidar: 0 };
+  const counts = { osm: 0, 'osm sized by LiDAR': 0, row: 0, lidar: 0, 'lidar street': 0 };
   const plant = (p: Local, t: Tags) => {
     if (!inGrid(p) || covers(p.x, p.z) || ground.at(p.x, p.z) === SURFACE_ID.road) return false;
     // The highest top beside it is its crown.
@@ -210,12 +242,25 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
     }
     return false;
   };
-  for (const t of [...tops].sort((a, b) => b.height - a.height || a.x - b.x || a.z - b.z)) {
+  const byHeight = [...tops].sort((a, b) => b.height - a.height || a.x - b.x || a.z - b.z);
+  for (const t of byHeight) {
     if (used.has(t) || !GREEN.has(ground.at(t.x, t.z)) || clash(t)) continue;
     trees.push(t);
     const k = cellOf(t.x, t.z);
     (placed.get(k) ?? placed.set(k, []).get(k)!).push(t);
     counts.lidar++;
+  }
+  // Street trees OSM doesn't map (most of Symonds St's): LiDAR tops over
+  // footpaths and paving that are shaped like a tree, and clear of the
+  // buildings whose verandahs and awnings reach over the footpath.
+  for (const t of byHeight) {
+    if (used.has(t) || !STREET.has(ground.at(t.x, t.z)) || clash(t)) continue;
+    if (t.height < STREET_MIN_TOP || t.measured < STREET_MIN_CROWN || t.dome < STREET_DOME) continue;
+    if (nearBuilding(t, covers)) continue;
+    trees.push(t);
+    const k = cellOf(t.x, t.z);
+    (placed.get(k) ?? placed.set(k, []).get(k)!).push(t);
+    counts['lidar street']++;
   }
   return { trees, counts };
 }
@@ -338,14 +383,21 @@ export function emitTree(mb: MeshBuilder, t: Tree, y: number) {
   blob(mb, t.x, t.z, bottom, y + h, r, [[0.2, 0.85], [0.6, 1]], 5, leaf, rot, lumps);
 }
 
+/**
+ * Runs `emit` with its triangles going to the tile group of the chunk mesh
+ * at (x, z), drawn only near the player like the trees (park edges share it).
+ */
+export function inTreeTile(mb: MeshBuilder, grid: Grid, x: number, z: number, emit: () => void) {
+  const size = CHUNK_SIZE / TREE_TILES;
+  const c = Math.floor(((((x - grid.x0) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) / size);
+  const r = Math.floor(((((z - grid.z0) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) / size);
+  mb.group(r * TREE_TILES + c, TREE_TILES, emit);
+}
+
 /** Bakes every tree into its chunk's mesh (`chunkAt` gives a point's chunk builder), grouped by tile. */
 export function emitTrees(trees: Tree[], grid: Grid, terrain: TerrainSampler, chunkAt: (x: number, z: number) => MeshBuilder | null) {
-  const size = CHUNK_SIZE / TREE_TILES;
   for (const t of trees) {
     const mb = chunkAt(t.x, t.z);
-    if (!mb) continue;
-    const c = Math.floor(((((t.x - grid.x0) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) / size);
-    const r = Math.floor(((((t.z - grid.z0) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE) / size);
-    mb.group(r * TREE_TILES + c, TREE_TILES, () => emitTree(mb, t, terrain.heightAt(t.x, t.z)));
+    if (mb) inTreeTile(mb, grid, t.x, t.z, () => emitTree(mb, t, terrain.heightAt(t.x, t.z)));
   }
 }

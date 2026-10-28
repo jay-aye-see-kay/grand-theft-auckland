@@ -108,6 +108,7 @@ export async function loadAuckland(scene: THREE.Scene, world: RAPIER.World, maxA
     update: (focus) => update(focus.x, focus.z),
     sync: () => {},
     surfaceAt: (x, z) => terrain.surfaceAt(x, z),
+    canopyAt: (x, z) => terrain.canopyAt(x, z),
     // The harbour bounds the map to the north; beyond its other edges is land.
     water: manifest.water && { level: manifest.water.level, bounds: b, seaSouth: SEA_SOUTH },
     nearest: (x, z, maxDist, ok) => terrain.nearest(x, z, maxDist, ok),

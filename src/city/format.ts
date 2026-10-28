@@ -396,14 +396,16 @@ export function decodeBuildings(bytes: Uint8Array): BuildingMesh {
 }
 
 // Ground chunk file (land use under the terrain), before deflate:
-//   0  'GTAG'  magic
-//   4  u16     version (1)
-//   6  u16     n, samples per side (the terrain lattice plus GROUND_APRON each side)
-//   8  u8[n*n] surface class per lattice point, row-major (rows along z)
-// The terrain mesh tints its vertices by class, and the debug probe reports
-// the class under a point.
+//   0       'GTAG'  magic
+//   4       u16     version (3)
+//   6       u16     n, samples per side (the terrain lattice plus GROUND_APRON each side)
+//   8       u8[n*n] surface class per lattice point, row-major (rows along z)
+//   8+n*n   u8[n*n] tree canopy over each lattice point, 0 (open sky) to 255 (under a crown's middle)
+// The terrain mesh tints its vertices by class and shades them under the
+// canopy (or, far away where trees aren't drawn, tints them as canopy), and
+// the debug probe reports the class under a point.
 const GROUND_MAGIC = 0x47415447; // 'GTAG'
-const GROUND_VERSION = 2;
+const GROUND_VERSION = 3;
 const GROUND_HEADER = 8;
 /** Extra lattice points stored beyond each chunk edge, so coarse LODs can average across seams. */
 export const GROUND_APRON = 2;
@@ -434,15 +436,19 @@ export function underPaving(classAt: (r: number, c: number) => number, r: number
 export interface GroundSamples {
   n: number;
   classes: Uint8Array;
+  /** Tree canopy cover per lattice point, 0..255. */
+  canopy: Uint8Array;
 }
 
 export function encodeGround(g: GroundSamples): Uint8Array {
-  const out = new Uint8Array(GROUND_HEADER + g.n * g.n);
+  const nn = g.n * g.n;
+  const out = new Uint8Array(GROUND_HEADER + 2 * nn);
   const view = new DataView(out.buffer);
   view.setUint32(0, GROUND_MAGIC, true);
   view.setUint16(4, GROUND_VERSION, true);
   view.setUint16(6, g.n, true);
-  out.set(g.classes.subarray(0, g.n * g.n), GROUND_HEADER);
+  out.set(g.classes.subarray(0, nn), GROUND_HEADER);
+  out.set(g.canopy.subarray(0, nn), GROUND_HEADER + nn);
   return out;
 }
 
@@ -451,8 +457,9 @@ export function decodeGround(bytes: Uint8Array): GroundSamples {
   if (view.getUint32(0, true) !== GROUND_MAGIC) throw new Error('ground chunk: bad magic');
   if (view.getUint16(4, true) !== GROUND_VERSION) throw new Error('ground chunk: unsupported version');
   const n = view.getUint16(6, true);
-  if (bytes.byteLength < GROUND_HEADER + n * n) throw new Error('ground chunk: truncated');
-  return { n, classes: bytes.slice(GROUND_HEADER, GROUND_HEADER + n * n) };
+  const nn = n * n;
+  if (bytes.byteLength < GROUND_HEADER + 2 * nn) throw new Error('ground chunk: truncated');
+  return { n, classes: bytes.slice(GROUND_HEADER, GROUND_HEADER + nn), canopy: bytes.slice(GROUND_HEADER + nn, GROUND_HEADER + 2 * nn) };
 }
 
 // Skyline file (the far LOD of tall buildings, always loaded), before
