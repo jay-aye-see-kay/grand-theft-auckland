@@ -192,6 +192,32 @@ export class GameAudio {
     gloop.stop(t + 0.42);
   }
 
+  /** Mission jingles: a rising arpeggio to start or pass, a ding at a checkpoint, a sad slide on failure. */
+  cue(kind: 'start' | 'reached' | 'passed' | 'failed'): void {
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    // Semitones from A4, each note 0.11 s apart.
+    const tunes = { start: [0, 4, 7], reached: [7, 12], passed: [0, 4, 7, 12, 16, 19, 24], failed: [7, 6, 5, 4] };
+    const notes = tunes[kind];
+    for (const [i, n] of notes.entries()) {
+      const at = t + i * 0.11;
+      const last = i === notes.length - 1;
+      const osc = ctx.createOscillator();
+      osc.type = kind === 'failed' ? 'sawtooth' : 'square';
+      osc.frequency.setValueAtTime(440 * 2 ** (n / 12), at);
+      if (kind === 'failed' && last) osc.frequency.exponentialRampToValueAtTime(440 * 2 ** (-8 / 12), at + 0.6);
+      const len = last ? 0.6 : 0.1;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(0.09, at + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, at + len);
+      osc.connect(g).connect(this.master);
+      osc.start(at);
+      osc.stop(at + len + 0.02);
+    }
+  }
+
   footstep(): void {
     if (!this.ctx) return;
     const ctx = this.ctx;

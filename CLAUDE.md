@@ -34,6 +34,12 @@ get a check in an area under `scripts/smoke/areas/` (core ones only if quick).
   `src/audio.ts` (synthesised), `src/skids.ts`
 - `src/sky.ts`, `src/sun.ts`, `src/splash.ts` (title screen with data credits)
 - `src/maps/`: `auckland.ts` (default) and `test-town.ts` (`?map=test`)
+- `src/missions/`: one file per mission (`defineMission`, picked up by `import.meta.glob`).
+  `runtime/`: `mission.ts` (the script API), `runner.ts` (runs scripts in game time, solo
+  for now, shaped for a room host per #27), `places.ts` (named spots, hand-picked until the
+  gazetteer #28), `markers.ts` (start rings, goal beam), `hud.ts` (banner, timer, arrow).
+  To add a mission: pick places (`__game.probe(x, z)` finds open ground), write the file,
+  and play it through by teleporting in `scripts/smoke/areas/missions.mjs`.
 - `src/city/`: chunk streaming (`streamer.ts`), one merged mesh per chunk (`chunk-mesh.ts`),
   terrain, buildings, facade atlas, skyline LOD, water
 - `tools/citygen/`: offline generator. OSM + LINZ LiDAR → projected (origin Britomart) →
@@ -69,7 +75,7 @@ Measured at `__game.view('spawn' | 'queen-st' | 'aerial')` with `?debug`
 | Street (`spawn`, `queen-st`) | < 150k | < 60 |
 | Aerial | < 300k | < 100 |
 
-Street view is ~140k / ~45 today. Each chunk is one draw call: put new static
+Street view is ~140k / ~48 today (a visible mission marker is one call). Each chunk is one draw call: put new static
 geometry into `ChunkMesh` (vertex colours, shared materials/atlas), not new
 meshes. Small building detail goes in `MeshBuilder.detail()`: near-only
 (within 250 m: verandahs, parapets) or fine (120 m: cornices, plant, eaves).

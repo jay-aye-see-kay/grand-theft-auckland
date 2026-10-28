@@ -13,12 +13,19 @@ import { SUN_DIRECTION } from './sun.ts';
 import { Splash } from './splash.ts';
 import { Water } from './city/water.ts';
 import { loadMap } from './maps/index.ts';
+import { MISSIONS } from './missions/index.ts';
+import { MissionHud } from './missions/runtime/hud.ts';
+import { MissionMarkers } from './missions/runtime/markers.ts';
+import { PLACES } from './missions/runtime/places.ts';
+import { MissionRunner } from './missions/runtime/runner.ts';
 import './style.css';
 
 const FIXED_DT = 1 / 60;
 const MAX_STEPS = 5;
 /** ?debug step(): ticks run between waits for streaming (1 s of game time). */
 const STEP_BATCH = 60;
+/** step(): promise hops a mission script gets to run between ticks. */
+const SCRIPT_HOPS = 8;
 const ENTER_RANGE = 3.6; // m from the car's centre
 const params = new URLSearchParams(location.search);
 const debug = params.has('debug');
@@ -123,6 +130,19 @@ async function main() {
 
   const skids = new SkidMarks();
   scene.add(skids.mesh);
+
+  // Missions: Auckland only, since their places are real streets.
+  const storage = (() => {
+    try {
+      return localStorage;
+    } catch {
+      return null; // blocked (some private modes): best times just aren't kept
+    }
+  })();
+  const missions = map.name === 'auckland' ? new MissionRunner(MISSIONS, (x, z) => map.heightAt(x, z), storage) : null;
+  const markers = new MissionMarkers();
+  scene.add(markers.group);
+  const missionHud = new MissionHud(hud);
 
   const chase = new ChaseCamera(camera, world);
   const input = new Input(app);
@@ -488,6 +508,8 @@ async function main() {
 
     map.sync();
     alpha ??= accumulator / FIXED_DT;
+    /** The driven car's knock this frame, for missions. */
+    let crash = 0;
     for (const [n, { car, shadow }] of cars.entries()) {
       car.render(alpha);
       const seen = car.object.position.distanceTo(camera.position);
@@ -509,6 +531,7 @@ async function main() {
         audio.impact(strength);
         chase.shake(strength * 0.6);
       }
+      if (car === driving) crash = car.impact;
       car.impact = 0;
     }
     skids.flush();
@@ -535,6 +558,13 @@ async function main() {
       if (player.stepped && !player.flying) audio.footstep();
     }
     player.stepped = false;
+
+    // Missions run on physics poses, not interpolated ones, so stepped tests replay exactly.
+    if (missions && started) {
+      const at = driving ? driving.body.translation() : player.body.translation();
+      missions.tick({ clock, x: at.x, y: at.y, z: at.z, driving: !!driving, speedKmh: driving ? Math.abs(driving.forwardSpeed()) * 3.6 : 0, crash });
+      for (const cue of missions.takeCues()) audio.cue(cue);
+    }
     // On foot the camera is always close; this only hides them from far debug views.
     player.object.visible = !driving && player.position.distanceTo(camera.position) < CAR_DETAIL;
     playerShadow.visible = player.object.visible;
@@ -544,7 +574,7 @@ async function main() {
       ? (coarse ? 'Tap 🚗 to get in' : 'Press F to get in')
       : player.flying && !driving
         ? (coarse ? 'Flying: UP / DOWN to climb, the same code to land' : 'Flying: Space / C to climb, Shift for speed, the same code to land')
-        : '';
+        : (missions?.view().hint ?? '');
 
     // Don't follow a sinking car under the water: watch from just above it.
     if (water && camera.position.y < water.level + 0.6) {
@@ -554,6 +584,13 @@ async function main() {
     applyDebugView();
     skyDome.follow(camera);
     water?.update(camera, clock);
+    if (missions) {
+      const view = missions.view();
+      const focus = driving ? driving.object.position : player.position;
+      markers.update(view, map.heightAt, camera.position, clock);
+      camera.updateMatrixWorld();
+      missionHud.update(view, camera, focus, map.heightAt);
+    }
   };
 
   const applyDebugView = () => {
@@ -623,7 +660,13 @@ async function main() {
       }
       const batch = Math.min(STEP_BATCH, n - done);
       // alpha 1: show the latest physics pose, the one the test just stepped to.
-      for (let i = 0; i < batch; i++) frame(FIXED_DT, 1);
+      for (let i = 0; i < batch; i++) {
+        frame(FIXED_DT, 1);
+        // Let mission scripts carry on from this tick before the next, as
+        // they would between real frames (a few promise hops deep; microtasks
+        // only, so nothing else gets in).
+        if (missions?.active) for (let k = 0; k < SCRIPT_HOPS; k++) await null;
+      }
       done += batch;
     }
   };
@@ -778,6 +821,12 @@ async function main() {
         up: new THREE.Vector3(0, 1, 0).applyQuaternion(car.object.quaternion).y,
         frozen,
       })),
+      /** Missions: what's on screen (banner, subtitle, timer, goal, start markers), how the last one ended, everything said. */
+      missions: () => missions?.debugState() ?? null,
+      /** Start a mission by id where the player is, abandoning any running one. */
+      startMission: (id: string) => missions?.start(id),
+      /** Named places missions use: id -> name, x, z. */
+      places: () => PLACES,
       step,
       /** Manual mode: draw a frame (for a screenshot); resolves once it's on screen. */
       draw: async () => {
@@ -808,6 +857,7 @@ async function main() {
         player.place(map.spawn.feet.clone(), map.spawn.heading);
         playerSoaked = null;
         upsideDownTime = 0;
+        missions?.reset();
         input.clearPresses();
         chase.snap(map.spawn.heading);
         await step(2); // and stays paused: what follows is stepped from here
