@@ -68,7 +68,10 @@ async function main() {
   const maxRatio = Math.min(devicePixelRatio, 2);
   let pixelRatio = Math.min(devicePixelRatio, coarse ? 1.5 : 2);
   renderer.setPixelRatio(pixelRatio);
-  renderer.setSize(innerWidth, innerHeight);
+  // Sized from #app's box, not innerWidth/innerHeight: iOS Safari reports
+  // stale ones for a moment after rotating, which stretched the picture.
+  // `false`: CSS keeps the canvas filling #app; we only size the buffer.
+  renderer.setSize(app.clientWidth, app.clientHeight, false);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // Filmic tone mapping: bright sunlit walls roll off instead of clipping,
   // which is most of the step from flat PS1 shading to a PS2/PS3 look.
@@ -93,7 +96,7 @@ async function main() {
   const sky = new THREE.Color(atmosphere.sky);
   scene.background = sky;
   scene.fog = new THREE.Fog(sky, atmosphere.fogNear, atmosphere.fogFar);
-  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.3, atmosphere.far);
+  const camera = new THREE.PerspectiveCamera(62, app.clientWidth / app.clientHeight, 0.3, atmosphere.far);
   const skyDome = new Sky(sky, atmosphere.far * 0.9, atmosphere.zenith, sun.position);
   scene.add(skyDome.mesh);
 
@@ -336,11 +339,15 @@ async function main() {
     shadow.quaternion.setFromUnitVectors(up, _n).multiply(_yawQ.setFromAxisAngle(up, yaw));
   };
 
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
+  // A ResizeObserver fires after layout, so it sees the settled size after a rotation.
+  new ResizeObserver(() => {
+    const w = app.clientWidth;
+    const h = app.clientHeight;
+    if (!w || !h) return;
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-  });
+    renderer.setSize(w, h, false);
+  }).observe(app);
 
   const setMuteIcon = () => (muteBtn.textContent = audio.isMuted ? '🔇' : '🔊');
   setMuteIcon();
@@ -348,6 +355,12 @@ async function main() {
     audio.toggleMute();
     setMuteIcon();
   });
+
+  // iPhone Safari has no fullscreen for pages and keeps its bars; only a
+  // Home Screen launch (navigator.standalone true) gets the whole screen.
+  if ((navigator as { standalone?: boolean }).standalone === false && coarse) {
+    document.getElementById('install')!.classList.remove('hidden');
+  }
 
   // Tap/click to start: unlock audio, go fullscreen and landscape where the browser allows.
   status.textContent = coarse ? 'Tap to play' : 'Click or press any key to play';

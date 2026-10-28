@@ -36,5 +36,23 @@ export default {
     check(s.mode === 'car', 'touch enter button gets in');
     check(await page.locator('.btn-gas').isVisible(), 'driving touch layout');
     await shot('7-car');
+
+    // Rotate to portrait and back: the canvas buffer must follow its on-screen
+    // box, or the picture stretches (iOS reports stale sizes mid-rotation).
+    const rotate = async (size) => {
+      await page.setViewportSize(size);
+      // Leaving fullscreen can restore the old window size late: wait for ours, then a frame for the ResizeObserver.
+      await page.waitForFunction(([w, h]) => innerWidth === w && innerHeight === h, [size.width, size.height]);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      return page.evaluate(() => {
+        const c = document.querySelector('canvas');
+        const r = c.getBoundingClientRect();
+        return Math.abs(c.width / c.height - r.width / r.height) < 0.01 && r.width === innerWidth && r.height === innerHeight;
+      });
+    };
+    await page.evaluate(() => document.fullscreenElement && document.exitFullscreen()); // tap-to-play went fullscreen
+    const landscape = page.viewportSize();
+    const portraitFits = await rotate({ width: landscape.height, height: landscape.width });
+    check(portraitFits && (await rotate(landscape)), 'canvas fills the screen unstretched after rotating');
   },
 };

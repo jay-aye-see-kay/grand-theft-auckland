@@ -88,8 +88,9 @@ export class MissionHud {
 
   /** Over the goal if it's in view, else on the screen edge pointing at it. */
   private point(x: number, z: number, ground: number, camera: THREE.PerspectiveCamera): void {
-    const w = innerWidth;
-    const h = innerHeight;
+    // The layout box the canvas fills (innerWidth lags a rotation on iOS).
+    const w = document.documentElement.clientWidth;
+    const h = document.documentElement.clientHeight;
     const v = this._v.set(x, (Number.isNaN(ground) ? camera.position.y : ground) + LIFT, z);
     camera.getWorldDirection(this._fwd);
     const behind = v.clone().sub(camera.position).dot(this._fwd) < 0;
