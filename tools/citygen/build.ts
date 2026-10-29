@@ -70,7 +70,7 @@ console.log(
   `Buildings: ${c.outlines} outlines + ${c.parts} parts drawn (${c.hiddenOutlines} outlines replaced by their parts, ${c.outside} outside the grid). ` +
     `Heights from tag ${c.height}, levels ${c.levels}, LiDAR ${c.dsm}, default ${c.default}. ` +
     `${c.hidden} hidden by overrides, ${c.blocks} blocks, ${blds.landmarks.length} landmarks. ` +
-    `${c.verandahs} verandahs (${c.verandahsMapped} mapped in OSM, ${(c.verandahMetres / 1000).toFixed(1)} km), ${c.murals} painted walls, ${c.billboards} billboards. ` +
+    `${c.verandahs} verandahs (${c.verandahsMapped} mapped in OSM, ${(c.verandahMetres / 1000).toFixed(1)} km), ${c.murals} painted walls, ${c.billboards} billboards, ${c.crowns} tower crowns. ` +
     `Eras: ${Object.entries(c.eras).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ')}. ` +
     `${c.towers} towers split from podiums, ${c.plant} rooftop plant boxes. ` +
     `Pitched roofs: ${Object.entries(c.roofs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${v} ${k}`).join(', ') || 'none'}.`,

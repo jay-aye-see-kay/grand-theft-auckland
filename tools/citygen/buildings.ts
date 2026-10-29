@@ -1056,8 +1056,8 @@ export class MeshBuilder {
    * top p0). With `back`, its other side too, mirrored so lettering reads
    * (null: the same UVs mirrored; a colour: plain in that colour).
    */
-  panel(p0: Local, p1: Local, y0: number, y1: number, n: readonly number[], tile: number, uvs: [number, number][], light: number, back?: readonly number[] | null) {
-    const white = [1, 1, 1];
+  panel(p0: Local, p1: Local, y0: number, y1: number, n: readonly number[], tile: number, uvs: [number, number][], light: number, back?: readonly number[] | null, colour?: readonly number[]) {
+    const white = colour ?? [1, 1, 1];
     const v = [[p0, y0], [p1, y0], [p1, y1], [p0, y1]] as const;
     const front = v.map(([p, y], k) => this.vertex(p.x, y, p.z, n, white, 0, tile, uvs[k][0], uvs[k][1], light));
     this.wallQuad(front, p0, p1, n);
@@ -1523,7 +1523,7 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; billboards: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; billboards: number; crowns: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
   /**
    * Drawn buildings standing on the ground (walls from below it up), each
    * with its family (an outline and its parts): the ground under them is
@@ -1566,7 +1566,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, billboards: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, billboards: 0, crowns: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
   // Verandahs mapped in OSM: thin building=roof strips along shopfronts (K Road
   // has most of its own). Drawn as a slab they hang at a guessed height and
   // double up with ours, so the wall they cover gets a verandah() instead.
@@ -1982,8 +1982,20 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         });
       }
     }
+    // Tower tops: a crown for the skyline (always drawn, and on the far skyline too).
+    let crowned = false;
+    if (!hide && !canopy && !pitched && !p.tower && familyTop.get(fam)! >= CROWN_MIN && top >= famTopAbs.get(fam)! - 1 && s.polygons.length === 1 && s.area >= 250) {
+      const targets = [mb];
+      if (familyTop.get(fam)! >= SKYLINE_MIN) {
+        const key = chunkKey(s.centroid.x, s.centroid.z);
+        if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
+        targets.push(skyline.get(key)!);
+      }
+      crowned = towerCrown(targets, s, top + look.parapet, top - bottom, wall, roof, style.upper, look, hash(fam, 50), hash(fam, 51));
+      if (crowned) counts.crowns++;
+    }
     // Plant rooms on tower roofs.
-    if (!hide && !canopy && !pitched && !p.plant?.length && !p.tower && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
+    if (!crowned && !hide && !canopy && !pitched && !p.plant?.length && !p.tower && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
       const ring = s.polygons[0].outer;
       let angle = 0;
       let longest = 0;
@@ -2102,4 +2114,74 @@ function addBlocks(
     n++;
   }
   return n;
+}
+
+/** Towers this tall (their family's top over its base) get a crown, m. */
+const CROWN_MIN = 50;
+const CROWN_LIGHTS = [0xf4f8ff, 0x8fe8ff, 0xff7ac8, 0xffd060].map(rgb);
+const MAST = rgb(0x9a9ea0);
+const MAST_TIP = rgb(0xff3020);
+
+/**
+ * A tower's top, for the skyline's sake: a set-back crown (now and then
+ * with a mast), a band of light under the parapet, or a big lit sign on
+ * the roof. `pick` and `extra` (0..1) choose; false if it's left plain.
+ */
+function towerCrown(targets: MeshBuilder[], s: Solid, roofY: number, height: number, wall: [number, number, number], roof: [number, number, number], upper: Layer, look: Look, pick: number, extra: number): boolean {
+  const ring = s.polygons[0].outer;
+  const size = Math.sqrt(s.area);
+  const mast = (mb: MeshBuilder, y: number) => {
+    const h = 8 + extra * 14;
+    mb.box(s.centroid.x, s.centroid.z, 0.25, 0.25, 0, y, h, MAST, 'plain');
+    mb.box(s.centroid.x, s.centroid.z, 0.35, 0.35, 0, y + h, 0.6, MAST_TIP, 'plain');
+  };
+  if (pick < 0.35) {
+    // A set-back crown, its walls dressed like the tower's.
+    const inset = outsetRing(ring, -Math.min(6, size * 0.15));
+    if (!inset || !inSolid(s, s.centroid.x, s.centroid.z)) return false;
+    const h = Math.min(12, Math.max(4, height * 0.08));
+    const crownLook: Look = { ...look, parapet: 0.6, groundFloor: BASE_BAND, origin: undefined, flat: true, wall: (_a, _b, _n, len) => ({ upper: len < 1.5 ? 'plain' : upper, ground: null }) };
+    for (const mb of targets) {
+      mb.prism({ polygons: [{ outer: inset, holes: [] }] }, roofY, roofY + h, wall, roof, true, true, crownLook);
+      if (extra < 0.45) mast(mb, roofY + h + 0.6);
+    }
+    return true;
+  }
+  if (pick < 0.55) {
+    // A band of light round the top, under the parapet.
+    const colour = CROWN_LIGHTS[Math.floor(extra * CROWN_LIGHTS.length)];
+    for (const mb of targets) {
+      eachEdge(ring, (a, b, n, len) => {
+        if (len < 3) return;
+        const p0 = { x: a.x + n[0] * 0.06, z: a.z + n[2] * 0.06 };
+        const p1 = { x: b.x + n[0] * 0.06, z: b.z + n[2] * 0.06 };
+        mb.panel(p0, p1, roofY - 2.4, roofY - 1.2, n, 0, [[0, 0], [0, 0], [0, 0], [0, 0]], 1.5, undefined, colour);
+      });
+    }
+    return true;
+  }
+  if (pick < 0.72) {
+    // A big lit sign along the longest side of the roof, facing out.
+    let best: { a: Local; b: Local; n: readonly number[]; len: number } | null = null;
+    eachEdge(ring, (a, b, n, len) => {
+      if (!best || len > best.len) best = { a, b, n, len };
+    });
+    if (!best) return false;
+    const { a, b, n, len } = best as { a: Local; b: Local; n: readonly number[]; len: number };
+    const w = Math.min(22, len * 0.7);
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    const mx = (a.x + b.x) / 2 - n[0] * 1.2;
+    const mz = (a.z + b.z) / 2 - n[2] * 1.2;
+    const p0 = { x: mx + ux * (w / 2), z: mz + uz * (w / 2) };
+    const p1 = { x: mx - ux * (w / 2), z: mz - uz * (w / 2) };
+    const neon = [0, 3, 6][Math.floor(extra * 3)];
+    for (const mb of targets) mb.panel(p0, p1, roofY + 0.5, roofY + 0.5 + w / 4.5, n, tileOf('signs'), MeshBuilder.signUvs(neon), 1.2, rgb(0x3a3c3e));
+    return true;
+  }
+  if (extra < 0.3) {
+    for (const mb of targets) mast(mb, roofY);
+    return true;
+  }
+  return false;
 }
