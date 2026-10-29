@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { tileOf } from './facades.ts';
 import { GROUND_APRON, PAVED_SINK, SURFACE_ID, underPaving, type GroundSamples, type TerrainSamples } from './format.ts';
 
 // Render geometry for one terrain chunk, as parts for ChunkMesh to merge:
@@ -47,14 +48,18 @@ const SEABED = new THREE.Color(0x24363a);
 const SEAWALL = new THREE.Color(0x5d5a54);
 // Land use (see SURFACES in format.ts). Roads, footpaths and paving match the
 // roads layer's colours, so coarse terrain far away still shows the streets.
-const PAVED = new THREE.Color(0x8e8b84);
+const PAVED = new THREE.Color(0x86857f);
+/** Urban ground flatter than this (normal's y) is drawn paved. */
+const URBAN_FLAT = 0.95;
+const GROUND_TILE = tileOf('ground');
+const PAVING_TILE = tileOf('paving');
 const TREES = new THREE.Color(0x456b36);
 /** Bark mulch, with flowers in the beds' colours dotted over it. */
 const MULCH = new THREE.Color(0x5e4632);
 const FLOWERS = [new THREE.Color(0xc4425e), new THREE.Color(0xe2b23c), new THREE.Color(0xe8e4dc), new THREE.Color(0x8a5bb0)];
-const PAVING = new THREE.Color(0x9f9b93);
-const FOOTPATH = new THREE.Color(0x9d9b95);
-const ASPHALT = new THREE.Color(0x35383d);
+const PAVING = new THREE.Color(0x8f8c85);
+const FOOTPATH = new THREE.Color(0x82827e);
+const ASPHALT = new THREE.Color(0x424346);
 /**
  * Under a crown at full detail (near, where the trees are drawn) the ground
  * is darkened by up to this much: their shade. Coarse ground (far, where
@@ -87,6 +92,8 @@ export interface TerrainParts {
    * when the trees themselves are drawn over it.
    */
   colShaded: Uint8Array;
+  /** Atlas tile per vertex (see facades.ts): paving where the ground is built-up, else its grain. */
+  tile: Uint8Array;
   count: number;
   far: Uint32Array;
   tiles?: { ground: [Uint32Array, Uint32Array]; skirts: [Uint32Array[], Uint32Array[]]; flat: boolean }[];
@@ -116,11 +123,14 @@ class Verts {
   col: number[] = [];
   plain: number[] = [];
   shaded: number[] = [];
+  /** Atlas tile per vertex: paving on built-up ground, else the ground's grain. */
+  tile: number[] = [];
   get count() {
     return this.pos.length / 3;
   }
-  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color, shaded: THREE.Color): number {
+  add(x: number, y: number, z: number, n: THREE.Vector3, c: THREE.Color, plain: THREE.Color, shaded: THREE.Color, tile = GROUND_TILE): number {
     this.pos.push(x, y, z);
+    this.tile.push(tile);
     this.nor.push(Math.round(n.x * 127), Math.round(n.y * 127), Math.round(n.z * 127));
     for (const [list, k] of [[this.col, c], [this.plain, plain], [this.shaded, shaded]] as const) {
       list.push(Math.round(Math.min(1, k.r) * 255), Math.round(Math.min(1, k.g) * 255), Math.round(Math.min(1, k.b) * 255));
@@ -130,6 +140,7 @@ class Verts {
   /** A copy of vertex k, dropped by `dy` and shaded (skirts). */
   copy(k: number, dy: number, shade: number): number {
     this.pos.push(this.pos[k * 3], this.pos[k * 3 + 1] + dy, this.pos[k * 3 + 2]);
+    this.tile.push(this.tile[k]);
     this.nor.push(this.nor[k * 3], this.nor[k * 3 + 1], this.nor[k * 3 + 2]);
     this.col.push(...[0, 1, 2].map((a) => Math.round(this.col[k * 3 + a] * shade)));
     this.plain.push(...[0, 1, 2].map((a) => Math.round(this.plain[k * 3 + a] * shade)));
@@ -205,7 +216,12 @@ export function buildTerrainParts(
       plain.copy(colour);
       shaded.copy(colour);
     }
-    return v.add(c * cell, y, r * cell, normal, colour, plain, shaded);
+    // Built-up ground between the streets and the buildings (forecourts,
+    // plazas, the far side of wide footpaths) is paved, not bare: same
+    // pavers as the footpaths. Banks too steep to build on keep the grain.
+    const k = classAt?.(r, c) ?? SURFACE_ID.grass;
+    const paved = k >= SURFACE_ID.paving || (k === SURFACE_ID.urban && normal.y > URBAN_FLAT);
+    return v.add(c * cell, y, r * cell, normal, colour, plain, shaded, paved ? PAVING_TILE : GROUND_TILE);
   };
 
   // Coarse grid, sunk under the drawn ground.
@@ -217,11 +233,19 @@ export function buildTerrainParts(
   /** Quads of a grid (side w, spacing `per` cells) over cells [r0, r1) x [c0, c1). */
   /** Whether the cell of side `per` samples with its north-west corner at sample (r, c) is a cavity's opening. */
   const open = (r: number, c: number, per: number) => !!carve && carve.open(origin.x + (c + per / 2) * cell, origin.z + (r + per / 2) * cell);
+  // Cells wholly inside a building (citygen marks them) are never seen: a
+  // building's walls run from below the ground to its roof.
+  const covered = ground?.covered;
+  const under = (r: number, c: number, per: number) => {
+    if (!covered) return false;
+    for (let dr = 0; dr < per; dr++) for (let dc = 0; dc < per; dc++) if (covered[(r + dr + GROUND_APRON) * ground!.n + c + dc + GROUND_APRON] !== 1) return false;
+    return true;
+  };
   const quads = (grid: Int32Array, w: number, per: number, r0: number, r1: number, c0: number, c1: number) => {
     const tris: number[] = [];
     for (let gz = r0 / per; gz < r1 / per; gz++) {
       for (let gx = c0 / per; gx < c1 / per; gx++) {
-        if (open(gz * per, gx * per, per)) continue;
+        if (open(gz * per, gx * per, per) || under(gz * per, gx * per, per)) continue;
         const p00 = at(grid, w, gx, gz);
         const p10 = at(grid, w, gx + 1, gz);
         const p01 = at(grid, w, gx, gz + 1);
@@ -312,6 +336,7 @@ export function buildTerrainParts(
     col: Uint8Array.from(v.col),
     colPlain: Uint8Array.from(v.plain),
     colShaded: Uint8Array.from(v.shaded),
+    tile: Uint8Array.from(v.tile),
     count: v.count,
     far: Uint32Array.from(far),
     tiles,

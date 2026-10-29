@@ -94,7 +94,7 @@ export default {
             const x = A[0] + (B[0] - A[0]) * t + uz * side * off;
             const z = A[1] + (B[1] - A[1]) * t - ux * side * off;
             const { ground, top } = await game('probe', x, z);
-            if (top !== null && top - ground > 0.5) continue; // inside a building
+            if (top !== null && top - ground > 4.5) continue; // inside a building (verandah tops, ~3.9 m, are solid too)
             const hit = await game('renderHit', [x, ground + 1.8, z], [0, 1, 0], 10);
             if (hit !== null && hit > 1.2 && hit < 3.5) {
               covered++;

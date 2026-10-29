@@ -8,7 +8,7 @@ export default {
   name: 'buildings',
   core: false,
   page: 'auckland',
-  async run({ page, check, game, state }) {
+  async run({ page, check, game, state, step }) {
     const s = await state();
     check(s.buildingChunks >= 9, `building chunks loaded near spawn (${s.buildingChunks})`);
     const roofAt = async (x, z) => {
@@ -29,6 +29,31 @@ export default {
     const canopy = await roofAt(-21, 28);
     check(glass > 14 && glass < 18 && pwc > 170 && pwc < 180 && kiosk < 6 && canopy > 3.5 && canopy < 6,
       `overridden heights: Glasshouse ${glass.toFixed(1)} m, PwC crown top ${pwc?.toFixed(0)} m asl, kiosk ${kiosk.toFixed(1)} m, Galway St canopy ${canopy.toFixed(1)} m`);
+
+    // K Road's verandahs are mapped in OSM (building=roof strips): drawn as
+    // one verandah over the footpath at shopfront height, not a slab at a
+    // guessed height under a second, generated one.
+    await game('placePlayer', -895, 1440, 0);
+    await step(60);
+    const krd = await game('probe', -895, 1447);
+    const under = await game('renderHit', [-895, krd.ground + 1, 1447], [0, 1, 0], 10);
+    check(krd.top - krd.ground > 3.4 && krd.top - krd.ground < 4.4 && under > 2.3 && under < 3.3,
+      `K Road verandah ${(krd.top - krd.ground).toFixed(1)} m over the footpath, first thing overhead ${(under + 1).toFixed(1)} m up`);
+
+    // Street furniture (tools/citygen/furniture.ts): the bus shelter OSM maps
+    // at the Durham St stop on Queen St, its roof found by looking up from
+    // under it (trees can stand over it).
+    await game('placePlayer', -230, 400, 0);
+    await step(30);
+    let roof = 0;
+    for (let x = -229.5; x <= -221.5; x += 0.5) {
+      for (let z = 400; z <= 408; z += 0.5) {
+        const g = await game('groundHeight', x, z);
+        const hit = await game('renderHit', [x, g + 1.5, z], [0, 1, 0], 3);
+        if (hit !== null && hit > 0.9 && hit < 1.3) roof++;
+      }
+    }
+    check(roof > 10, `a bus shelter at the Durham St stop on Queen St (${roof} points under its roof)`);
 
     // Shapes read from the LiDAR (tools/citygen/roofs.ts, rooftops.ts): a
     // Freemans Bay house's gabled roof rises from eave to ridge, and West

@@ -27,7 +27,7 @@ import { sampleLocal, type Raster } from './raster.ts';
 import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 import { SUN_DIRECTION } from '../../src/sun.ts';
-import { FACADE, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
+import { FACADE, MURAL_QUADRANTS, ROOF_METRES, SHADE_ONE, signCell, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
 import { eraStyle, FLATS, hash, HOUSES, SHEDS, type FacadeStyle } from './eras.ts';
 import type { WikidataFacts } from './wikidata.ts';
@@ -68,10 +68,18 @@ const VERANDAH_KERB = 0.4;
 /** Segment length (it steps with the street) and the spacing of kerb posts, m. */
 const VERANDAH_STEP = 10;
 const VERANDAH_POSTS = 6;
+/** A sign hangs under a verandah for each shop: this far apart, m. */
+const SIGN_STEP = 5;
+/** Share of old shopfronts' street walls with a blade sign sticking out above the verandah. */
+const BLADES = 0.35;
+/** Share of mid-rise flat roofs onto a street with a billboard on top. */
+const BILLBOARDS = 0.12;
 /** Buildings (by their tallest part) at least this tall also go in the far skyline, m. */
 const SKYLINE_MIN = 40;
 /** Parapet faces only along roof edges at least this long, m. */
 const PARAPET_MIN_EDGE = 4;
+const MODERN_SHOPS: Layer[] = ['shop', 'shop-b', 'shop-c'];
+const HERITAGE_SHOPS: Layer[] = ['shop-heritage', 'shop-heritage-b'];
 const FASCIAS = [0xe8e2d4, 0xf0eee8, 0x2f3a34, 0x1e1f22, 0x6b2a2a, 0xd8cdb0, 0x3a4a5e];
 /** Height of the darker band at the foot of ground-level walls. */
 const BASE_BAND = 4;
@@ -143,6 +151,12 @@ export function inRing(r: Ring, x: number, z: number): boolean {
 
 function inPolygon(p: Polygon, x: number, z: number): boolean {
   return inRing(p.outer, x, z) && !p.holes.some((h) => inRing(h, x, z));
+}
+
+/** [minX, minZ, maxX, maxZ] of a solid's outer rings. */
+function bboxOf(s: Solid): [number, number, number, number] {
+  const pts = s.polygons.flatMap((p) => p.outer);
+  return [Math.min(...pts.map((p) => p.x)), Math.min(...pts.map((p) => p.z)), Math.max(...pts.map((p) => p.x)), Math.max(...pts.map((p) => p.z))];
 }
 
 function inSolid(s: Solid, x: number, z: number): boolean {
@@ -623,6 +637,12 @@ export type Look = {
   groundFloor: number;
   /** Ground height (m above sea level) at a point, for the shopfront band on slopes. */
   groundAt: (x: number, z: number) => number;
+  /** Where the floors above the ground floor start (absolute, m); floor lines are this plus whole floors. Default bottom + groundFloor. */
+  origin?: number;
+  /** Street band texture shifted this much of a repeat along the wall (which shop comes first). */
+  shopShift?: number;
+  /** One quad per wall, no street band or steps (the far skyline). */
+  flat?: boolean;
   /** Height of the parapet round a flat roof, m (0 for none). */
   parapet: number;
 };
@@ -676,6 +696,96 @@ export function canyonShade(across: (x: number, z: number, self: unknown) => num
 }
 
 /** Accumulates one chunk's merged mesh in absolute local metres. */
+/** Share of blank side walls (clear of their neighbours, not onto a street) painted with a mural or an ad. */
+const PAINTED_WALLS = 0.4;
+/** Only buildings up to this tall: a tower's blank side would dwarf a mural, m. */
+const PAINTED_MAX = 30;
+/** What's painted on a blank wall: which artwork, how wide (centred), and from and to what height. */
+type Painting = { layer: Layer; quadrant: number; w: number; y0: number; y1: number };
+
+/** Mapped verandahs are looked for this far in front of a wall, m. */
+const VERANDAH_PROBE = 1;
+/** A building=roof no wider than this (on average) is a verandah strip, m. */
+const VERANDAH_WIDTH = 5.5;
+
+/** Calls `f` for each edge of a ring (wound as cleanRing leaves it) with its outward normal and length. */
+function eachEdge(ring: Ring, f: (a: Local, b: Local, n: readonly number[], len: number) => void) {
+  for (let k = 0; k < ring.length; k++) {
+    const a = ring[k];
+    const b = ring[(k + 1) % ring.length];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len > 1e-6) f(a, b, [(b.z - a.z) / len, 0, -(b.x - a.x) / len], len);
+  }
+}
+
+/** A canopy that reads as a street verandah: thin, low and with no heights of its own. */
+function verandahLike(s: Solid): boolean {
+  const t = s.tags;
+  if (!isCanopy(t) || t.height || t.min_height || Number(t['building:levels']) > 1 || s.area > 2000) return false;
+  let perimeter = 0;
+  for (const p of s.polygons) eachEdge(p.outer, (_a, _b, _n, len) => (perimeter += len));
+  return (2 * s.area) / perimeter <= VERANDAH_WIDTH;
+}
+
+/** How far a mapped verandah reaches out from the middle of wall a-b, m (1.5 to VERANDAH_WIDTH + 0.5). */
+function verandahDepth(c: Solid, a: Local, b: Local, n: readonly number[]): number {
+  let best = 0;
+  for (const t of [0.25, 0.5, 0.75]) {
+    const x = a.x + (b.x - a.x) * t;
+    const z = a.z + (b.z - a.z) * t;
+    let d = VERANDAH_PROBE;
+    while (d < VERANDAH_WIDTH + 0.5 && inSolid(c, x + n[0] * (d + 0.25), z + n[2] * (d + 0.25))) d += 0.25;
+    best = Math.max(best, d);
+  }
+  return Math.max(1.5, best);
+}
+
+/** Ground is read this far in front of a wall: the footpath, not the LiDAR's edge of the roof. */
+const STEP_PROBE = 1.2;
+/** A wall's street band steps where the ground along it varies by more than this, m. */
+const STEP_RISE = 1;
+/** A shopfront's foot sits this far below the footpath, m. */
+const SHOP_SINK = 0.1;
+/** Up to this much blank wall under the first windows is left to the facade's own (under the sill), m. */
+const SILL = 0.7;
+/** Walls without a shopfront step only where it would bury or float a floor of windows, m. */
+const STEP_RISE_PLAIN = 2.5;
+/** Ground samples along a wall at most this far apart, m. */
+const STEP_SAMPLE = 2;
+
+/**
+ * Stretches of a wall (as fractions t0..t1 from a to b) over nearly level
+ * ground, each with the highest ground in front of it (never below `bottom`).
+ */
+export function groundSteps(a: Local, b: Local, n: readonly number[], len: number, bottom: number, groundAt: (x: number, z: number) => number, rise = STEP_RISE): { t0: number; t1: number; g: number; lo: number }[] {
+  const count = Math.max(1, Math.ceil(len / STEP_SAMPLE));
+  const gs: number[] = [];
+  for (let k = 0; k <= count; k++) {
+    const t = k / count;
+    const g = groundAt(a.x + (b.x - a.x) * t + n[0] * STEP_PROBE, a.z + (b.z - a.z) * t + n[2] * STEP_PROBE);
+    gs.push(Number.isFinite(g) ? Math.max(g, bottom) : bottom);
+  }
+  const steps: { t0: number; t1: number; g: number; lo: number }[] = [];
+  let first = 0;
+  let lo = gs[0];
+  let hi = gs[0];
+  for (let k = 1; k <= count; k++) {
+    const nlo = Math.min(lo, gs[k]);
+    const nhi = Math.max(hi, gs[k]);
+    if (nhi - nlo > rise && k - 1 > first) {
+      steps.push({ t0: first / count, t1: (k - 1) / count, g: hi, lo });
+      first = k - 1;
+      lo = Math.min(gs[k - 1], gs[k]);
+      hi = Math.max(gs[k - 1], gs[k]);
+    } else {
+      lo = nlo;
+      hi = nhi;
+    }
+  }
+  steps.push({ t0: first / count, t1: 1, g: hi, lo });
+  return steps;
+}
+
 export class MeshBuilder {
   readonly pos: number[] = [];
   readonly nor: number[] = [];
@@ -782,11 +892,13 @@ export class MeshBuilder {
           const uUp = fit(face.upper);
           const put = (p: Local, y: number, light: number, tile: number, u: number, v: number) =>
             this.vertex(p.x, y, p.z, n, wall, 0, tile, u, v, light);
-          const a1 = put(a, lid, l.top, upTile, 0, floorV(face.upper, lid));
-          const b1 = put(b, lid, l.top, upTile, uUp, floorV(face.upper, lid));
+          // Walls with a street band are drawn in steps (steppedWall), so these are for the plain case.
+          const stepped = banded && !!look && !look.flat;
+          const a1 = stepped ? -1 : put(a, lid, l.top, upTile, 0, floorV(face.upper, lid));
+          const b1 = stepped ? -1 : put(b, lid, l.top, upTile, uUp, floorV(face.upper, lid));
           // The collider stops at the roof; the parapet above it is only drawn.
-          let ac = parapet ? this.vertex(a.x, top, a.z, n, wall) : a1;
-          let bc = parapet ? this.vertex(b.x, top, b.z, n, wall) : b1;
+          let ac = parapet || stepped ? this.vertex(a.x, top, a.z, n, wall) : a1;
+          let bc = parapet || stepped ? this.vertex(b.x, top, b.z, n, wall) : b1;
           if (planes) {
             // Under a pitched roof: plain wall from the eave up to the roof line (a gable end).
             const ya = roofY(a);
@@ -804,28 +916,9 @@ export class MeshBuilder {
             }
           }
           // Outward-facing (counter-clockwise seen from outside) for rings wound as cleanRing() leaves them.
-          if (banded) {
-            // The ground floor follows the street: a storey above the ground at each corner.
-            const ga = look ? look.groundAt(a.x, a.z) : bottom;
-            const gb = look ? look.groundAt(b.x, b.z) : bottom;
-            const ya = Math.min(Math.max(ga, bottom) + gf, top - 1);
-            const yb = Math.min(Math.max(gb, bottom) + gf, top - 1);
-            const low = face.ground ?? face.upper;
-            const lowTile = low ? tileOf(low) : 0;
-            const uLow = fit(low);
-            const shopV = (y: number, g: number) => (face.ground ? (y - Math.max(g, bottom)) / gf : floorV(low, y));
-            const a0 = put(a, bottom, l.foot, lowTile, 0, shopV(bottom, ga));
-            const b0 = put(b, bottom, l.foot, lowTile, uLow, shopV(bottom, gb));
-            const am = put(a, ya, l.band, lowTile, 0, shopV(ya, ga));
-            const bm = put(b, yb, l.band, lowTile, uLow, shopV(yb, gb));
-            let au = am;
-            let bu = bm;
-            if (low !== face.upper || face.ground) {
-              au = put(a, ya, l.band, upTile, 0, floorV(face.upper, ya));
-              bu = put(b, yb, l.band, upTile, uUp, floorV(face.upper, yb));
-            }
-            this.idx.push(a0, bm, b0, a0, am, bm, au, b1, bu, au, a1, b1);
-            this.colliderIdx.push(a0, bc, b0, a0, ac, bc);
+          if (stepped) {
+            this.steppedWall(a, b, n, len, bottom, lid, wall, l, face, look, gf);
+            this.colliderIdx.push(...this.colliderQuad(a, b, n, bottom, ac, bc, wall));
           } else {
             const a0 = put(a, bottom, l.foot, upTile, 0, floorV(face.upper, bottom));
             const b0 = put(b, bottom, l.foot, upTile, uUp, floorV(face.upper, bottom));
@@ -871,6 +964,141 @@ export class MeshBuilder {
         }
       }
     }
+  }
+
+  /**
+   * A wall with a street band, in steps along the street: each stretch of
+   * nearly level ground gets its shopfront (or lobby) standing on the
+   * footpath in front of it, and the facade above starts on the next whole
+   * floor line, with plain wall in between. Floor lines are the building's
+   * (bottom + ground floor + whole floors), so windows line up round the
+   * corners and with the string courses, and never come out cut by the
+   * band or half under the footpath on a hill. Walls without a street band
+   * still start their windows on a floor line above the ground.
+   */
+  steppedWall(a: Local, b: Local, n: readonly number[], len: number, bottom: number, lid: number, wall: readonly number[], l: { foot: number; band: number; top: number }, face: WallFace, look: Look, gf: number) {
+    const floor = look.floor;
+    const origin = look.origin ?? bottom + gf;
+    const shift = look.shopShift ?? 0;
+    const low = face.ground;
+    const lowFacade = low && FACADE[low];
+    const upFacade = face.upper && FACADE[face.upper];
+    const uLow = lowFacade ? Math.max(1, Math.round(len / lowFacade.bay)) / lowFacade.bays : 0;
+    const uUp = upFacade ? Math.max(1, Math.round(len / upFacade.bay)) / upFacade.bays : 0;
+    const upTile = face.upper ? tileOf(face.upper) : 0;
+    const lowTile = low ? tileOf(low) : 0;
+    const plain = tileOf('plain');
+    const floorV = (y: number) => (upFacade ? (y - origin) / (floor * upFacade.floors) : 0);
+    // Baked light: darker at the foot, the band's at the top of the ground floor, the top's at the roof.
+    const light = (y: number) => (y <= origin ? l.foot + ((l.band - l.foot) * (y - bottom)) / gf : l.band + ((l.top - l.band) * (y - origin)) / Math.max(1, lid - origin));
+    const quad = (t0: number, t1: number, y0: number, y1: number, tile: number, uv: (t: number, y: number) => [number, number], shade = 1) => {
+      if (y1 - y0 < 0.02) return;
+      const p0 = { x: a.x + (b.x - a.x) * t0, z: a.z + (b.z - a.z) * t0 };
+      const p1 = { x: a.x + (b.x - a.x) * t1, z: a.z + (b.z - a.z) * t1 };
+      const v = (p: Local, t: number, y: number) => this.vertex(p.x, y, p.z, n, wall, 0, tile, ...uv(t, y), light(y) * shade);
+      const q0 = v(p0, t0, y0);
+      const q1 = v(p1, t1, y0);
+      const q2 = v(p1, t1, y1);
+      const q3 = v(p0, t0, y1);
+      this.idx.push(q0, q2, q1, q0, q3, q2);
+    };
+    const plainUv = (t: number, y: number): [number, number] => [(t * len) / 8, (y - bottom) / 8];
+    const upUv = (t: number, y: number): [number, number] => [t * uUp, floorV(y)];
+    const top = lid;
+    // Blank side walls need no steps at all.
+    if (!low && (!face.upper || face.upper === 'plain')) {
+      quad(0, 1, bottom, top, plain, plainUv);
+      return;
+    }
+    for (const { t0, t1, g, lo } of groundSteps(a, b, n, len, bottom, look.groundAt, low ? STEP_RISE : STEP_RISE_PLAIN)) {
+      if (low) {
+        // The shopfront: one storey on the footpath, then plain wall up to the
+        // next floor line (unless that's only the blank wall under a sill away).
+        const shopTop = Math.min(g + gf, top - 0.5);
+        let start = Math.min(top, origin + Math.ceil((shopTop - 0.4 - origin) / floor - 1e-6) * floor);
+        if (start - shopTop < SILL) start = shopTop;
+        // Its foot follows the footpath down the step (a taller window downhill), a little below it.
+        // (u runs back along the wall: rings run right to left seen from the street, and signs must read.)
+        const p0 = { x: a.x + (b.x - a.x) * t0 + n[0] * STEP_PROBE, z: a.z + (b.z - a.z) * t0 + n[2] * STEP_PROBE };
+        const p1 = { x: a.x + (b.x - a.x) * t1 + n[0] * STEP_PROBE, z: a.z + (b.z - a.z) * t1 + n[2] * STEP_PROBE };
+        const f0 = Math.max(bottom, Math.min(g, look.groundAt(p0.x, p0.z)) - SHOP_SINK);
+        const f1 = Math.max(bottom, Math.min(g, look.groundAt(p1.x, p1.z)) - SHOP_SINK);
+        const shop = [
+          this.vertex(a.x + (b.x - a.x) * t0, f0, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, shift - t0 * uLow, 0, light(f0)),
+          this.vertex(a.x + (b.x - a.x) * t1, f1, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, shift - t1 * uLow, 0, light(f1)),
+          this.vertex(a.x + (b.x - a.x) * t1, shopTop, a.z + (b.z - a.z) * t1, n, wall, 0, lowTile, shift - t1 * uLow, 1, light(shopTop)),
+          this.vertex(a.x + (b.x - a.x) * t0, shopTop, a.z + (b.z - a.z) * t0, n, wall, 0, lowTile, shift - t0 * uLow, 1, light(shopTop)),
+        ];
+        this.idx.push(shop[0], shop[2], shop[1], shop[0], shop[3], shop[2]);
+        // Below it, out of sight, down to the bottom: only where the ground dips lower than the shop's foot.
+        if (lo < Math.min(f0, f1) - 0.05) quad(t0, t1, bottom, Math.min(f0, f1), plain, plainUv, 0.75);
+        quad(t0, t1, shopTop, start, plain, plainUv);
+        quad(t0, t1, Math.max(start, shopTop), top, upTile, upUv);
+      } else {
+        // No shopfront: plain wall up to the first floor line at the ground (give or take a sill).
+        const start = Math.min(top, origin + Math.ceil((g - 0.3 - origin) / floor - 1e-6) * floor);
+        quad(t0, t1, bottom, start, plain, plainUv, start > g + 0.5 ? 1 : 0.85);
+        quad(t0, t1, start, top, upTile, upUv);
+      }
+    }
+  }
+
+  /** The collider's quad for a wall drawn in steps: bottom to the roof (ac, bc). */
+  colliderQuad(a: Local, b: Local, n: readonly number[], bottom: number, ac: number, bc: number, wall: readonly number[]): number[] {
+    const a0 = this.vertex(a.x, bottom, a.z, n, wall);
+    const b0 = this.vertex(b.x, bottom, b.z, n, wall);
+    return [a0, bc, b0, a0, ac, bc];
+  }
+
+  /**
+   * A flat textured panel, upright, from p0 to p1 and y0 to y1, facing n,
+   * with atlas `tile` and UVs at its corners (bottom p0, bottom p1, top p1,
+   * top p0). With `back`, its other side too, mirrored so lettering reads
+   * (null: the same UVs mirrored; a colour: plain in that colour).
+   */
+  panel(p0: Local, p1: Local, y0: number, y1: number, n: readonly number[], tile: number, uvs: [number, number][], light: number, back?: readonly number[] | null, colour?: readonly number[]) {
+    const white = colour ?? [1, 1, 1];
+    const v = [[p0, y0], [p1, y0], [p1, y1], [p0, y1]] as const;
+    const front = v.map(([p, y], k) => this.vertex(p.x, y, p.z, n, white, 0, tile, uvs[k][0], uvs[k][1], light));
+    this.wallQuad(front, p0, p1, n);
+    if (back === undefined) return;
+    const m = [-n[0], -n[1], -n[2]];
+    const mirror = [1, 0, 3, 2];
+    const rear = v.map(([p, y], k) =>
+      back === null ? this.vertex(p.x, y, p.z, m, white, 0, tile, uvs[mirror[k]][0], uvs[mirror[k]][1], light * 0.9) : this.vertex(p.x, y, p.z, m, back, 0, 0, 0, 0, light * 0.8),
+    );
+    this.wallQuad(rear, p0, p1, m);
+  }
+
+  /** UVs for sign cell k (see signCell), inset off its neighbours; `onEnd` turns the lettering to run up a blade. */
+  static signUvs(k: number, onEnd = false): [number, number][] {
+    const [u0, v0] = signCell(k);
+    const [ua, ub, va, vb] = [u0 + 0.01, u0 + 0.49, v0 + 0.01, v0 + 0.24];
+    return onEnd ? [[ua, vb], [ua, va], [ub, va], [ub, vb]] : [[ua, va], [ub, va], [ub, vb], [ua, vb]];
+  }
+
+  /** A painting on wall a-b (outward normal n): one quad a hair proud of it, centred, its artwork's quadrant of the layer. */
+  mural(a: Local, b: Local, n: readonly number[], len: number, art: Painting, light: number) {
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    const t0 = (len - art.w) / 2;
+    const p0 = { x: a.x + ux * t0 + n[0] * 0.03, z: a.z + uz * t0 + n[2] * 0.03 };
+    const p1 = { x: p0.x + ux * art.w, z: p0.z + uz * art.w };
+    const [u0, v0] = MURAL_QUADRANTS[art.quadrant];
+    const tile = tileOf(art.layer);
+    // u runs back along the wall (rings run right to left seen from outside); an inset keeps mips off the neighbours.
+    const uA = u0 + 0.49;
+    const uB = u0 + 0.01;
+    const vb = v0 + 0.01;
+    const vt = v0 + 0.49;
+    const white = [1, 1, 1];
+    const q = [
+      this.vertex(p0.x, art.y0, p0.z, n, white, 0, tile, uA, vb, light * 0.95),
+      this.vertex(p1.x, art.y0, p1.z, n, white, 0, tile, uB, vb, light * 0.95),
+      this.vertex(p1.x, art.y1, p1.z, n, white, 0, tile, uB, vt, light),
+      this.vertex(p0.x, art.y1, p0.z, n, white, 0, tile, uA, vt, light),
+    ];
+    this.wallQuad(q, p0, p1, n);
   }
 
   /**
@@ -1070,7 +1298,7 @@ export class MeshBuilder {
    * its front, and posts at the kerb when `posts`. Drawn only: it's above
    * head height, and posts are thin enough to walk through.
    */
-  verandah(a: Local, b: Local, n: readonly number[], depth: number, height: number, groundAt: (x: number, z: number) => number, fascia: readonly number[], posts: boolean) {
+  verandah(a: Local, b: Local, n: readonly number[], depth: number, height: number, groundAt: (x: number, z: number) => number, fascia: readonly number[], posts: boolean, signs = -1) {
     const len = Math.hypot(b.x - a.x, b.z - a.z);
     const steps = Math.max(1, Math.ceil(len / VERANDAH_STEP));
     const back: Local[] = [];
@@ -1099,7 +1327,10 @@ export class MeshBuilder {
         this.vertex(q1.x, y1 + VERANDAH_THICK, q1.z, UP, top, 0, roofTile),
         this.vertex(q0.x, y0 + VERANDAH_THICK, q0.z, UP, top, 0, roofTile),
       ];
+      const first = this.idx.length;
       this.quadUp(t, true);
+      // Something to land on when jumping off a car roof.
+      this.colliderIdx.push(...this.idx.slice(first));
       // Soffit: pale paint, in its own shadow.
       const d = [
         this.vertex(p0.x, y0, p0.z, DOWN, under, 0, plainTile, u(k) / 8, 0, 0.62),
@@ -1129,6 +1360,20 @@ export class MeshBuilder {
         this.vertex(p.x, y + VERANDAH_THICK + 0.12, p.z, m, fascia, 0, 0, 0, 0, 0.8),
       ];
       this.wallQuad(c, p, q, m);
+    }
+    // A sign hung under it for each shop, end on to the footpath (close up only).
+    if (signs >= 0 && depth > 1.8) {
+      this.detail(() => {
+        const tile = tileOf('signs');
+        for (let d = SIGN_STEP / 2; d < len - 1; d += SIGN_STEP) {
+          const base = { x: a.x + ux * d, z: a.z + uz * d };
+          const y = groundAt(base.x + n[0] * depth * 0.5, base.z + n[2] * depth * 0.5) + height - 0.1;
+          const p0 = { x: base.x + n[0] * 0.35, z: base.z + n[2] * 0.35 };
+          const p1 = { x: base.x + n[0] * Math.min(1.6, depth - 0.3), z: base.z + n[2] * Math.min(1.6, depth - 0.3) };
+          const cell = Math.floor(hash(`${signs}:${d.toFixed(1)}`, 41) * 8);
+          this.panel(p0, p1, y - 0.42, y, [ux, 0, uz], tile, MeshBuilder.signUvs(cell), 0.95, null);
+        }
+      }, true);
     }
     if (posts) {
       const count = Math.max(1, Math.round(len / VERANDAH_POSTS));
@@ -1278,7 +1523,13 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; billboards: number; crowns: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  /**
+   * Drawn buildings standing on the ground (walls from below it up), each
+   * with its family (an outline and its parts): the ground under them is
+   * never seen.
+   */
+  footprints: { family: string; bbox: [number, number, number, number]; inside: (x: number, z: number) => boolean }[];
 };
 
 /** A building tagged as a landmark in the overrides, for hand-made models (T9). */
@@ -1315,7 +1566,31 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahMetres: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, billboards: 0, crowns: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
+  // Verandahs mapped in OSM: thin building=roof strips along shopfronts (K Road
+  // has most of its own). Drawn as a slab they hang at a guessed height and
+  // double up with ours, so the wall they cover gets a verandah() instead.
+  const mapped = new Footprints<Solid>();
+  for (const s of visible) if (verandahLike(s)) mapped.add(s);
+  const verandahOver = (a: Local, b: Local, n: readonly number[]): Solid | null => {
+    for (const t of [0.25, 0.5, 0.75]) {
+      const x = a.x + (b.x - a.x) * t + n[0] * VERANDAH_PROBE;
+      const z = a.z + (b.z - a.z) * t + n[2] * VERANDAH_PROBE;
+      for (const c of mapped.at(x, z)) if (inSolid(c, x, z)) return c;
+    }
+    return null;
+  };
+  const replaced = new Set<string>();
+  for (const s of visible) {
+    if (isCanopy(s.tags)) continue;
+    for (const poly of s.polygons) {
+      eachEdge(poly.outer, (a, b, n, len) => {
+        if (len < 2.5) return;
+        const c = verandahOver(a, b, n);
+        if (c) replaced.add(c.key);
+      });
+    }
+  }
   const chunks = new Map<string, MeshBuilder>();
   const skyline = new Map<string, MeshBuilder>();
   const chunkKey = (x: number, z: number) => `${Math.floor((x - grid.x0) / CHUNK_SIZE)},${Math.floor((z - grid.z0) / CHUNK_SIZE)}`;
@@ -1357,12 +1632,14 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   }
   const famTopAbs = new Map<string, number>();
   const cover = new Footprints();
+  /** Drawn buildings standing on the ground, by family (see BuildingsResult.footprints). */
+  const solidFootprints: { s: Solid; family: string }[] = [];
   // First where everything stands, then the meshes: walls are shaded by the buildings around them.
   type Placed = { s: Solid; h: SolidHeight; mb: MeshBuilder; base: number; bottom: number; top: number; grounded: boolean; famTags: Tags; fam: string; hide: boolean; roof: RoofChoice | null; tower?: { ring: Ring; top: number }; plant?: PlantBox[] };
   const placed: Placed[] = [];
   for (const s of visible) {
     const h = heights.get(s.key)!;
-    if (h.minHeight >= h.height - 0.1) continue;
+    if (h.minHeight >= h.height - 0.1 || replaced.has(s.key)) continue;
     const mb = chunkAt(s.centroid.x, s.centroid.z);
     if (!mb) {
       counts.outside++;
@@ -1496,15 +1773,40 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     const wall = wallColour(fam, famTags, style);
     const roof = p.roof?.colour ?? roofColour(s.key, famTags, wall);
     const pitched = p.roof?.pitched;
-    const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? (style.heritage ? 'shop-heritage' : 'shop') : null;
+    // Shopfronts: one of the shop layers per building, started a shop along at random, so a row reads as different businesses.
+    const shops = style.heritage ? HERITAGE_SHOPS : MODERN_SHOPS;
+    const shopLayer: Layer | null = style.ground === 'lobby' ? 'lobby' : style.ground === 'shop' ? shops[Math.floor(hash(fam, 13) * shops.length)] : null;
+    // Side walls standing clear of their neighbours (above a lower one, or
+    // over a car park or lane) are often blank in the city, and some of those
+    // carry a mural or a painted ad: a little of the city's own character.
+    const painting = (a: Local, b: Local, n: readonly number[], len: number): Painting | null => {
+      if (hide || canopy || !grounded || top - bottom < 8 || top - bottom > PAINTED_MAX || len < 7 || opts.frontages?.facing(a, b, n)) return null;
+      const r = hash(`${s.key}:${a.x.toFixed(1)},${a.z.toFixed(1)}`, 30);
+      if (r >= PAINTED_WALLS) return null;
+      const next = across((a.x + b.x) / 2 + n[0] * 0.8, (a.z + b.z) / 2 + n[2] * 0.8, p);
+      if (next > top - 4) return null;
+      const from = Math.max(bottom + 3, next + 0.5);
+      if (top - from < 6) return null;
+      // Old brick gets a sign painted a century ago; the rest a mural, or a newer ad.
+      const brick = style.upper === 'brick' || style.upper === 'warehouse';
+      const pick = r / PAINTED_WALLS;
+      const [layer, quadrant]: [Layer, number] = brick && pick < 0.5 ? ['ads', 3] : pick < 0.65 ? ['murals', Math.floor(pick * 6.15) % 4] : ['ads', Math.floor(pick * 9) % 3];
+      let w = Math.min(len - 1.5, 18);
+      let h = Math.min(top - from - 1, 16);
+      if (w > h * 1.6) w = h * 1.6;
+      if (h > w * 1.2) h = w * 1.2;
+      const y0 = layer === 'ads' && quadrant === 3 ? top - 0.8 - h : from + (top - from - h) / 2;
+      return { layer, quadrant, w, y0, y1: y0 + h };
+    };
     const look: Look = {
       shade: canyonShade(across, p),
       floor: style.floor,
       groundFloor: style.ground === 'lobby' ? 5 : style.ground === 'shop' ? 4.2 : BASE_BAND,
       groundAt: ground,
       parapet: grounded && !canopy && top - bottom > 5 ? style.parapet : 0,
+      shopShift: hash(fam, 14) < 0.5 ? 0 : 0.5,
       wall: (a, b, n, len) => {
-        if (canopy || len < 1.5) return { upper: 'plain', ground: null };
+        if (canopy || len < 1.5 || painting(a, b, n, len)) return { upper: 'plain', ground: null };
         // A party wall: another building right against it.
         const mx = (a.x + b.x) / 2 + n[0] * 0.8;
         const mz = (a.z + b.z) / 2 + n[2] * 0.8;
@@ -1514,7 +1816,61 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         return { upper: style.upper, ground: front ? shopLayer : null };
       },
     };
+    // Floors count up from the main street's footpath (the street it's addressed
+    // on, else a retail street, else the longest wall onto a street, at its
+    // downhill end), not the lowest ground under the building, so the
+    // shopfront there runs straight into the first floor of windows.
+    if (grounded && opts.frontages) {
+      let best = 0;
+      for (const poly of s.polygons) {
+        eachEdge(poly.outer, (a, b, n, len) => {
+          if (len < 2.5 || look.wall(a, b, n, len).upper === 'plain') return;
+          const front = opts.frontages!.facing(a, b, n);
+          if (!front) return;
+          const score = len + (front.name && front.name === famTags['addr:street'] ? 2000 : 0) + (front.retail ? 1000 : 0);
+          if (score <= best) return;
+          best = score;
+          const g = Math.min(...groundSteps(a, b, n, len, bottom, ground).map((q) => q.g));
+          look.origin = Math.min(g + look.groundFloor, top - 1);
+        });
+      }
+    }
     mb.prism(s, bottom, top, wall, roof, grounded, !hide, look, pitched);
+    for (const poly of s.polygons) {
+      eachEdge(poly.outer, (a, b, n, len) => {
+        const art = painting(a, b, n, len);
+        if (!art) return;
+        mb.detail(() => mb.mural(a, b, n, len, art, look.shade(a, b, n, bottom, top, grounded).top));
+        counts.murals++;
+      });
+    }
+    // A billboard on the roof, facing the street (mid-rise flat roofs, now and then).
+    if (!hide && !canopy && grounded && !pitched && top - bottom >= 8 && top - bottom <= 30 && opts.frontages && hash(fam, 40) < BILLBOARDS && (!s.isPart || fam === s.key)) {
+      let best: { a: Local; b: Local; n: readonly number[]; len: number } | null = null;
+      for (const poly of s.polygons) {
+        eachEdge(poly.outer, (a, b, n, len) => {
+          if (len >= 8 && (!best || len > best.len) && opts.frontages!.facing(a, b, n)) best = { a, b, n, len };
+        });
+      }
+      if (best) {
+        const { a, b, n, len } = best as { a: Local; b: Local; n: readonly number[]; len: number };
+        const w = Math.min(10, len * 0.7);
+        const ux = (b.x - a.x) / len;
+        const uz = (b.z - a.z) / len;
+        const mx = (a.x + b.x) / 2 - n[0] * 1.5;
+        const mz = (a.z + b.z) / 2 - n[2] * 1.5;
+        // Rings run right to left seen from outside, so the panel runs b to a to read.
+        const p0 = { x: mx + ux * (w / 2), z: mz + uz * (w / 2) };
+        const p1 = { x: mx - ux * (w / 2), z: mz - uz * (w / 2) };
+        const [u0, v0] = MURAL_QUADRANTS[Math.floor(hash(fam, 45) * 3)];
+        const frame = rgb(0x6e7173);
+        mb.detail(() => {
+          for (const p of [p0, p1]) mb.box(p.x, p.z, 0.12, 0.12, 0, top, 1.8, frame, 'plain');
+          mb.panel(p0, p1, top + 1.6, top + 5.2, n, tileOf('ads'), [[u0 + 0.01, v0 + 0.01], [u0 + 0.49, v0 + 0.01], [u0 + 0.49, v0 + 0.49], [u0 + 0.01, v0 + 0.49]], 1.05, frame);
+        });
+        counts.billboards++;
+      }
+    }
     // Massing details on street facades (near-only): cornice, string courses, a crest on the parapet.
     if (!hide && !canopy && grounded && !pitched && top - bottom > 5 && (style.cornice > 0 || style.courses || style.crest)) {
       const trim = mix(wall, rgb(0xf4f0e6), 0.35);
@@ -1532,7 +1888,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         mb.detail(() => {
           if (style.cornice > 0) mb.ledge(ring, facade, top - 0.25, top + 0.3, style.cornice, trim);
           if (style.courses) {
-            const first = bottom + look.groundFloor;
+            const first = look.origin ?? bottom + look.groundFloor;
             for (let y = first + style.floor; y < top - 1.5; y += style.floor) mb.ledge(ring, facade, y - 0.12, y + 0.12, 0.1, trim, false);
           }
           if (style.crest && look.parapet > 0) {
@@ -1559,7 +1915,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     if (!hide && familyTop.get(fam)! >= SKYLINE_MIN) {
       const key = chunkKey(s.centroid.x, s.centroid.z);
       if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
-      skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) }, pitched);
+      skyline.get(key)!.prism(s, bottom, top, wall, roof, grounded, true, { ...look, flat: true, parapet: 0, groundFloor: BASE_BAND, wall: (_a, _b, _n, len) => ({ upper: canopy || len < 1.5 ? 'plain' : style.upper, ground: null }) }, pitched);
     }
     // A tower found on the podium: the same dress above the street, no shopfronts.
     if (p.tower) {
@@ -1578,7 +1934,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       if (!hide && familyTop.get(fam)! >= SKYLINE_MIN) {
         const key = chunkKey(s.centroid.x, s.centroid.z);
         if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
-        skyline.get(key)!.prism(solid, top, p.tower.top, wall, roof, true, true, { ...towerLook, parapet: 0 });
+        skyline.get(key)!.prism(solid, top, p.tower.top, wall, roof, true, true, { ...towerLook, flat: true, parapet: 0 });
       }
     }
     // Rooftop plant from the DSM, near-only.
@@ -1586,29 +1942,60 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       const plantColour = mix(roof, rgb(0xb4b2ac), 0.6);
       for (const b of p.plant) mb.detail(() => mb.box(b.cx, b.cz, b.hx, b.hz, b.angle, top, b.height, plantColour, 'plain'), true);
     }
-    // Verandahs over the footpath along shopfronts on retail streets.
-    if (!hide && !canopy && grounded && style.ground === 'shop' && top - bottom > 5 && opts.frontages) {
+    // Verandahs over the footpath along shopfronts on retail streets, and wherever OSM maps one.
+    if (!hide && !canopy && grounded && top - bottom > 5) {
       const fascia = rgb(FASCIAS[Math.floor(hash(fam, 9) * FASCIAS.length)]);
+      const shopRow = style.ground === 'shop' && !!opts.frontages;
       for (const poly of s.polygons) {
-        const ring = poly.outer;
-        for (let k = 0; k < ring.length; k++) {
-          const a = ring[k];
-          const b = ring[(k + 1) % ring.length];
-          const len = Math.hypot(b.x - a.x, b.z - a.z);
-          if (len < 2.5) continue;
-          const n = [(b.z - a.z) / len, 0, -(b.x - a.x) / len];
-          const front = opts.frontages.facing(a, b, n);
-          if (!front || !(front.retail || (familyShops.get(fam) ?? 0) > 0) || front.highway === 'pedestrian') continue;
-          const depth = Math.min(VERANDAH_DEPTH, front.kerb - VERANDAH_KERB);
-          if (depth < 1.2) continue;
-          mb.detail(() => mb.verandah(a, b, n, depth, VERANDAH_HEIGHT, ground, fascia, style.heritage && hash(fam, 10) < 0.5));
+        eachEdge(poly.outer, (a, b, n, len) => {
+          if (len < 2.5) return;
+          const front = opts.frontages?.facing(a, b, n) ?? null;
+          const osm = verandahOver(a, b, n);
+          let depth: number;
+          if (osm) {
+            depth = verandahDepth(osm, a, b, n);
+            if (front) depth = Math.min(depth, front.kerb - VERANDAH_KERB);
+          } else {
+            if (!shopRow || !front || !(front.retail || (familyShops.get(fam) ?? 0) > 0) || front.highway === 'pedestrian') return;
+            depth = Math.min(VERANDAH_DEPTH, front.kerb - VERANDAH_KERB);
+          }
+          if (depth < 1.2) return;
+          const seed = Math.floor(hash(`${fam}:${a.x.toFixed(1)}`, 42) * 1e6);
+          mb.detail(() => mb.verandah(a, b, n, depth, VERANDAH_HEIGHT, ground, fascia, style.heritage && hash(fam, 10) < 0.5, seed));
+          // A blade sign above it on old shopfronts, lit neon more often than not.
+          if (style.heritage && front?.retail && len >= 6 && hash(`${fam}:${a.x.toFixed(1)}`, 43) < BLADES) {
+            const t = len * 0.15;
+            const base = { x: a.x + ((b.x - a.x) * t) / len, z: a.z + ((b.z - a.z) * t) / len };
+            const y0 = ground(base.x + n[0], base.z + n[2]) + VERANDAH_HEIGHT + 0.9;
+            if (y0 + 3.2 < top - 0.3) {
+              const neon = [0, 3, 6];
+              const r = hash(`${fam}:${a.x.toFixed(1)}`, 44);
+              const cell = r < 0.6 ? neon[Math.floor(r * 5) % 3] : Math.floor(r * 8);
+              const p0 = { x: base.x + n[0] * 0.15, z: base.z + n[2] * 0.15 };
+              const p1 = { x: base.x + n[0] * 1.05, z: base.z + n[2] * 1.05 };
+              mb.detail(() => mb.panel(p0, p1, y0, y0 + 3.2, [(b.x - a.x) / len, 0, (b.z - a.z) / len], tileOf('signs'), MeshBuilder.signUvs(cell, true), 1.05, null));
+            }
+          }
           counts.verandahs++;
           counts.verandahMetres += len;
-        }
+          if (osm) counts.verandahsMapped++;
+        });
       }
     }
+    // Tower tops: a crown for the skyline (always drawn, and on the far skyline too).
+    let crowned = false;
+    if (!hide && !canopy && !pitched && !p.tower && familyTop.get(fam)! >= CROWN_MIN && top >= famTopAbs.get(fam)! - 1 && s.polygons.length === 1 && s.area >= 250) {
+      const targets = [mb];
+      if (familyTop.get(fam)! >= SKYLINE_MIN) {
+        const key = chunkKey(s.centroid.x, s.centroid.z);
+        if (!skyline.has(key)) skyline.set(key, new MeshBuilder());
+        targets.push(skyline.get(key)!);
+      }
+      crowned = towerCrown(targets, s, top + look.parapet, top - bottom, wall, roof, style.upper, look, hash(fam, 50), hash(fam, 51));
+      if (crowned) counts.crowns++;
+    }
     // Plant rooms on tower roofs.
-    if (!hide && !canopy && !pitched && !p.plant?.length && !p.tower && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
+    if (!crowned && !hide && !canopy && !pitched && !p.plant?.length && !p.tower && top - p.base > 40 && s.area > 400 && inSolid(s, s.centroid.x, s.centroid.z)) {
       const ring = s.polygons[0].outer;
       let angle = 0;
       let longest = 0;
@@ -1620,7 +2007,10 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
       const half = Math.min(7, Math.sqrt(s.area) * 0.18);
       mb.detail(() => mb.box(s.centroid.x, s.centroid.z, half, half * 0.7, angle, top, 3.5, rgb(0xb4b2ac), 'plain'));
     }
-    if (grounded && !hide && top - bottom > 2.5) cover.add(s);
+    if (grounded && !hide && top - bottom > 2.5) {
+      cover.add(s);
+      solidFootprints.push({ s, family: fam });
+    }
     if (hide) counts.hidden++;
     counts[h.source]++;
     if (s.isPart) counts.parts++;
@@ -1650,7 +2040,10 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   landmarks.sort((a, b) => a.id.localeCompare(b.id) || a.osm.localeCompare(b.osm));
 
   counts.blocks = addBlocks(data, overrides, new Set(solids.map((s) => s.key)), chunkAt);
-  return { chunks, skyline, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z) };
+  return {
+    chunks, skyline, buildings, landmarks, counts, covers: (x, z) => cover.covers(x, z),
+    footprints: solidFootprints.map(({ s, family }) => ({ family, bbox: bboxOf(s), inside: (x: number, z: number) => inSolid(s, x, z) })),
+  };
 }
 
 /** Default height of an invisible block (a road block, a fence line), m. */
@@ -1721,4 +2114,74 @@ function addBlocks(
     n++;
   }
   return n;
+}
+
+/** Towers this tall (their family's top over its base) get a crown, m. */
+const CROWN_MIN = 50;
+const CROWN_LIGHTS = [0xf4f8ff, 0x8fe8ff, 0xff7ac8, 0xffd060].map(rgb);
+const MAST = rgb(0x9a9ea0);
+const MAST_TIP = rgb(0xff3020);
+
+/**
+ * A tower's top, for the skyline's sake: a set-back crown (now and then
+ * with a mast), a band of light under the parapet, or a big lit sign on
+ * the roof. `pick` and `extra` (0..1) choose; false if it's left plain.
+ */
+function towerCrown(targets: MeshBuilder[], s: Solid, roofY: number, height: number, wall: [number, number, number], roof: [number, number, number], upper: Layer, look: Look, pick: number, extra: number): boolean {
+  const ring = s.polygons[0].outer;
+  const size = Math.sqrt(s.area);
+  const mast = (mb: MeshBuilder, y: number) => {
+    const h = 8 + extra * 14;
+    mb.box(s.centroid.x, s.centroid.z, 0.25, 0.25, 0, y, h, MAST, 'plain');
+    mb.box(s.centroid.x, s.centroid.z, 0.35, 0.35, 0, y + h, 0.6, MAST_TIP, 'plain');
+  };
+  if (pick < 0.35) {
+    // A set-back crown, its walls dressed like the tower's.
+    const inset = outsetRing(ring, -Math.min(6, size * 0.15));
+    if (!inset || !inSolid(s, s.centroid.x, s.centroid.z)) return false;
+    const h = Math.min(12, Math.max(4, height * 0.08));
+    const crownLook: Look = { ...look, parapet: 0.6, groundFloor: BASE_BAND, origin: undefined, flat: true, wall: (_a, _b, _n, len) => ({ upper: len < 1.5 ? 'plain' : upper, ground: null }) };
+    for (const mb of targets) {
+      mb.prism({ polygons: [{ outer: inset, holes: [] }] }, roofY, roofY + h, wall, roof, true, true, crownLook);
+      if (extra < 0.45) mast(mb, roofY + h + 0.6);
+    }
+    return true;
+  }
+  if (pick < 0.55) {
+    // A band of light round the top, under the parapet.
+    const colour = CROWN_LIGHTS[Math.floor(extra * CROWN_LIGHTS.length)];
+    for (const mb of targets) {
+      eachEdge(ring, (a, b, n, len) => {
+        if (len < 3) return;
+        const p0 = { x: a.x + n[0] * 0.06, z: a.z + n[2] * 0.06 };
+        const p1 = { x: b.x + n[0] * 0.06, z: b.z + n[2] * 0.06 };
+        mb.panel(p0, p1, roofY - 2.4, roofY - 1.2, n, 0, [[0, 0], [0, 0], [0, 0], [0, 0]], 1.5, undefined, colour);
+      });
+    }
+    return true;
+  }
+  if (pick < 0.72) {
+    // A big lit sign along the longest side of the roof, facing out.
+    let best: { a: Local; b: Local; n: readonly number[]; len: number } | null = null;
+    eachEdge(ring, (a, b, n, len) => {
+      if (!best || len > best.len) best = { a, b, n, len };
+    });
+    if (!best) return false;
+    const { a, b, n, len } = best as { a: Local; b: Local; n: readonly number[]; len: number };
+    const w = Math.min(22, len * 0.7);
+    const ux = (b.x - a.x) / len;
+    const uz = (b.z - a.z) / len;
+    const mx = (a.x + b.x) / 2 - n[0] * 1.2;
+    const mz = (a.z + b.z) / 2 - n[2] * 1.2;
+    const p0 = { x: mx + ux * (w / 2), z: mz + uz * (w / 2) };
+    const p1 = { x: mx - ux * (w / 2), z: mz - uz * (w / 2) };
+    const neon = [0, 3, 6][Math.floor(extra * 3)];
+    for (const mb of targets) mb.panel(p0, p1, roofY + 0.5, roofY + 0.5 + w / 4.5, n, tileOf('signs'), MeshBuilder.signUvs(neon), 1.2, rgb(0x3a3c3e));
+    return true;
+  }
+  if (extra < 0.3) {
+    for (const mb of targets) mast(mb, roofY);
+    return true;
+  }
+  return false;
 }

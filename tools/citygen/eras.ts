@@ -74,6 +74,14 @@ const DECO = [0xeadfc8, 0xe6cfc2, 0xd6e0cf, 0xe2d4b0, 0xf0e8dc, 0xd9c3a8, 0xc8d4
 const SPANDREL = [0x5e7f8c, 0x7f8f6a, 0xb08a4e, 0x8c9496, 0x4f6e7a, 0xa66a48, 0xc9c3b0];
 /** Recent cladding: charcoal, white, warm greys, terracotta, timber-ish. */
 const CLADDING = [0x3e4246, 0xe8e6e0, 0xb8b0a4, 0xa8684c, 0x8c6a4c, 0x6e7478, 0xd2c8b6];
+/** Loud paint on old shopfronts: K Road's pinks, teals, mustards and purples. */
+const BOLD = [0xd77fa1, 0x3f9a96, 0xd9a634, 0x7fb5d9, 0x8a68b0, 0xc4573f, 0x7cbf8a, 0xe8836b, 0x2f6f9e, 0xf0d24a];
+/** Streets whose old buildings are painted loud, and the share that are. */
+const BOLD_STREETS = new Set(['Karangahape Road', 'Pitt Street', 'Mercury Lane', 'Cross Street', "K' Road"]);
+const BOLD_THERE = 0.45;
+const BOLD_ELSEWHERE = 0.08;
+/** Layers that are painted plaster (so a loud colour looks painted on, not dyed into brick or stone). */
+const PAINTABLE = new Set<Layer>(['italianate', 'stucco', 'deco', 'stripped']);
 const PASTEL = [0xe8dcc0, 0xd9d6c4, 0xe6d6b8, 0xcfd6cc, 0xe3d2c6, 0xd6d0bc];
 /** Industrial cladding: greys, off-white, the odd green or blue. */
 const SHED = [0xc4c6c2, 0xa9adab, 0xd8d8d0, 0x7d8a84, 0x8c9aa6, 0xb8b2a4];
@@ -286,6 +294,11 @@ export function eraStyle(e: EraInput): FacadeStyle {
   else if ((material === 'stone' || material === 'sandstone') && (era === 'victorian' || era === 'edwardian')) [upper, palette] = ['stone', SANDSTONE];
   else if (material === 'wood' && era === 'house') [upper, palette] = ['weatherboard', VILLA];
   if (b === 'parking') [upper, palette] = ['carpark', CONCRETE];
+  // Some of the old painted buildings are painted loud (most on K Road): part of the city's own character.
+  if (PAINTABLE.has(upper) && (era === 'victorian' || era === 'edwardian' || era === 'interwar') && e.height < 25) {
+    const there = [...e.streets].some((st) => BOLD_STREETS.has(st));
+    if (hash(e.key, 24) < (there ? BOLD_THERE : BOLD_ELSEWHERE)) palette = BOLD;
+  }
   // Flats: balconies on most recent and late apartment blocks.
   if (FLATS.has(b) && (era === 'contemporary' || era === 'late') && hash(e.key, 23) < 0.6) [upper, palette] = ['balcony', era === 'late' ? CONCRETE_70S : PAINTED];
   const heritage = era === 'victorian' || era === 'edwardian' || era === 'interwar';

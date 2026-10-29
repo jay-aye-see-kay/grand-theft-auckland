@@ -90,9 +90,9 @@ async function main() {
 
   const scene = new THREE.Scene();
   // Blue sky above, warm sunlit pavement bouncing light from below.
-  scene.add(new THREE.HemisphereLight(0xc4dcff, 0x9a8a72, 2.4));
+  scene.add(new THREE.HemisphereLight(0xb8cbe4, 0x868074, 1.9));
   // Afternoon sun in the north-north-west (southern hemisphere), see sun.ts.
-  const sun = new THREE.DirectionalLight(0xfff0dc, 2.8);
+  const sun = new THREE.DirectionalLight(0xffecd6, 3.1);
   sun.position.fromArray(SUN_DIRECTION).multiplyScalar(300);
   scene.add(sun);
 
