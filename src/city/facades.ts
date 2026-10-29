@@ -46,6 +46,7 @@ export const LAYERS = [
   'lobby', // tower lobby: tall glazing between stone columns
   'murals', // four murals for blank side walls, one per quadrant (see MURAL_QUADRANTS)
   'ads', // four painted ads and billboards, likewise
+  'signs', // eight small 2:1 signs (two across, four down): under verandahs, blades on facades
   'roof-tin', // corrugated iron on pitched roofs (u across the fall, v down it)
   'roof-tile', // concrete or clay tiles on pitched roofs
   'roof', // membrane and gravel (planar)
@@ -98,6 +99,9 @@ export const FACADE: Partial<Record<Layer, { bays: number; floors: number; bay: 
 
 /** Murals and ads are painted one per quadrant of their layer: [u0, v0] of each, a half wide and high. */
 export const MURAL_QUADRANTS: [number, number][] = [[0, 0.5], [0.5, 0.5], [0, 0], [0.5, 0]];
+
+/** The signs layer's cells: [u0, v0] of cell k (a half wide, a quarter high). */
+export const signCell = (k: number): [number, number] => [(k % 2) * 0.5, 0.75 - Math.floor(k / 2) * 0.25];
 
 /** Tile bytes from here up are asphalt with lane markings (see roadMarking). */
 export const MARKED = 128;

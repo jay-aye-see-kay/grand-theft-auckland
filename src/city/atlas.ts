@@ -742,6 +742,37 @@ const adPainter: Painter = (c, m, rnd) => {
   });
 };
 
+// Small signs: eight 2:1 cells (two across, four down) hung under verandahs
+// and stuck out from facades (blades turn them on end). Painted boards, and
+// neon on dark for the bars and late-night places.
+const signPainter: Painter = (c, m, rnd) => {
+  m.fillStyle = grey(0);
+  m.fillRect(0, 0, S, S);
+  const cw = S / 2;
+  const ch = S / 4;
+  const kinds: [string, string, boolean][] = [
+    ['#1d1f22', '#ff4fa0', true], ['#f2ead8', '#9e2a2b', false], ['#1f4e79', '#ffffff', false], ['#111214', '#40e0ff', true],
+    ['#e3b23c', '#1d1f22', false], ['#2d5a3d', '#f1e8d0', false], ['#141016', '#ffd34a', true], ['#c8553d', '#fff6e8', false],
+  ];
+  kinds.forEach(([board, ink, neon], k) => {
+    const x = (k % 2) * cw;
+    const y = Math.floor(k / 2) * ch;
+    c.fillStyle = board;
+    c.fillRect(x, y, cw, ch);
+    // A frame, and the lettering (with a glow for neon).
+    c.strokeStyle = neon ? ink : 'rgba(0,0,0,0.35)';
+    c.lineWidth = neon ? 4 : 6;
+    c.strokeRect(x + 8, y + 8, cw - 16, ch - 16);
+    if (neon) {
+      c.save();
+      c.shadowColor = ink;
+      c.shadowBlur = 14;
+      lettering(c, rnd, x + 18, y + 20, cw - 36, ch - 40, ink);
+      c.restore();
+    } else lettering(c, rnd, x + 18, y + 18, cw - 36, ch - 36, ink);
+  });
+};
+
 export const painters: Record<Layer, Painter> = {
   glass(c, m, rnd) {
     const { bw, fh } = cell('glass');
@@ -1370,6 +1401,7 @@ export const painters: Record<Layer, Painter> = {
     rect(c, m, 0, 0, S, 30, grey(TINT_GREY - 30), 1);
   },
   murals: muralPainter,
+  signs: signPainter,
   ads: adPainter,
   'roof-tin'(c, m, rnd) {
     // Corrugated iron: ridges run down the slope (canvas y), 2.4 m across in

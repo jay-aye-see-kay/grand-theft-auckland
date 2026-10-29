@@ -27,7 +27,7 @@ import { sampleLocal, type Raster } from './raster.ts';
 import { longKey, Overrides } from './overrides.ts';
 import { CHUNK_SIZE, groundCm, type Grid } from './terrain.ts';
 import { SUN_DIRECTION } from '../../src/sun.ts';
-import { FACADE, MURAL_QUADRANTS, ROOF_METRES, SHADE_ONE, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
+import { FACADE, MURAL_QUADRANTS, ROOF_METRES, SHADE_ONE, signCell, tileOf, UV_SCALE, type Layer } from '../../src/city/facades.ts';
 import type { Frontages } from './frontage.ts';
 import { eraStyle, FLATS, hash, HOUSES, SHEDS, type FacadeStyle } from './eras.ts';
 import type { WikidataFacts } from './wikidata.ts';
@@ -68,6 +68,12 @@ const VERANDAH_KERB = 0.4;
 /** Segment length (it steps with the street) and the spacing of kerb posts, m. */
 const VERANDAH_STEP = 10;
 const VERANDAH_POSTS = 6;
+/** A sign hangs under a verandah for each shop: this far apart, m. */
+const SIGN_STEP = 5;
+/** Share of old shopfronts' street walls with a blade sign sticking out above the verandah. */
+const BLADES = 0.35;
+/** Share of mid-rise flat roofs onto a street with a billboard on top. */
+const BILLBOARDS = 0.12;
 /** Buildings (by their tallest part) at least this tall also go in the far skyline, m. */
 const SKYLINE_MIN = 40;
 /** Parapet faces only along roof edges at least this long, m. */
@@ -1044,6 +1050,33 @@ export class MeshBuilder {
     return [a0, bc, b0, a0, ac, bc];
   }
 
+  /**
+   * A flat textured panel, upright, from p0 to p1 and y0 to y1, facing n,
+   * with atlas `tile` and UVs at its corners (bottom p0, bottom p1, top p1,
+   * top p0). With `back`, its other side too, mirrored so lettering reads
+   * (null: the same UVs mirrored; a colour: plain in that colour).
+   */
+  panel(p0: Local, p1: Local, y0: number, y1: number, n: readonly number[], tile: number, uvs: [number, number][], light: number, back?: readonly number[] | null) {
+    const white = [1, 1, 1];
+    const v = [[p0, y0], [p1, y0], [p1, y1], [p0, y1]] as const;
+    const front = v.map(([p, y], k) => this.vertex(p.x, y, p.z, n, white, 0, tile, uvs[k][0], uvs[k][1], light));
+    this.wallQuad(front, p0, p1, n);
+    if (back === undefined) return;
+    const m = [-n[0], -n[1], -n[2]];
+    const mirror = [1, 0, 3, 2];
+    const rear = v.map(([p, y], k) =>
+      back === null ? this.vertex(p.x, y, p.z, m, white, 0, tile, uvs[mirror[k]][0], uvs[mirror[k]][1], light * 0.9) : this.vertex(p.x, y, p.z, m, back, 0, 0, 0, 0, light * 0.8),
+    );
+    this.wallQuad(rear, p0, p1, m);
+  }
+
+  /** UVs for sign cell k (see signCell), inset off its neighbours; `onEnd` turns the lettering to run up a blade. */
+  static signUvs(k: number, onEnd = false): [number, number][] {
+    const [u0, v0] = signCell(k);
+    const [ua, ub, va, vb] = [u0 + 0.01, u0 + 0.49, v0 + 0.01, v0 + 0.24];
+    return onEnd ? [[ua, vb], [ua, va], [ub, va], [ub, vb]] : [[ua, va], [ub, va], [ub, vb], [ua, vb]];
+  }
+
   /** A painting on wall a-b (outward normal n): one quad a hair proud of it, centred, its artwork's quadrant of the layer. */
   mural(a: Local, b: Local, n: readonly number[], len: number, art: Painting, light: number) {
     const ux = (b.x - a.x) / len;
@@ -1265,7 +1298,7 @@ export class MeshBuilder {
    * its front, and posts at the kerb when `posts`. Drawn only: it's above
    * head height, and posts are thin enough to walk through.
    */
-  verandah(a: Local, b: Local, n: readonly number[], depth: number, height: number, groundAt: (x: number, z: number) => number, fascia: readonly number[], posts: boolean) {
+  verandah(a: Local, b: Local, n: readonly number[], depth: number, height: number, groundAt: (x: number, z: number) => number, fascia: readonly number[], posts: boolean, signs = -1) {
     const len = Math.hypot(b.x - a.x, b.z - a.z);
     const steps = Math.max(1, Math.ceil(len / VERANDAH_STEP));
     const back: Local[] = [];
@@ -1327,6 +1360,20 @@ export class MeshBuilder {
         this.vertex(p.x, y + VERANDAH_THICK + 0.12, p.z, m, fascia, 0, 0, 0, 0, 0.8),
       ];
       this.wallQuad(c, p, q, m);
+    }
+    // A sign hung under it for each shop, end on to the footpath (close up only).
+    if (signs >= 0 && depth > 1.8) {
+      this.detail(() => {
+        const tile = tileOf('signs');
+        for (let d = SIGN_STEP / 2; d < len - 1; d += SIGN_STEP) {
+          const base = { x: a.x + ux * d, z: a.z + uz * d };
+          const y = groundAt(base.x + n[0] * depth * 0.5, base.z + n[2] * depth * 0.5) + height - 0.1;
+          const p0 = { x: base.x + n[0] * 0.35, z: base.z + n[2] * 0.35 };
+          const p1 = { x: base.x + n[0] * Math.min(1.6, depth - 0.3), z: base.z + n[2] * Math.min(1.6, depth - 0.3) };
+          const cell = Math.floor(hash(`${signs}:${d.toFixed(1)}`, 41) * 8);
+          this.panel(p0, p1, y - 0.42, y, [ux, 0, uz], tile, MeshBuilder.signUvs(cell), 0.95, null);
+        }
+      }, true);
     }
     if (posts) {
       const count = Math.max(1, Math.round(len / VERANDAH_POSTS));
@@ -1476,7 +1523,7 @@ export type BuildingsResult = {
   landmarks: Landmark[];
   /** Whether a ground point is inside a drawn building that stands on the ground (not a canopy or a hidden landmark). */
   covers: (x: number, z: number) => boolean;
-  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
+  counts: Record<HeightSource, number> & { outlines: number; parts: number; hiddenOutlines: number; outside: number; hidden: number; blocks: number; verandahs: number; verandahsMapped: number; murals: number; billboards: number; verandahMetres: number; roofs: Partial<Record<RoofShape, number>>; towers: number; plant: number; eras: Record<string, number> };
   /**
    * Drawn buildings standing on the ground (walls from below it up), each
    * with its family (an outline and its parts): the ground under them is
@@ -1519,7 +1566,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
   const solids = collectSolids(data.osm);
   const { visible, hidden } = visibleSolids(solids);
   const byKey = new Map(solids.map((s) => [s.key, s]));
-  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
+  const counts = { height: 0, levels: 0, dsm: 0, default: 0, outlines: 0, parts: 0, hiddenOutlines: hidden.size, outside: 0, hidden: 0, blocks: 0, verandahs: 0, verandahsMapped: 0, verandahMetres: 0, murals: 0, billboards: 0, roofs: {} as Partial<Record<RoofShape, number>>, towers: 0, plant: 0, eras: {} as Record<string, number> };
   // Verandahs mapped in OSM: thin building=roof strips along shopfronts (K Road
   // has most of its own). Drawn as a slab they hang at a guessed height and
   // double up with ours, so the wall they cover gets a verandah() instead.
@@ -1797,6 +1844,33 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
         counts.murals++;
       });
     }
+    // A billboard on the roof, facing the street (mid-rise flat roofs, now and then).
+    if (!hide && !canopy && grounded && !pitched && top - bottom >= 8 && top - bottom <= 30 && opts.frontages && hash(fam, 40) < BILLBOARDS && (!s.isPart || fam === s.key)) {
+      let best: { a: Local; b: Local; n: readonly number[]; len: number } | null = null;
+      for (const poly of s.polygons) {
+        eachEdge(poly.outer, (a, b, n, len) => {
+          if (len >= 8 && (!best || len > best.len) && opts.frontages!.facing(a, b, n)) best = { a, b, n, len };
+        });
+      }
+      if (best) {
+        const { a, b, n, len } = best as { a: Local; b: Local; n: readonly number[]; len: number };
+        const w = Math.min(10, len * 0.7);
+        const ux = (b.x - a.x) / len;
+        const uz = (b.z - a.z) / len;
+        const mx = (a.x + b.x) / 2 - n[0] * 1.5;
+        const mz = (a.z + b.z) / 2 - n[2] * 1.5;
+        // Rings run right to left seen from outside, so the panel runs b to a to read.
+        const p0 = { x: mx + ux * (w / 2), z: mz + uz * (w / 2) };
+        const p1 = { x: mx - ux * (w / 2), z: mz - uz * (w / 2) };
+        const [u0, v0] = MURAL_QUADRANTS[Math.floor(hash(fam, 45) * 3)];
+        const frame = rgb(0x6e7173);
+        mb.detail(() => {
+          for (const p of [p0, p1]) mb.box(p.x, p.z, 0.12, 0.12, 0, top, 1.8, frame, 'plain');
+          mb.panel(p0, p1, top + 1.6, top + 5.2, n, tileOf('ads'), [[u0 + 0.01, v0 + 0.01], [u0 + 0.49, v0 + 0.01], [u0 + 0.49, v0 + 0.49], [u0 + 0.01, v0 + 0.49]], 1.05, frame);
+        });
+        counts.billboards++;
+      }
+    }
     // Massing details on street facades (near-only): cornice, string courses, a crest on the parapet.
     if (!hide && !canopy && grounded && !pitched && top - bottom > 5 && (style.cornice > 0 || style.courses || style.crest)) {
       const trim = mix(wall, rgb(0xf4f0e6), 0.35);
@@ -1886,7 +1960,22 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
             depth = Math.min(VERANDAH_DEPTH, front.kerb - VERANDAH_KERB);
           }
           if (depth < 1.2) return;
-          mb.detail(() => mb.verandah(a, b, n, depth, VERANDAH_HEIGHT, ground, fascia, style.heritage && hash(fam, 10) < 0.5));
+          const seed = Math.floor(hash(`${fam}:${a.x.toFixed(1)}`, 42) * 1e6);
+          mb.detail(() => mb.verandah(a, b, n, depth, VERANDAH_HEIGHT, ground, fascia, style.heritage && hash(fam, 10) < 0.5, seed));
+          // A blade sign above it on old shopfronts, lit neon more often than not.
+          if (style.heritage && front?.retail && len >= 6 && hash(`${fam}:${a.x.toFixed(1)}`, 43) < BLADES) {
+            const t = len * 0.15;
+            const base = { x: a.x + ((b.x - a.x) * t) / len, z: a.z + ((b.z - a.z) * t) / len };
+            const y0 = ground(base.x + n[0], base.z + n[2]) + VERANDAH_HEIGHT + 0.9;
+            if (y0 + 3.2 < top - 0.3) {
+              const neon = [0, 3, 6];
+              const r = hash(`${fam}:${a.x.toFixed(1)}`, 44);
+              const cell = r < 0.6 ? neon[Math.floor(r * 5) % 3] : Math.floor(r * 8);
+              const p0 = { x: base.x + n[0] * 0.15, z: base.z + n[2] * 0.15 };
+              const p1 = { x: base.x + n[0] * 1.05, z: base.z + n[2] * 1.05 };
+              mb.detail(() => mb.panel(p0, p1, y0, y0 + 3.2, [(b.x - a.x) / len, 0, (b.z - a.z) / len], tileOf('signs'), MeshBuilder.signUvs(cell, true), 1.05, null));
+            }
+          }
           counts.verandahs++;
           counts.verandahMetres += len;
           if (osm) counts.verandahsMapped++;
