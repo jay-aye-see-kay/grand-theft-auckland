@@ -20,13 +20,13 @@ import type { GroundRaster } from './ground.ts';
 import type { OsmData, Tags } from './osm.ts';
 import { lonLatToLocal, ORIGIN_NZTM, type Local } from './project.ts';
 import type { Raster } from './raster.ts';
-import { CHUNK_SIZE, type Grid, type TerrainSampler } from './terrain.ts';
+import { CHUNK_SIZE, groundCm, type Grid, type TerrainSampler } from './terrain.ts';
 
 /** Tiles per chunk side that trees are grouped by (50 m, like the terrain's). */
 const TREE_TILES = 5;
 
-export type TreeKind = 'broadleaf' | 'palm' | 'conifer';
-export type Tree = { x: number; z: number; height: number; crown: number; kind: TreeKind };
+export type TreeKind = 'broadleaf' | 'palm' | 'conifer' | 'pohutukawa';
+export type Tree = { x: number; z: number; height: number; crown: number; kind: TreeKind; /** Its kind is from OSM's species tags, not guessed. */ typed?: boolean };
 
 /** Canopy above the ground (m) that can be a tree top: below is shrubs and parked cars, above is buildings and cranes. */
 const MIN_TOP = 5;
@@ -198,7 +198,8 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
     }
     const height = tagged > 1 && tagged < 40 ? tagged : top ? top.height : DEFAULT_HEIGHT;
     const crown = crownTag > 0.5 && crownTag < 15 ? crownTag : top ? top.crown : DEFAULT_CROWN;
-    trees.push({ x: p.x, z: p.z, height, crown: Math.min(crown, MAX_CROWN, height * 0.6), kind: kindOf(t) });
+    const typed = !!(t.genus || t.species || t.taxon || t['species:en'] || t['genus:en'] || t.leaf_type);
+    trees.push({ x: p.x, z: p.z, height, crown: Math.min(crown, MAX_CROWN, height * 0.6), kind: kindOf(t), typed });
     return true;
   };
   // In id order, so the output doesn't depend on how the cache was read.
@@ -262,17 +263,41 @@ export function findTrees(data: Sources, ctx: Context): { trees: Tree[]; counts:
     (placed.get(k) ?? placed.set(k, []).get(k)!).push(t);
     counts['lidar street']++;
   }
+  // Untyped broadleaf trees get Auckland's own: pōhutukawa along the
+  // waterfront and here and there in the parks, nīkau palms among the street
+  // trees and plazas. (Not a survey: the city's character.)
+  for (const t of trees) {
+    if (t.typed || t.kind !== 'broadleaf') continue;
+    const r = hash(`${t.x.toFixed(1)},${t.z.toFixed(1)}`, 7);
+    const surface = ground.at(t.x, t.z);
+    const low = groundCm(data.dem, t.x, t.z) / 100 < WATERFRONT;
+    if (r < (low ? 0.7 : GREEN.has(surface) ? 0.15 : 0)) t.kind = 'pohutukawa';
+    else if (STREET.has(surface) && t.crown < 3.5 && r > 1 - NIKAU) {
+      t.kind = 'palm';
+      t.height = Math.min(Math.max(t.height, 6), 10);
+    }
+  }
   return { trees, counts };
 }
+
+/** Ground lower than this (m above sea level) is the waterfront, for pōhutukawa. */
+const WATERFRONT = 8;
+/** Share of the small street trees that are nīkau palms. */
+const NIKAU = 0.3;
 
 // ---------------------------------------------------------------- models
 
 const BARK = rgb(0x5a4636);
-const PALM_TRUNK = rgb(0x7d6b55);
+const PALM_TRUNK = rgb(0x8a8878);
+/** A nīkau's crownshaft, under its fronds. */
+const CROWNSHAFT = rgb(0x6f8f3a);
+/** Pōhutukawa in flower. */
+const FLOWERS = rgb(0xb0262c);
 /** Foliage greens per kind; each tree picks one and varies its brightness. */
 const LEAVES: Record<TreeKind, [number, number, number][]> = {
   broadleaf: [rgb(0x3f6b2e), rgb(0x4d7a34), rgb(0x365e2a), rgb(0x5a7f3a), rgb(0x2f5426)],
   palm: [rgb(0x557a35), rgb(0x4a6e2e)],
+  pohutukawa: [rgb(0x34502a), rgb(0x3a5a2e), rgb(0x2e4a26)],
   conifer: [rgb(0x2c4a2a), rgb(0x34532e)],
 };
 
@@ -305,6 +330,35 @@ function trunk(mb: MeshBuilder, x: number, y: number, z: number, top: number, r:
   mb.idx.push(...faces);
   mb.colliderIdx.push(...faces);
   treeTris.trunks += sides * 2;
+}
+
+/**
+ * A palm frond from (x, y, z) heading `a`: a narrow blade rising, then
+ * arching down to its tip, drawn both sides (it's thin).
+ */
+function frond(mb: MeshBuilder, x: number, y: number, z: number, a: number, reach: number, colour: readonly number[]) {
+  const dx = Math.cos(a);
+  const dz = Math.sin(a);
+  // Across the blade, and points along it: out and up, out and level, the tip drooping.
+  const wx = -dz;
+  const wz = dx;
+  const spine: [number, number, number][] = [[0, 0, 0.12], [0.45, 0.9, 0.55], [1, 0.3, 0.3]];
+  const pts = spine.map(([f, up, half]) => ({ x: x + dx * reach * f, y: y + up * reach * 0.6, z: z + dz * reach * f, half }));
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const p = pts[k];
+    const q = pts[k + 1];
+    const quad = [
+      [p.x - wx * p.half, p.y, p.z - wz * p.half], [p.x + wx * p.half, p.y, p.z + wz * p.half],
+      [q.x + wx * q.half, q.y, q.z + wz * q.half], [q.x - wx * q.half, q.y, q.z - wz * q.half],
+    ];
+    for (const up of [1, -1]) {
+      const n = [0, up, 0];
+      const v = quad.map((c) => mb.vertex(c[0], c[1], c[2], n, colour, 0, 0, 0, 0, up > 0 ? 1.05 : 0.7));
+      if (up > 0) mb.idx.push(v[0], v[2], v[1], v[0], v[3], v[2]);
+      else mb.idx.push(v[0], v[1], v[2], v[0], v[2], v[3]);
+    }
+  }
+  treeTris.crowns += 8;
 }
 
 /**
@@ -363,16 +417,39 @@ export function emitTree(mb: MeshBuilder, t: Tree, y: number) {
   const lumps = [1, 0.86 + 0.2 * h1, 1.08, 0.9 + 0.15 * h0, 0.95];
   const h = t.height;
   if (t.kind === 'palm') {
-    trunk(mb, t.x, y, t.z, y + h - 0.4, 0.22, PALM_TRUNK, rot);
-    // A flat, drooping head of fronds.
-    const r = Math.max(2, Math.min(t.crown, 3.5));
-    blob(mb, t.x, t.z, y + h - 1.6, y + h + 0.4, r, [[0.25, 0.9], [0.55, 1]], 5, leaf, rot, lumps);
+    // A nīkau: a slim ringed trunk, a bulging green crownshaft, and fronds
+    // arching up and out from its top.
+    const shaft = y + h - 1.8;
+    trunk(mb, t.x, y, t.z, shaft, 0.17, PALM_TRUNK, rot);
+    blob(mb, t.x, t.z, shaft - 0.1, shaft + 1.3, 0.32, [[0.3, 1], [0.7, 0.85]], 4, CROWNSHAFT, rot, lumps);
+    const fronds = 7;
+    const reach = Math.max(2.2, Math.min(t.crown, 3.2));
+    for (let k = 0; k < fronds; k++) {
+      const a = rot + (k * 2 * Math.PI) / fronds + (hash(key, 10 + k) - 0.5) * 0.4;
+      frond(mb, t.x, shaft + 1.2, t.z, a, reach * (0.85 + 0.3 * hash(key, 20 + k)), leaf);
+    }
     return;
   }
   if (t.kind === 'conifer') {
     const r = Math.min(t.crown, h * 0.3);
     trunk(mb, t.x, y, t.z, y + h * 0.5, 0.18 + 0.012 * h, BARK, rot);
     blob(mb, t.x, t.z, y + Math.min(2, h * 0.15), y + h, r, [[0.05, 1], [0.45, 0.7]], 5, leaf, rot, lumps);
+    return;
+  }
+  if (t.kind === 'pohutukawa') {
+    // Wide and low: a short leaning trunk under a broad, flattened dome; in
+    // flower (it's always nearly Christmas), a flush of crimson on top.
+    const r = Math.max(t.crown, Math.min(7, h * 0.75));
+    const bottom = y + 2.2;
+    const top = Math.max(bottom + r * 0.9, Math.min(y + h, bottom + r * 1.2));
+    trunk(mb, t.x, y, t.z, bottom + 0.8, 0.25 + 0.02 * r, BARK, rot);
+    blob(mb, t.x, t.z, bottom, top, r, [[0.1, 0.7], [0.35, 0.98], [0.65, 0.95], [0.9, 0.55]], 6, leaf, rot, lumps);
+    if (h1 < 0.25) {
+      const fx = t.x + Math.cos(rot) * r * 0.25;
+      const fz = t.z + Math.sin(rot) * r * 0.25;
+      // Inside the crown, lumpy, so the red only breaks through in patches.
+      blob(mb, fx, fz, bottom + (top - bottom) * 0.3, top - 0.15, r * 0.88, [[0.45, 1], [0.8, 0.7]], 7, FLOWERS, rot + 0.45, [1.14, 0.7, 1.12, 0.72, 1.16, 0.7, 1.1]);
+    }
     return;
   }
   // Broadleaf: a round crown on a trunk, its foot clear of head height.

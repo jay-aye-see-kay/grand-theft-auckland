@@ -692,6 +692,8 @@ export function canyonShade(across: (x: number, z: number, self: unknown) => num
 /** Accumulates one chunk's merged mesh in absolute local metres. */
 /** Share of blank side walls (clear of their neighbours, not onto a street) painted with a mural or an ad. */
 const PAINTED_WALLS = 0.4;
+/** Only buildings up to this tall: a tower's blank side would dwarf a mural, m. */
+const PAINTED_MAX = 30;
 /** What's painted on a blank wall: which artwork, how wide (centred), and from and to what height. */
 type Painting = { layer: Layer; quadrant: number; w: number; y0: number; y1: number };
 
@@ -1731,7 +1733,7 @@ export function buildBuildings(data: { osm: OsmData; dem: Raster; dsm: Raster },
     // over a car park or lane) are often blank in the city, and some of those
     // carry a mural or a painted ad: a little of the city's own character.
     const painting = (a: Local, b: Local, n: readonly number[], len: number): Painting | null => {
-      if (hide || canopy || !grounded || top - bottom < 8 || len < 7 || opts.frontages?.facing(a, b, n)) return null;
+      if (hide || canopy || !grounded || top - bottom < 8 || top - bottom > PAINTED_MAX || len < 7 || opts.frontages?.facing(a, b, n)) return null;
       const r = hash(`${s.key}:${a.x.toFixed(1)},${a.z.toFixed(1)}`, 30);
       if (r >= PAINTED_WALLS) return null;
       const next = across((a.x + b.x) / 2 + n[0] * 0.8, (a.z + b.z) / 2 + n[2] * 0.8, p);

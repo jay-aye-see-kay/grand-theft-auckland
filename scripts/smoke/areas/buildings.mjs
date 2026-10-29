@@ -41,15 +41,16 @@ export default {
       `K Road verandah ${(krd.top - krd.ground).toFixed(1)} m over the footpath, first thing overhead ${(under + 1).toFixed(1)} m up`);
 
     // Street furniture (tools/citygen/furniture.ts): the bus shelter OSM maps
-    // at the Durham St stop on Queen St, its roof found by looking down.
+    // at the Durham St stop on Queen St, its roof found by looking up from
+    // under it (trees can stand over it).
     await game('placePlayer', -230, 400, 0);
     await step(30);
     let roof = 0;
     for (let x = -229.5; x <= -221.5; x += 0.5) {
       for (let z = 400; z <= 408; z += 0.5) {
         const g = await game('groundHeight', x, z);
-        const hit = await game('renderHit', [x, g + 10, z], [0, -1, 0], 12);
-        if (hit !== null && 10 - hit > 2.4 && 10 - hit < 2.8) roof++;
+        const hit = await game('renderHit', [x, g + 1.5, z], [0, 1, 0], 3);
+        if (hit !== null && hit > 0.9 && hit < 1.3) roof++;
       }
     }
     check(roof > 10, `a bus shelter at the Durham St stop on Queen St (${roof} points under its roof)`);
